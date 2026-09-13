@@ -204,6 +204,10 @@ python scripts/pipeline/cli.py review07 --external <07_external.json> --run-id <
 
 봉투가 `--effort` 를 준다. **그 값 그대로** `/code-review` 를 부른다 —
 **effort 를 네가 고르지 마라.** 결정론이어야 `escaped_05` 가 근거가 된다.
+봉투가 **`skipped`** 를 주면 `/code-review` 를 부르지 않는다 — `07_pr_review.json`
+을 `code_review: "skipped"` · findings 빈 배열로 내고 바로 `record` 로 간다.
+깨끗한 런(05 ok · Major 없음 · 04·05 수리 없음)이 그렇고, 일반 정합성은 05 의
+`gen` 이 이미 봤다 (ADR-H043). 승격은 그 뒤에 그대로 돈다.
 
 ```bash
 python scripts/pipeline/cli.py record --phase 07 --file <07_pr_review.json> --run-id <id>

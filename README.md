@@ -226,7 +226,7 @@ flowchart TD
 | `commands/log.md` | `/log` 명령입니다. 세션 기록의 사실을 `docs/PIPELINE-LOG.md` 에 한 줄로 옮깁니다. 기록에 없는 것은 적지 않습니다 |
 | `agents/impl-writer.md` · `agents/test-writer.md` | 03 이 **병렬로** 부르는 구현 담당과 테스트 담당입니다. 각자 자기 경로만 건드립니다 |
 | `agents/plan-reviewer.md` | 01·02 가 부르는 검토자입니다. 계획을 직접 고치지 않고 지적만 냅니다 — 02 에서는 외부 플랜 리뷰 도구가 없을 때의 폴백입니다 |
-| `skills/{data-layer,security,architecture,test-quality,docs}-reviewer/SKILL.md` | 05 의 리뷰어 5종입니다(데이터·보안·구조·테스트 품질·문서). 변경된 파일이 각자의 담당 범위에 걸리면 켜집니다. 문서 리뷰어만 소스 변경이 0인 런에서 켜집니다 |
+| `skills/{general,data-layer,security,architecture,test-quality,docs}-reviewer/SKILL.md` | 05 의 리뷰어 6종입니다(일반 정합성·데이터·보안·구조·테스트 품질·문서). 일반 정합성 리뷰어는 소스 변경이 있으면 항상 켜지고, 나머지는 변경된 파일이 각자의 담당 범위에 걸리면 켜집니다. 문서 리뷰어만 소스 변경이 0인 런에서 켜집니다 |
 | `settings.json` | 훅 2개입니다 — 세션 종료 시 기록, 위험한 셸 명령 차단 |
 
 ### `docs/`

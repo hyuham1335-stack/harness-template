@@ -95,6 +95,12 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
 같은 diff 가 런마다 다른 리뷰를 받고, 그러면 `escaped_05` 를 세는 것이 의미를
 잃는다.
 
+**`gen`(일반 정합성)은 소스 변경이 있으면 항상 켜진다** — glob 이 아니라
+`roles[].owns` 로 켜지므로 프로젝트 레이아웃과 무관하다 (ADR-H043). "구현이
+계약대로 동작하는가" 를 보는 관점이 여기 있어서 07 이 깨끗한 런의 내장 리뷰를
+생략한다. gen 이 빠진 채 05 가 `ok` 가 되는 경로는 없다 — 계획된 리뷰어가
+실패하면 `review05.status` 가 `degraded` 이고 07 이 `medium` 으로 메운다.
+
 각 리뷰어에게 주는 것:
 
 - **인라인 diff · 계약 · `05_trace.json`**. 그게 전부다

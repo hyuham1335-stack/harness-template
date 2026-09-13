@@ -121,6 +121,12 @@
       ]
     },
     {
+      "code": "CONTRACT_MISMATCH",
+      "enforceable": "prose",
+      "status": "unpromotable",
+      "note": "구현이 계약·플랜이 말한 동작과 다르다. 인스턴스 결함이지 규칙이 아니라 승격하지 않는다 — OTHER 와 가르는 이유는 보고서와 escaped_05 대조에서 이름이 필요해서다"
+    },
+    {
       "code": "OTHER",
       "enforceable": "prose",
       "status": "unpromotable",

@@ -760,7 +760,7 @@ gap 은 effort 와 **따로 센다**:
 `review07` 없이 `record` 부터 치면 exit 3 — 그러지 않으면 외부 계수의 권위가
 요약본을 낸 제출자에게 넘어간다 (불변식 8).
 
-**`config.external_pr_review.enabled: false`면 봇 소스 자체가 없다.** `external.status = "disabled"`가 되고, 생략 조건은 `reviewed`를 요구하므로 **생략이 성립하지 않는다 — 내장 리뷰가 항상 돈다.** "봇이 없으니 리뷰가 없었다"가 "통과"가 되지 않는다.
+**`config.external_pr_review.enabled: false`면 봇 소스 자체가 없다.** `external.status = "disabled"`가 된다. ~~생략 조건은 `reviewed`를 요구하므로 생략이 성립하지 않는다 — 내장 리뷰가 항상 돈다.~~ **ADR-H043 이 뒤집었다**: `disabled` 는 gap 이 아니고, 일반 정합성은 05 의 `gen` 이 본다. 내장 리뷰는 05 가 `ok` 가 아니거나 04·05 에 수리가 있었거나 Major 가 남았거나 감사 런일 때 돌고, 깨끗한 런은 `skipped` 다. 켜 놓고 무응답(`timeout` · `not_a_review`)이면 여전히 gap 이고 내장 리뷰가 대신 돈다. "아무도 안 봤다"가 "통과"가 되지 않는 것은 그대로다.
 
 **`external.status = reviewed`의 정의를 명시한다** — "봇이 뭔가 썼다"로는 부족하다. 봇 계정의 리뷰 또는 코멘트가 존재하고 그 안에 **findings 구조가 있을 것.** 봇 출력 언어에 의존하지 않도록 **헤딩 텍스트가 아니라 구조**(리뷰 상태·코멘트 개수·심각도 라벨)로 판정한다. 구조 판정에 실패하면 `not_a_review`다. **심각도 판정에 실패하면 보수적으로 Major로 취급한다** — 모르면 생략하지 않는 방향으로 낙하시킨다.
 
@@ -1248,7 +1248,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 | 06 | PR 생성됐는데 이후 실패 | — | `state.pr.number` 기록 → 재개 시 **생성 금지, 갱신만** |
 | 06 | secret 파일 부재 | — | 패턴 마스킹만 적용 + 원장 기록(경고이지 실패가 아니다) |
 | 07 | **PR이 닫힘 / 머지됨** | — | 수리·코멘트 없이 정상 종료 + 보고서 명시 (§E8) |
-| 07 | `external_pr_review.enabled == false` | — | `external.status = "disabled"` → **생략 불성립** → 내장 리뷰 항상 실행 |
+| 07 | `external_pr_review.enabled == false` | — | `external.status = "disabled"` → gap 아님. 깨끗한 런은 `skipped`, 05 결손·수리·Major·감사 런이면 내장 리뷰 (ADR-H043) |
 | 07 | 외부 봇 무응답 | 비차단 | 내장 리뷰 `--effort low` 1회, `PASS_WITH_GAPS`, 사전 승인 코멘트 게시 보류 |
 | 07 | 외부 봇 출력 파싱 실패 | 판단 | `not_a_review` → 생략 불성립. 심각도 불명은 **Major로 보수 판정** (§E1) |
 | 07 | 변경 요청 미해결 | 차단 | 수리 루프. 초과 시 에스컬레이션 |

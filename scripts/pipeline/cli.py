@@ -602,8 +602,10 @@ def _check_external_bot(config):
     ext = (config or {}).get("external_pr_review") or {}
     if not ext.get("enabled"):
         return {"name": name, "status": "PASS",
-                "message": "꺼져 있다 — 07 의 생략 조건이 성립하지 않아 "
-                           "내장 리뷰가 항상 돈다. 안전한 기본값이다."}
+                "message": "꺼져 있다 — gap 이 아니다. 07 의 내장 리뷰는 05 가 "
+                           "ok 가 아니거나 04·05 에 수리가 있었거나 Major 가 "
+                           "남았거나 감사 런일 때 돌고, 깨끗한 런은 생략한다 "
+                           "(ADR-H043)."}
     if not (ext.get("bot_logins") or []):
         return {"name": name, "status": "FAIL",
                 "message": "켜져 있는데 bot_logins 가 비었다 — 07 이 아무도 "
@@ -3774,8 +3776,9 @@ def run_review07(root, external=None, run_id=None):
     ext_cfg = config.get("external_pr_review") or {}
 
     if not ext_cfg.get("enabled"):
-        # **봇이 꺼져 있으면 소스 자체가 없다.** 생략 조건은 `reviewed` 를
-        # 요구하므로 성립하지 않고, 내장 리뷰가 항상 돈다.
+        # **봇이 꺼져 있으면 소스 자체가 없다.** `disabled` 는 gap 이 아니다 —
+        # config 로 뺀 관측기이고, 내장 리뷰를 부를지는 05 의 결과와 수리
+        # 흔적이 정한다 (ADR-H043 · `review07.decide`).
         norm = {"status": "disabled", "major": 0, "findings": [],
                 "human_comments": [], "change_requested": False,
                 "note": "config.external_pr_review.enabled 가 false 다."}
@@ -3810,7 +3813,9 @@ def run_review07(root, external=None, run_id=None):
          "reason": ("5런 주기" if audit else None)})
     s.setdefault("review07", {}).update(
         {"external": {"status": norm["status"], "major": norm["major"]},
-         "code_review": got["effort"], "escaped_05": None})
+         "code_review": got["effort"], "escaped_05": None,
+         # 정책 생략의 사유. 보고서가 "생략이라 0" 과 "봤는데 0" 을 가른다.
+         "skip_reason": got.get("skip_reason")})
     for gap in got["gaps"]:
         st.demote(s, st.GRADES[1], gap)
     if not got["skip"]:
@@ -3820,9 +3825,15 @@ def run_review07(root, external=None, run_id=None):
     st.save(paths, s)
 
     data = dict(got, external=norm)
+    if got["skip"]:
+        # 스킵되는 것은 `/code-review` 호출뿐이다. `record --phase 07` 과
+        # `promote` 는 그대로 돈다 — 승격 쓰기가 07 안에 있다.
+        next_cmd = ("python scripts/pipeline/cli.py record --phase 07 "
+                    "--file {07_pr_review.json} --run-id %s" % s["run_id"])
+    else:
+        next_cmd = "/code-review --effort %s" % got["effort"]
     return st.envelope("review07", True, 0, s, data, _review07_render(got, norm),
-                       None if got["skip"] else
-                       "/code-review --effort %s" % got["effort"])
+                       next_cmd)
 
 
 def _review07_render(got, norm):
@@ -3835,6 +3846,11 @@ def _review07_render(got, norm):
     if not got["skip"]:
         lines += ["", "`/code-review --effort %s` 를 그대로 부른다. "
                       "**effort 를 네가 고르지 마라.**" % got["effort"]]
+    else:
+        lines += ["", "**내장 리뷰를 부르지 않는다** (사유: `%s`). "
+                      "`07_pr_review.json` 을 `code_review: \"skipped\"` · "
+                      "findings 빈 배열로 내고 바로 `record --phase 07` 로 간다 — "
+                      "`promote` 는 그 뒤에 그대로 돈다." % got.get("skip_reason")]
     if norm.get("human_comments"):
         lines += ["", "사람 코멘트 %d 건은 **수리 대상이 아니라 보고 대상**이다."
                   % len(norm["human_comments"])]

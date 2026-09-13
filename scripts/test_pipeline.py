@@ -58,6 +58,7 @@ COPIED = [
     ".claude/skills/architecture-reviewer/SKILL.md",
     ".claude/skills/test-quality-reviewer/SKILL.md",
     ".claude/skills/docs-reviewer/SKILL.md",
+    ".claude/skills/general-reviewer/SKILL.md",
 ]
 
 # 픽스처의 실측은 **리포 자신의 실측과 별개 사실이다** — 어댑터에서 같은 판단을
@@ -4407,6 +4408,17 @@ class TestLedgerPromotion:
                        [_finding(category="CONTRACT_DEFECT", severity="critical")])
         assert ldg.stage_promotions(repo)["candidates"] == []
 
+    def test_CONTRACT_MISMATCH_는_받되_승격하지_않는다(self, repo):
+        """gen 의 기본 category 다 (ADR-H043). 인스턴스 결함이지 규칙이 아니다."""
+        ldg.seed(repo)
+        for rid in ("r1", "r2", "r3"):
+            ldg.append(repo, rid, "05",
+                       [_finding(category="CONTRACT_MISMATCH", severity="critical",
+                                 reported_by=["gen"])])
+        assert len(ldg.read_all(repo)) == 3
+        assert ldg.stage_promotions(repo)["candidates"] == []
+        assert "CONTRACT_MISMATCH" not in ldg.excluded_categories(repo)
+
     def test_candidate_carries_destination_from_taxonomy(self, repo):
         """enforceable 이 어디로 승격할지를 정한다 — 후보가 그것을 들고 나온다."""
         self._seed_key(repo, ["r1", "r2", "r3"], category="NAMING")
@@ -5403,17 +5415,18 @@ class TestReviewerRouting:
         codes = [r["code"] for r in got["reviewers"]]
         assert codes == sorted(codes, key=lambda c: _priority(repo, c))
 
-    def test_small_profile_takes_only_the_top_one(self, repo):
+    def test_small_profile_takes_gen_and_the_top_one(self, repo):
+        """small 의 상한 2 는 gen 자리 하나 + 특화 리뷰어 하나다 (ADR-H043)."""
         got = rv.route(_config(repo),
                        ["src/lib/schemas.ts", "src/app/api/x/route.ts"], "small")
-        assert len(got["reviewers"]) == 1
+        assert [r["code"] for r in got["reviewers"]] == ["gen", "data"]
         assert got["capped"] is True
 
     def test_normal_profile_respects_the_cap(self, repo):
         changed = ["src/lib/schemas.ts", "src/app/api/x/route.ts",
                    "src/lib/a.ts", "src/lib/a.test.ts"]
         got = rv.route(_config(repo), changed, "normal")
-        assert len(got["reviewers"]) <= 3
+        assert len(got["reviewers"]) <= 4
 
     def test_dropped_reviewers_are_named_not_silently_lost(self, repo):
         """상한에 걸려 빠진 리뷰어가 누구인지 드러나야 한다."""
@@ -5433,6 +5446,44 @@ class TestReviewerRouting:
         got = rv.route(_config(repo), ["아무데도/안걸리는.txt"], "normal")
         assert got["reviewers"] == []
         assert rv.status(planned=0, ok=0) == "failed"
+
+
+class TestGeneralReviewerRouting:
+    """gen 은 glob 이 아니라 **역할 소유**로 켜진다 (ADR-H043).
+
+    07 이 깨끗한 런의 내장 리뷰를 생략하는 근거가 "05 의 gen 이 봤다" 이므로,
+    소스 변경이 있는데 gen 이 안 켜지는 경로가 있으면 그 근거가 무너진다.
+    프로젝트가 `roles[].owns` 를 다른 레이아웃으로 바꿔도 따라가야 한다.
+    """
+
+    def test_source_change_wakes_gen_first(self, repo):
+        got = rv.route(_config(repo), ["src/lib/a.ts"], "normal")
+        assert [r["code"] for r in got["reviewers"]][0] == "gen"
+
+    def test_gen_follows_roles_owns_not_a_glob(self, repo):
+        cfg = _config(repo)
+        cfg["roles"][0]["owns"] = ["lib/**"]
+        got = rv.route(cfg, ["lib/a.ts"], "normal")
+        # 다른 리뷰어의 glob 은 src/** 라 아무도 안 걸린다. gen 만 걸린다.
+        assert [r["code"] for r in got["reviewers"]] == ["gen"]
+
+    def test_docs_only_does_not_wake_gen(self, repo):
+        got = rv.route(_config(repo), ["docs/x.md"], "normal")
+        assert "gen" not in [r["code"] for r in got["reviewers"]]
+
+    def test_excluded_test_files_do_not_wake_gen_alone(self, repo):
+        """impl 이 excludes 한 테스트 파일은 test 역할이 소유한다 — 그래도 소유다."""
+        got = rv.route(_config(repo), ["src/lib/a.test.ts"], "normal")
+        assert "gen" in [r["code"] for r in got["reviewers"]]
+
+    def test_validate_accepts_when_role_owned_without_glob(self, repo):
+        cfg = _config(repo)
+        assert rv.validate(repo, cfg) == []
+        gen = [r for r in cfg["reviewers"] if r["code"] == "gen"][0]
+        assert not gen.get("when"), "gen 은 glob 을 갖지 않는다"
+        gen.pop("when_role_owned")
+        errs = rv.validate(repo, cfg)
+        assert any("'gen'" in e and "켜지지 않는다" in e for e in errs), errs
 
 
 class TestReviewMode:
@@ -5487,9 +5538,12 @@ class TestReviewerSkillDocs:
     `COPIED` 가 이미 같은 규율로 실물을 복사한다.
     """
 
-    def test_스킬_다섯이_대조_대상을_자기_원문으로_적는다(self):
+    def test_모든_스킬이_대조_대상을_자기_원문으로_적는다(self):
         docs = [rel for rel in COPIED if rel.startswith(".claude/skills/")]
-        assert len(docs) == 5, docs
+        # **실물 config 의 리뷰어 수와 같아야 한다.** 숫자를 박으면 리뷰어를
+        # 더할 때 이 검사가 새 스킬을 안 보는 채로 깨진다 (ADR-H043 에서 5→6).
+        real = harness._read_json(ROOT / harness.CONFIG_REL).get("reviewers")
+        assert len(docs) == len(real), (docs, [r["code"] for r in real])
         for rel in docs:
             lines = [ln for ln
                      in (ROOT / rel).read_text(encoding="utf-8").splitlines()
@@ -8337,17 +8391,84 @@ def _external(paths, **kw):
     return p
 
 
+def _spend(repo, run_id, counter, reason):
+    """카운터를 한 번 태운다 — 04·05 가 수리했다는 흔적이다."""
+    _p, s = st.load(repo, run_id)
+    st.counter_inc(s, counter, 2, reason)
+    st.save(_p, s)
+
+
 class TestReview07Skip:
 
-    def test_봇이_꺼져_있으면_생략이_성립하지_않는다(self, repo, request_file,
-                                                    phases):
-        """'봇이 없으니 리뷰가 없었다' 가 '통과' 가 되지 않는다 (§3.7)."""
+    def test_봇이_꺼져_있어도_깨끗한_런은_생략한다(self, repo, request_file,
+                                                  phases):
+        """05 의 gen 이 일반 정합성을 봤고 04·05 에 수리가 없었다 — 07 의
+        내장 리뷰가 더할 것이 없다 (ADR-H043). 관측기를 뺀 것이 아니라 바꾼
+        것이므로 gap 도 없다."""
         run_id, paths = _enter_07(repo, request_file, phases)
         env = cli.run_review07(repo, run_id=run_id)
         assert env["exit"] == 0
         assert env["data"]["external"]["status"] == "disabled"
+        assert env["data"]["skip"] is True
+        assert env["data"]["effort"] == "skipped"
+        assert env["data"]["skip_reason"] == "clean_05"
+        assert "record --phase 07" in (env["next_command"] or "")
+        _pp, s = st.load(repo, run_id)
+        assert s["review07"]["skip_reason"] == "clean_05"
+        assert not any(g.startswith("external:") for g in s.get("gaps") or [])
+
+    def test_05_에서_수리가_있었으면_low_다(self, repo, request_file, phases):
+        """고친 코드는 두 번째 눈을 받는다."""
+        run_id, paths = _enter_07(repo, request_file, phases)
+        _spend(repo, run_id, "review_repair", "review_blocking")
+        env = cli.run_review07(repo, run_id=run_id)
         assert env["data"]["skip"] is False
         assert env["data"]["effort"] == "low"
+        assert env["data"]["skip_reason"] is None
+
+    def test_04_게이트_수리가_있었으면_low_다(self, repo, request_file, phases):
+        run_id, paths = _enter_07(repo, request_file, phases)
+        _spend(repo, run_id, "repair", "gate_failure")
+        env = cli.run_review07(repo, run_id=run_id)
+        assert env["data"]["skip"] is False
+        assert env["data"]["effort"] == "low"
+
+    def test_형식_반려만_있었으면_수리가_아니라_생략한다(self, repo,
+                                                       request_file, phases):
+        """형식 반려는 예산은 태우지만 코드를 고친 것이 아니다 (ADR-H029)."""
+        run_id, paths = _enter_07(repo, request_file, phases)
+        _spend(repo, run_id, "review_repair", "format_reject")
+        env = cli.run_review07(repo, run_id=run_id)
+        assert env["data"]["skip"] is True
+        assert env["data"]["effort"] == "skipped"
+
+    def test_05_에_Major_가_남아_있으면_low_다(self, repo, request_file, phases):
+        run_id, paths = _enter_07(repo, request_file, phases, major=1)
+        env = cli.run_review07(repo, run_id=run_id)
+        assert env["data"]["skip"] is False
+        assert env["data"]["effort"] == "low"
+
+    def test_봇이_켜져_있는데_무응답이면_low_이고_gap_이다(self, repo,
+                                                        request_file, phases):
+        """있어야 할 관측기가 없는 것은 결손이다 — config 로 뺀 것과 다르다."""
+        run_id, paths = _enter_07(repo, request_file, phases)
+        _enable_bot(repo)
+        env = cli.run_review07(repo, run_id=run_id)
+        assert env["data"]["external"]["status"] == "timeout"
+        assert env["data"]["skip"] is False
+        assert env["data"]["effort"] == "low"
+        _pp, s = st.load(repo, run_id)
+        assert "external:timeout" in (s.get("gaps") or [])
+
+    def test_repaired_before_07_은_수리_사유만_센다(self):
+        assert rv7.repaired_before_07({}) is False
+        assert rv7.repaired_before_07({"counters": {"review_repair": {
+            "used": 1, "spent": [{"reason": "format_reject"}]}}}) is False
+        assert rv7.repaired_before_07({"counters": {"repair": {
+            "used": 1, "spent": [{"reason": "gate_failure"}]}}}) is True
+        assert rv7.repaired_before_07({"counters": {"review_repair": {
+            "used": 2, "spent": [{"reason": "format_reject"},
+                                 {"reason": "review_blocking"}]}}}) is True
 
     def test_reviewed_이고_major_0_이면_생략한다(self, repo, request_file,
                                                 phases):
@@ -8410,20 +8531,30 @@ class TestReview07Gaps:
     def test_05_결손과_외부_결손이_둘_다_남는다(self, repo, request_file, phases):
         run_id, paths = _enter_07(repo, request_file, phases,
                                   review05_status="degraded")
+        _enable_bot(repo)      # 켜 놓고 무응답 — 있어야 할 관측기가 없다
         env = cli.run_review07(repo, run_id=run_id)
         _p, s = st.load(repo, run_id)
         gaps = s.get("gaps") or []
         assert any(g.startswith("external:") for g in gaps), gaps
+        assert any(g.startswith("review05:") for g in gaps), gaps
         assert env["data"]["effort"] == "medium", "결손은 비싼 쪽으로 메운다"
 
-    def test_gap_은_네_조합에서_일관된다(self, repo):
-        """r05.status × reviewed 의 네 조합. 순서를 바꿔 구멍을 옮기지 않았다."""
+    def test_gap_은_조합에서_일관된다(self, repo):
+        """r05.status × external.status 의 조합. 순서를 바꿔 구멍을 옮기지 않았다.
+
+        `disabled` 는 gap 이 아니다 — config 로 뺀 관측기이고 대체 관측기가
+        05 의 gen 이다 (ADR-H043). `timeout` · `not_a_review` 는 있어야 할
+        관측기가 없는 것이라 여전히 gap 이다.
+        """
         cfg = _config(repo)
         cases = [
             ("ok", "reviewed", []),
-            ("ok", "disabled", ["external:disabled"]),
+            ("ok", "disabled", []),
+            ("ok", "timeout", ["external:timeout"]),
             ("degraded", "reviewed", ["review05:degraded"]),
-            ("degraded", "disabled", ["review05:degraded", "external:disabled"]),
+            ("degraded", "disabled", ["review05:degraded"]),
+            ("degraded", "not_a_review", ["review05:degraded",
+                                          "external:not_a_review"]),
         ]
         for r05, ext, want in cases:
             got = rv7.decide({"review05": {"status": r05, "major": 0}},
@@ -8465,6 +8596,26 @@ class TestRecord07ExternalAuthority:
         f = _r07(paths, external={"status": "disabled", "major": 0})
         env = cli.run_record(repo, "07", str(f), run_id=run_id)
         assert env["exit"] in (0, 11), env["render"]
+
+    def test_내장_리뷰를_생략한_런도_승격_경로는_그대로다(self, repo,
+                                                        request_file, phases):
+        """스킵되는 것은 절차 4번(`/code-review`)뿐이다. 05 의 원장 줄은
+        `record --phase 05` 가 이미 썼고, `record --phase 07` → `promote --scan`
+        은 그대로 돈다 (ADR-H043). 07 을 페이즈째 건너뛰면 승격 쓰기가 사라진다."""
+        ldg.seed(repo)
+        run_id, paths = _enter_07(repo, request_file, phases, decide=True)
+        _p, s = st.load(repo, run_id)
+        assert s["review07"]["code_review"] == "skipped", s["review07"]
+        ldg.append(repo, run_id, "05", [_finding(category="NAMING")])
+        f = _r07(paths, code_review="skipped")
+        env = cli.run_record(repo, "07", str(f), run_id=run_id)
+        assert env["exit"] in (0, 11), env["render"]
+        assert len(ldg.read_all(repo)) == 1, "07 이 05 의 관측을 지우지 않는다"
+        env = cli.run_promote(repo, scan=True, run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        _p, s = st.load(repo, run_id)
+        assert s["review07"]["code_review"] == "skipped"
+        assert s["review07"]["escaped_05"] == 0
 
 
 class TestReview07Severity:
@@ -8942,6 +9093,26 @@ class TestReport08:
         for sec in rep_mod.REQUIRED_SECTIONS:
             assert sec in out, sec
 
+    def test_페이즈별_호출과_07_생략_사유가_보고서에_있다(self, repo,
+                                                        request_file, phases):
+        """05·07 의 비용을 나란히 보는 자리다 (ADR-H043). 생략 런의 escaped_05
+        는 표본이 아니라고 보고서가 스스로 말해야 한다."""
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        s.setdefault("budget", {}).setdefault("model_calls", {})["by_phase"] = {
+            "05-code-review": 3, "07-pr-review": 1}
+        s["review07"] = {"external": {"status": "disabled", "major": 0},
+                         "code_review": "skipped", "escaped_05": 0,
+                         "skip_reason": "clean_05"}
+        st.save(_p, s)
+        _report_data(paths)
+        cli.run_report(repo, run_id=run_id)
+        out = (repo / "docs" / "harness" / "pipeline" / "runs"
+               / ("%s.md" % run_id)).read_text(encoding="utf-8")
+        assert "05-code-review: 3" in out and "07-pr-review: 1" in out, out
+        assert "clean_05" in out
+        assert "표본 아님" in out
+
     def test_캘리브레이션_상태가_partial_과_unverified_를_드러낸다(
             self, repo, request_file, phases):
         run_id, paths = _enter_08(repo, request_file, phases)
@@ -9275,7 +9446,7 @@ class TestDoctorExternalBot:
         config = harness._read_json(repo / harness.CONFIG_REL)
         got = cli._check_external_bot(config)
         assert got["status"] == "PASS"
-        assert "내장 리뷰가 항상" in got["message"]
+        assert "생략" in got["message"] and "수리" in got["message"]
 
     def test_켜_놓고_대상이_없으면_FAIL(self, repo):
         _enable_bot(repo, bot_logins=[])

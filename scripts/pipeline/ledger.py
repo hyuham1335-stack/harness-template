@@ -167,6 +167,14 @@ SEED_TAXONOMY = {
               "note": "수행하지 않은 것이 통과한 것처럼 적혔다"},
              {"slug": "dead_reference",
               "note": "링크·경로·심볼 이름이 실재하지 않는다"}]},
+        {"code": "CONTRACT_MISMATCH", "enforceable": "prose",
+         "status": "unpromotable",
+         # general-reviewer 의 기본 어휘다 (ADR-H043). 인스턴스 결함이지 규칙이
+         # 아니라 승격하지 않는다. OTHER 와 가르는 이유는 보고서와
+         # `escaped_05` 대조에서 이름이 필요해서다.
+         "note": ("구현이 계약·플랜이 말한 동작과 다르다. 인스턴스 결함이지 "
+                  "규칙이 아니라 승격하지 않는다 — OTHER 와 가르는 이유는 "
+                  "보고서와 escaped_05 대조에서 이름이 필요해서다")},
         {"code": "OTHER", "enforceable": "prose", "status": "unpromotable",
          "note": ("분류되지 않은 것. **글롭이 아니라 문자열 그대로의 코드다** "
                   "— categories() 가 만드는 dict 의 키이고 append() 는 "

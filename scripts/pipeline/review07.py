@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 """`07-pr-review` 의 판정 — 외부 리뷰를 읽고 내장 리뷰를 부를지 정한다.
 
-**이 모듈이 막는 실패는 하나다** — "봇이 없으니 리뷰가 없었다"가 "통과"가
-되는 것. 생략 조건이 `external.status == "reviewed"` 를 요구하고, 봇이 꺼져
-있으면 그 값이 `disabled` 가 되어 **생략이 성립하지 않는다.** 리뷰가 빠지면
-내장 리뷰가 대신 돌고, 그것도 못 하면 등급이 그 사실을 말한다.
+**이 모듈이 막는 실패는 하나다** — "아무도 안 봤다"가 "통과"가 되는 것.
+관측기를 **빼지 않고 바꾼다** (ADR-H043): 일반 정합성은 05 의 `gen` 이 소스
+변경마다 보고, 07 의 내장 리뷰는 **신호가 있는 런**에서만 돈다 — 05 가 `ok`
+가 아니거나, 04·05 에서 수리가 있었거나, Major 가 남았거나, 감사 런이다.
+그 밖의 깨끗한 런은 `skipped` 이고 등급이 내려가지 않는다.
+
+봇이 config 로 꺼진 `disabled` 는 gap 이 아니다. 켜 놓고 무응답인 `timeout`
+· `not_a_review` 는 **있어야 할 관측기가 없는 것**이라 여전히 gap 이고, 그때는
+내장 리뷰가 대신 돈다.
 
 판정이 결정론인 것도 요점이다. 모델이 `--effort` 를 고르면 같은 상황이
 런마다 다른 리뷰를 받고, 그러면 `escaped_05`(05 가 놓쳐 07 에서 처음 잡힌
@@ -31,6 +36,30 @@ EFFORTS = ("skipped", "low", "medium")
 
 # **미검증 상속값이다.** 5런에 1회의 비용으로 생략 정책의 근거를 산다 (§E2).
 AUDIT_EVERY = 5
+
+# 07 이 "고친 코드" 로 보는 예산 소모 사유. `format_reject` 는 예산은 태우지만
+# 코드를 고친 것이 아니다 (ADR-H029) — 세면 형식으로 튕긴 런이 수리 런처럼
+# 내장 리뷰를 받는다.
+REPAIR_REASONS = ("gate_failure", "review_blocking")
+
+# 정책 생략의 사유. `skip_unedited` 의 `plan_unedited` 와 같은 부류다 —
+# 관측기 부재가 아니라 "같은 관측을 이미 했다" 이므로 등급이 안 내려간다.
+SKIP_CLEAN_05 = "clean_05"
+
+
+def repaired_before_07(state):
+    """04·05 에서 코드를 고친 적이 있는가. `spent[].reason` 으로 센다.
+
+    `used` 를 보지 않는 것이 요점이다 — 같은 카운터가 형식 반려도 세므로
+    (ADR-H029) `used ≥ 1` 은 "고쳤다" 가 아니다. 사유가 어휘로 닫혀 있어
+    (`state.COUNTER_REASONS`) 여기서 가를 수 있다.
+    """
+    counters = (state or {}).get("counters") or {}
+    for name in ("repair", "review_repair"):
+        for entry in (counters.get(name) or {}).get("spent") or []:
+            if entry.get("reason") in REPAIR_REASONS:
+                return True
+    return False
 
 
 def audit_due(root):
@@ -104,64 +133,73 @@ def normalize_external(payload):
 
 
 def decide(state, external, config, audit=False):
-    """생략 조건과 effort. **명세 §3.7 의 코드블록을 그대로 옮긴 것이다.**
+    """생략 조건과 effort. 명세 §3.7 의 코드블록에서 출발해 ADR-H043 이 뒤집었다.
 
-    반환: {"skip", "effort", "audit_run", "reasons", "gaps"}
+    반환: {"skip", "effort", "skip_reason", "audit_run", "reasons", "gaps"}
 
     **gap 기록은 effort 분기와 독립이다.** 둘을 한 if/elif 사슬에 엮으면
     먼저 걸린 분기가 뒤 분기의 gap 을 삼킨다 — 05 가 degraded 이고 외부가
-    disabled 인 런에서 결손 둘 중 하나만 보고서에 남았다 (G-5). 분기 순서를
+    무응답인 런에서 결손 둘 중 하나만 보고서에 남았다 (G-5). 분기 순서를
     바꾸는 것은 고치는 것이 아니라 **구멍을 옮기는 것**이다.
     """
     r05 = state.get("review05") or {}
     profile = ((state.get("profile") or {}).get("id")
                or (state.get("profile") or {}).get("name") or "normal")
-    reviewed = external.get("status") == "reviewed"
-
-    # **`small` 은 Major 가 있어도 생략한다** — 명세가 그렇게 정했다. 작은
-    # 변경이고 외부가 실제로 봤다면 내장 리뷰를 또 태우지 않는다는 판단이고,
-    # 놀라운 규칙이라 여기 적어 둔다. 그 판단이 틀렸다면 `escaped_05` 가
-    # 감사 런에서 그것을 드러낸다.
-    skip = ((profile == "small" and reviewed)
-            or (r05.get("status") == "ok" and reviewed
-                and (r05.get("major") or 0) == 0
-                and (external.get("major") or 0) == 0))
+    ext_status = external.get("status")
+    reviewed = ext_status == "reviewed"
+    # config 로 뺀 관측기(`disabled`)와 있어야 하는데 없는 관측기(`timeout` ·
+    # `not_a_review`)를 가른다. 전자는 gap 이 아니고 후자는 gap 이다.
+    enabled = ext_status != "disabled"
 
     # 결손은 **각각** 센다. 무엇이 빠졌는지가 등급과 보고서의 재료다.
     gaps = []
     if r05.get("status") != "ok":
         gaps.append("review05:%s" % r05.get("status"))
-    if not reviewed:
-        gaps.append("external:%s" % external.get("status"))
+    if enabled and not reviewed:
+        gaps.append("external:%s" % ext_status)
 
     reasons = []
+    skip, skip_reason = False, None
     if r05.get("status") != "ok":
         effort = "medium"
-        skip = False
         reasons.append("05 가 `%s` 다 — 리뷰 결손을 비싼 쪽으로 메운다."
                        % r05.get("status"))
-    elif not reviewed:
+    elif enabled and not reviewed:
         effort = "low"
-        skip = False
-        reasons.append("외부 리뷰가 `%s` 다 — 생략 조건이 `reviewed` 를 "
-                       "요구하므로 성립하지 않는다." % external.get("status"))
-    elif skip:
-        effort = "skipped"
-        reasons.append("05 가 ok 이고 외부가 reviewed 이며 양쪽 Major 가 0 이다.")
+        reasons.append("외부 리뷰가 `%s` 다 — 켜 놓은 관측기가 없는 것이라 "
+                       "내장 리뷰가 대신 돈다." % ext_status)
+    elif reviewed and profile == "small":
+        # **`small` 은 Major 가 있어도 생략한다** — 명세가 그렇게 정했다. 작은
+        # 변경이고 외부가 실제로 봤다면 내장 리뷰를 또 태우지 않는다는 판단이고,
+        # 놀라운 규칙이라 여기 적어 둔다. 그 판단이 틀렸다면 `escaped_05` 가
+        # 감사 런에서 그것을 드러낸다.
+        skip, effort, skip_reason = True, "skipped", SKIP_CLEAN_05
+        reasons.append("small 프로파일이고 외부가 reviewed 다 — 생략한다.")
+    elif reviewed and (external.get("major") or 0) > 0:
+        effort = "low"
+        reasons.append("외부 리뷰에 Major 가 있다.")
+    elif (r05.get("major") or 0) > 0:
+        effort = "low"
+        reasons.append("05 에 Major 가 남아 있다.")
+    elif repaired_before_07(state):
+        effort = "low"
+        reasons.append("04·05 에서 수리가 있었다 — 고친 코드는 두 번째 눈을 "
+                       "받는다 (ADR-H043).")
     else:
-        effort = "low"
-        reasons.append("생략 조건을 만족하지 않는다 — Major 가 남아 있다.")
+        skip, effort, skip_reason = True, "skipped", SKIP_CLEAN_05
+        reasons.append("05 가 ok 이고 Major 가 없고 04·05 에 수리가 없었다 — "
+                       "일반 정합성은 05 의 gen 이 봤다. 내장 리뷰를 생략한다 "
+                       "(ADR-H043). 등급은 내려가지 않는다.")
 
     if audit:
         # 생략하면 escaped_05 를 셀 수 없다. 그래서 5런에 1회는 강제한다.
-        skip = False
-        effort = "medium"
+        skip, effort, skip_reason = False, "medium", None
         reasons.append("**감사 런이다** — 생략 조건을 만족해도 medium 을 "
                        "강제한다. 생략하면 `escaped_05` 를 셀 수 없고, 그러면 "
                        "생략 정책의 근거가 사라진다 (§E2).")
 
-    return {"skip": skip, "effort": effort, "audit_run": bool(audit),
-            "reasons": reasons, "gaps": gaps}
+    return {"skip": skip, "effort": effort, "skip_reason": skip_reason,
+            "audit_run": bool(audit), "reasons": reasons, "gaps": gaps}
 
 
 def escaped(root, findings, run_id, previous_open=None):

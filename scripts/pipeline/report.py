@@ -279,6 +279,12 @@ def build(state, data, calibration, promotions, timing=None):
                 "\n".join("  - %s" % b
                           for b in budget.get("blind_spots") or [])))
             if budget.get("basis") else "")),
+        # **05 와 07 을 나란히 본다** (ADR-H043). 07 을 조건부로 만든 정책의
+        # 근거가 여기서 쌓인다 — 페이즈별로 갈라 적지 않으면 총계만 남는다.
+        ("페이즈별 호출", " · ".join(
+            "%s: %s" % (k, v)
+            for k, v in sorted((budget.get("by_phase") or {}).items()))
+         or None),
         # **지급이 드러나야 한다.** `used` 만 적으면 다섯 라운드를 쓴 런과 세
         # 라운드를 쓰고 둘을 더 받은 런이 같아 보인다 (M32).
         ("라운드", _counter_cell((state.get("counters") or {}).get("round"))),
@@ -303,9 +309,16 @@ def build(state, data, calibration, promotions, timing=None):
         # **이 지표를 그대로 읽으면 안 된다** (M48). 대조는 키 일치와 07 의
         # 선언 둘이고, 07 이 같은 결함에 다른 이름을 붙이고 선언도 안 하면
         # 여전히 새 것으로 세어진다. 접힌 수를 함께 적어 그 성격을 드러낸다.
-        ("escaped_05", "%s (05 와 접힘 %s · 키 일치 + 선언 대조)"
-         % (r07.get("escaped_05"), r07.get("deduped"))
+        ("escaped_05", "%s (05 와 접힘 %s · 키 일치 + 선언 대조)%s"
+         % (r07.get("escaped_05"), r07.get("deduped"),
+            # 생략 런의 0 은 "봤는데 없었다" 가 아니다. 정책의 표본은 감사
+            # 런과 수리 런에서만 나온다 (ADR-H043).
+            " — 내장 리뷰 생략, 표본 아님"
+            if r07.get("code_review") == "skipped" else "")
          if r07.get("escaped_05") is not None else None),
+        # **생략과 불가는 다르다.** `clean_05` 는 05 의 gen 이 같은 관점을 이미
+        # 봤고 수리가 없었던 것이라 등급이 안 내려간다 (ADR-H043).
+        ("07 생략 사유", r07.get("skip_reason")),
         ("감사 런", audit.get("is_audit_run")),
         # **01 의 관측 품질이 이 표에 없었다.** 05·07 만 적어서, 교차검증이
         # 다섯 라운드 내내 폴백이어도 보고서는 아무 말도 하지 않았다 (P3).

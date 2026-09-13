@@ -124,7 +124,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["code", "skill", "when"],
+        "required": ["code", "skill"],
         "properties": {
           "code": {
             "description": "산출물 파일명에 쓰는 축약. 경로 240자 상한이 있어 짧게 쓴다.",
@@ -135,9 +135,13 @@
             "description": ".claude/skills/{skill}/SKILL.md 의 디렉터리 이름.",
             "type": "string"
           },
-          "priority": {"type": "integer", "minimum": 1},
+          "priority": {"type": "integer", "minimum": 0},
+          "when_role_owned": {
+            "description": "참이면 glob 대신 roles[].owns 가 소유한 파일이 바뀌었을 때 켜진다. when 과 둘 다 없으면 review.validate 가 거부한다 — 영원히 켜지지 않는 리뷰어다.",
+            "type": "boolean"
+          },
           "when": {
-            "description": "변경 파일 경로에 매칭할 glob. 하나라도 걸리면 켜진다.",
+            "description": "변경 파일 경로에 매칭할 glob. 하나라도 걸리면 켜진다. when_role_owned 가 없으면 필수다.",
             "type": "array",
             "minItems": 1,
             "items": {"type": "string"}

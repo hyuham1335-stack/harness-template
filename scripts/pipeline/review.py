@@ -78,9 +78,9 @@ def validate(root, config):
         if not skill_path(root, skill).is_file():
             errors.append("리뷰어 %r 의 스킬 파일이 없다: %s/%s/SKILL.md — "
                           "기동 전에 잡는다" % (code, SKILLS_REL, skill))
-        if not (r.get("when") or []):
-            errors.append("리뷰어 %r 에 when glob 이 없다 — 영원히 켜지지 않는다"
-                          % code)
+        if not (r.get("when") or []) and not r.get("when_role_owned"):
+            errors.append("리뷰어 %r 에 when glob 도 when_role_owned 도 없다 — "
+                          "영원히 켜지지 않는다" % code)
     return errors
 
 
@@ -102,10 +102,19 @@ def route(config, changed, profile="normal", source_globs=None):
     source_changed = _source_changed(config, changed, source_globs)
 
     matched = []
+    roles = config.get("roles") or []
     for r in reviewers:
         if r.get("only_when_no_source_change") and source_changed:
             continue
         hits = [c for c in changed if harness.glob_any(r.get("when") or [], c)]
+        if r.get("when_role_owned"):
+            # **glob 이 아니라 역할 소유로 켠다** (ADR-H043). 소유 판정은
+            # `_source_changed` 와 같은 술어다 — 프로젝트가 `roles[].owns` 를
+            # 다른 레이아웃으로 바꿔도 따라간다. 07 이 깨끗한 런을 생략하는
+            # 근거가 "05 의 gen 이 봤다" 이므로, 소스 변경이 있는데 gen 이
+            # 안 켜지는 경로가 있으면 그 근거가 무너진다.
+            hits += [c for c in changed if c not in hits
+                     and any(harness.owns_file(role, c) for role in roles)]
         if hits:
             matched.append(dict(r, matched_paths=hits[:20],
                                 matched_count=len(hits)))
