@@ -166,8 +166,13 @@ def rule_key(f):
 MODES = ("primary", "fallback")
 
 
-def check_review(payload, raw_text, previous_open):
-    """리뷰어 제출의 판정. 반환: {"ok","exit","errors","keys","blocking"}"""
+def check_review(payload, raw_text, previous_open, blocking=BLOCKING):
+    """리뷰어 제출의 판정. 반환: {"ok","exit","errors","keys","blocking"}
+
+    `blocking` 은 **라운드를 강제하는 심각도**다. 05 는 기본값(critical·major)
+    이고, 01 은 페이즈 선언 `converge.blocking_severities` 에서 읽어 넘긴다
+    (ADR-H041) — 02 가 Critical 만 01 로 되돌리므로 01 도 같은 문턱을 쓴다.
+    """
     errors = []
     reviewer = payload.get("reviewer")
     if not reviewer:
@@ -239,7 +244,7 @@ def check_review(payload, raw_text, previous_open):
     if errors:
         return {"ok": False, "exit": 8, "errors": errors, "keys": [],
                 "closed": [], "blocking": 0}
-    blocking = sum(1 for f in findings if f.get("severity") in BLOCKING)
+    blocking_n = sum(1 for f in findings if f.get("severity") in blocking)
     closed = sorted({p["key"] for p in previous_open or []
                      if p["id"] in resolved or p["key"] in resolved_keys})
     return {"ok": True, "exit": 0, "errors": [],
@@ -248,28 +253,41 @@ def check_review(payload, raw_text, previous_open):
                       "reraised_from": reraised.get(finding_key(f))}
                      for f in findings],
             "closed": closed,
-            "blocking": blocking}
+            "blocking": blocking_n}
 
 
-def converged(round_no, submissions, previous_keys, drift_score):
+def converged(round_no, submissions, previous_keys, drift_score,
+              blocking=BLOCKING):
     """(수렴했는가, 사유).
 
-    1라운드 수렴은 **리뷰어 둘 다 폴백이 아니고 Major 이상 0건일 때만** 허용한다.
-    독립 관측 두 개가 동시에 놓칠 확률이 한 관측을 두 번 돌리는 것보다 낮다는
-    것이 근거이고, 폴백이 섞이면 그 전제가 약해진다.
+    라운드를 강제하는 것은 **차단 심각도**(`blocking`, 01 은 선언에서 읽는다)
+    뿐이다 (ADR-H041). 그 아래 심각도는 기록되고 보고서로 가되 라운드를
+    강제하지 않는다 — 05 의 "Minor 는 고치지 않는다" 와 같은 형태다. 예전에는
+    심각도와 무관하게 이전 라운드에 없던 키 하나가 라운드를 강제했고, 제목이
+    지적의 신원이라 다듬은 제목이 매번 신규로 세어졌다. P2 가 Major 0건 ·
+    신규 Minor 1건으로 다섯 라운드를 다 쓰고 에스컬레이션된 것이 그 모양이다.
+
+    재제기(`reraised_from`)는 신규가 아니다 — 열려 있으므로 `blocking` 이
+    그것을 이미 막는다.
+
+    1라운드 수렴은 **리뷰어 둘 다 폴백이 아닐 때만** 허용한다. 독립 관측 두
+    개가 동시에 놓칠 확률이 한 관측을 두 번 돌리는 것보다 낮다는 것이
+    근거이고, 폴백이 섞이면 그 전제가 약해진다.
     """
+    label = "·".join(blocking)
     if drift_score:
         return False, "드리프트가 남아 있다"
-    blocking = sum(s["blocking"] for s in submissions)
-    if blocking:
-        return False, "Major 이상 %d건이 열려 있다" % blocking
+    open_n = sum(s["blocking"] for s in submissions)
+    if open_n:
+        return False, "%s %d건이 열려 있다" % (label, open_n)
     new = [k["key"] for s in submissions for k in s["keys"]
-           if k["key"] not in (previous_keys or set())]
+           if k.get("severity") in blocking and not k.get("reraised_from")
+           and k["key"] not in (previous_keys or set())]
     if new:
-        return False, "신규 지적 %d건" % len(new)
+        return False, "신규 %s 지적 %d건" % (label, len(new))
     if round_no == 1:
         if any(s.get("mode") == "fallback" for s in submissions):
             return False, ("폴백 리뷰어가 섞였다 — 1라운드 수렴을 허용하지 않는다. "
                            "2라운드를 돈다")
-        return True, "리뷰어 둘 다 Major 이상 0건"
-    return True, "신규 0건 · 열린 Major 이상 0건"
+        return True, "리뷰어 둘 다 %s 0건" % label
+    return True, "신규 0건 · 열린 %s 0건" % label

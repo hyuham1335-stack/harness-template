@@ -235,7 +235,7 @@ flowchart TD
 |---|---|
 | `docs/` 바로 아래 7개 | **프로젝트가 채우는 자리**입니다. 빈 골격으로 배포됩니다 |
 | `docs/harness/ROADMAP.md` | 이 템플릿의 구성물, 시작 순서, **검증된 것과 아직인 것** |
-| `docs/harness/DECISIONS.md` | 왜 그렇게 만들었는지에 대한 결정 기록입니다 (`ADR-H001`~`ADR-H040`) |
+| `docs/harness/DECISIONS.md` | 왜 그렇게 만들었는지에 대한 결정 기록입니다 (`ADR-H001`~`ADR-H042`) |
 | `docs/harness/PILOT-LOG.md` | 런마다 실제로 잰 값입니다. **추정치는 적지 않고, 재보지 않은 것은 "미측정" 으로 남깁니다** |
 | `docs/harness/pipeline/team-spec.md` | **8단계의 원본 명세**입니다. 동작을 바꾸려면 여기부터 고칩니다 |
 | `docs/harness/pipeline/ledger/taxonomy.json` | 지적을 분류하는 어휘의 단일 출처입니다 |
@@ -305,5 +305,5 @@ python -m pytest scripts/
   페이즈별 상세, 종료 코드표, 실패 분류, 귀속 규칙, 승격 기준이 전부 여기 있습니다
 - [docs/harness/ROADMAP.md](docs/harness/ROADMAP.md) — 템플릿의 구성물(§1), 시작 순서(§4),
   **검증된 것과 아직인 것**(§6)
-- [docs/harness/DECISIONS.md](docs/harness/DECISIONS.md) — 왜 그렇게 만들었는지 (`ADR-H001`~`ADR-H040`)
+- [docs/harness/DECISIONS.md](docs/harness/DECISIONS.md) — 왜 그렇게 만들었는지 (`ADR-H001`~`ADR-H042`)
 - [CLAUDE.md](CLAUDE.md) — 작업 원칙과 프로젝트 규칙. **작업자가 직접 읽어야 지켜집니다**

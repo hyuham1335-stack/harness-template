@@ -29,8 +29,9 @@
   },
   "converge": {
     "counter": "round",
-    "max_by_profile": {"small": 3, "normal": 5},
-    "one_round_allowed_when": "all_reviewers_non_fallback AND major_free",
+    "max_by_profile": {"small": 2, "normal": 3},
+    "blocking_severities": ["critical"],
+    "one_round_allowed_when": "all_reviewers_non_fallback AND blocking_free",
     "focus_round_2": "불변식 커버리지 · 범위 밖 항목 · 인수 조건의 검증 가능성",
     "on_exceed": "escalate"
   },
@@ -45,7 +46,7 @@
     {"id": "drift_score_zero", "on_fail": 4}
   ],
   "gate": {"runner": "none"},
-  "loop": {"counter": "round", "max_by_profile": {"small": 3, "normal": 5},
+  "loop": {"counter": "round", "max_by_profile": {"small": 2, "normal": 3},
            "stuck_after_identical": 2, "on_exceed": "escalate"},
   "allow": {"agents": []},
   "on_success": "02-cross-verify"
@@ -80,10 +81,16 @@
 3. **플랜 본문을 쓴다.** 절 제목은 자유이고, 커버리지가 그 제목을 참조한다.
 4. **커버리지 표를 채운다.** 모든 불변식을 정확히 한 번씩 덮어야 하고,
    `covered` 가 아니면 `reason` 이 필수다.
-5. **리뷰어 둘을 매 라운드 병렬로** 돌린다. 하나는 내부 플랜 리뷰어, 하나는 외부
-   교차검증기다. 교차검증이 마지막이 아니라 매 라운드 걸린다.
+5. **1라운드는 리뷰어 둘을 병렬로** 돌린다. 하나는 내부 플랜 리뷰어, 하나는 외부
+   교차검증기다. **2라운드부터는 열린 차단 지적을 낸 리뷰어만** 다시 온다 —
+   봉투의 `planned` 가 누구인지 말하고, 그 밖의 리뷰어는 부르지 않는다
+   (05 의 델타 재리뷰와 같은 규율, ADR-H041).
 6. 지적을 반영할 때 **플랜을 통째로 다시 쓰지 않는다.** 부분 편집으로 고친다 —
    전문이 라운드마다 다시 쌓이면 접두부가 라운드 수만큼 곱해진다.
+7. **라운드를 강제하는 것은 `converge.blocking_severities`(지금은 Critical)뿐이다.**
+   Major·Minor 는 기록되고 02 패킷과 보고서로 가되 다음 라운드를 열지 않는다.
+   02 가 Critical 만 01 로 되돌리므로 문턱이 같다. 열린 Major 를 고칠지는
+   작성자의 판단이고, 고쳤으면 다음 회차 제출이 `resolved_from_previous` 로 닫는다.
 
 ### 산출물 형태
 
@@ -186,11 +193,17 @@
 | `source_quote` 가 원문에 없다 | exit 8 — 해당 항목을 원문 그대로 고쳐 재제출 |
 | 커버리지가 불변식을 빠뜨렸다 | exit 8 — 빠진 id 가 봉투에 나온다 |
 | `drift_score > 0` | exit 4 — 이탈 항목이 원문 인용과 함께 나온다. 예산이 남아 있다 |
-| 라운드 상한 초과 | exit 7 → 에스컬레이션. 미해결 Critical·Major 전문과 3지선다 |
+| 라운드 상한 초과 | exit 7 → 에스컬레이션. 미해결 Critical 전문과 3지선다 |
+| 같은 Critical 이 `stuck_after_identical` 라운드 반복 | exit 7 → 상한 전에 에스컬레이션. 플랜 수정이 지적을 닫지 못한다 |
 
-**라운드 상한 3(small)/5(normal)과 `stuck_after_identical: 2` 는 미검증 상속값이다.**
-이 리포의 실측이 아니라 물려받은 숫자이고, 첫 세 런의 원장이 이 값을 검사한다.
-그때까지 값을 근거로 삼지 않는다.
+**라운드 상한 2(small)/3(normal)은 ADR-H041 이 5 에서 내린 값이다.** 수렴 규칙을
+고친 뒤(차단 심각도만 라운드를 강제 · 재제기는 신규가 아님 · 같은 차단 지적이
+`stuck_after_identical` 회 반복되면 상한 전에 에스컬레이션) 상한은 천장이지
+경로가 아니다. 첫 세 런의 원장(`run.rounds`)이 이 값을 검사한다.
+
+**`stuck_after_identical: 2` 는 이제 01 도 읽는다.** 열린 차단 키 집합이 직전
+라운드와 같으면 예산이 남아도 멈춘다 — 플랜 수정이 지적을 닫지 못하는 상태라
+라운드를 더 돌아도 같은 것이 나온다.
 
 **`loop.counter` 와 `loop.on_exceed` 는 이제 코드가 실제로 읽는다** (M36).
 `on_exceed` 의 어휘는 `escalate` 하나이고, 어휘 밖 값은 `lint-phases` 와 런타임이
@@ -198,9 +211,10 @@
 `loop.on_exceed` 와 같아야 한다. 코드가 읽는 것은 `loop` 쪽이라 갈리면 `converge`
 가 조용히 무시된다.
 
-**`max_by_profile` 의 `small: 3` 은 01 에서 도달하지 않는다.** 프로파일 판정
-기준이 계약의 항목 수인데 그 계약은 03 이 쓰므로, 01 이 도는 동안 값은 항상
-`normal` 이다. 지우지 않고 표기해서 남긴다 — 판정 시점이 앞당겨지면 살아난다.
+**`max_by_profile` 의 `small: 2` 는 사람이 `init --profile small` 을 준 런에서만
+산다.** 자동 판정 기준이 계약의 항목 수인데 그 계약은 03 이 쓰므로, 01 이 도는
+동안 자동값은 항상 `normal` 이다. `/feature` 가 slug 를 확인할 때 프로파일도
+함께 묻는다.
 
 **02 가 Critical 로 되돌리면 라운드 예산을 새로 지급받는다.** 리셋이 아니라
 지급이라 `used` 는 그대로이고, 지급 사실이 `counters.round.grants` 에 남는다.

@@ -270,7 +270,7 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
 | `need_more_context` 계속 참 | 판단 | 1회에 한해 파일 목록 명시 추가. 반복되면 라우팅 결함으로 보고 |
 | 두 리뷰어 지적이 상반 | 판단 | **계약 우선** → `rules_dir` 우선. 판정을 원장에 |
 | `CONTRACT_DEFECT` 발견 | 정책 | 수리하지 않는다 → **에스컬레이션** |
-| diff 가 인라인 상한 초과 | — | 경로 전달 폴백 + 원장 기록 |
+| diff 가 인라인 상한 초과 | — | **기계가 정한다** — `next` 가 `review.inline_max` 로 재고 봉투가 "경로로 전달하라" 고 말한다. 네 재량이 아니다 (ADR-H042). 폴백 사실이 상태에 남는다 |
 | `review_repair` 초과 · 동일 sig 2회 | 정책 | 에스컬레이션. **계약 결함을 먼저 의심**하라고 패킷에 적는다 |
 
 **`review_repair.max: 2` · `stuck_after_identical: 2` · `local_repair.max_per_run: 3`

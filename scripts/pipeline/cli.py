@@ -43,7 +43,7 @@ REQUIRES_KINDS = ("file", "state", "clean_ownership", "adapter_stage")
 PRODUCES_KINDS = ("json", "markdown")
 FRONT_KEYS = ("id", "index", "owner", "approval", "docs", "requires", "produces",
               "review", "converge", "submit_checks", "skip_when", "on_skip",
-              "gate", "loop", "allow", "on_success")
+              "skip_unedited", "gate", "loop", "allow", "on_success")
 REQUIRED_SECTIONS = ("## 목적", "## 진입 조건", "## 절차",
                      "## 제출 형식", "## 금지", "## 실패 시")
 ROLE_TEMPLATE_SECTION = "## 역할 프롬프트 템플릿"
@@ -71,10 +71,10 @@ class ConfigDeclarationError(ValueError):
     폴백이 곧 새 하드코딩이다.
     """
 
-    def __init__(self, phase_id, key, detail):
-        self.phase_id, self.key = phase_id, key
+    def __init__(self, phase_id, key, detail, scope="loop"):
+        self.phase_id, self.key, self.scope = phase_id, key, scope
         super(ConfigDeclarationError, self).__init__(
-            "`%s` 의 `loop.%s` %s" % (phase_id, key, detail))
+            "`%s` 의 `%s.%s` %s" % (phase_id, scope, key, detail))
 
 
 def _loop_counter(front):
@@ -130,6 +130,34 @@ def _loop_on_exceed(front):
     return got
 
 
+def _converge_blocking(front):
+    """`converge.blocking_severities` — 라운드를 강제하는 심각도 (ADR-H041).
+
+    코드에 박지 않는다. 02 가 Critical 만 되돌리는 것과 같은 문턱을 01 이
+    쓰는지는 선언이 말하고, 선언이 없으면 exit 2 다.
+    """
+    got = (front.get("converge") or {}).get("blocking_severities")
+    if not got or not isinstance(got, list):
+        raise ConfigDeclarationError(front.get("id"), "blocking_severities",
+                                     "가 없다", scope="converge")
+    bad = [s for s in got if s not in verdict.SEVERITIES]
+    if bad:
+        raise ConfigDeclarationError(
+            front.get("id"), "blocking_severities",
+            "가 어휘 밖이다: %r (%s)" % (bad, ", ".join(verdict.SEVERITIES)),
+            scope="converge")
+    return tuple(got)
+
+
+def _loop_stuck_after(front):
+    """`loop.stuck_after_identical`. 01 도 이제 읽는다 (ADR-H041)."""
+    got = (front.get("loop") or {}).get("stuck_after_identical")
+    if not got:
+        raise ConfigDeclarationError(front.get("id"), "stuck_after_identical",
+                                     "가 없다")
+    return int(got)
+
+
 DECLARATION_RENDER = """## 페이즈 선언을 읽을 수 없다
 
 %s
@@ -142,7 +170,7 @@ def _declaration_envelope(cmd, s, exc):
     """선언 결함은 **제출물 결함이 아니다** — 코드가 아니라 설정이라 exit 2 다."""
     return st.envelope(
         cmd, False, 2, s,
-        {"phase": exc.phase_id, "key": "loop.%s" % exc.key},
+        {"phase": exc.phase_id, "key": "%s.%s" % (exc.scope, exc.key)},
         DECLARATION_RENDER % exc, None)
 
 
@@ -295,7 +323,8 @@ def resolve(value, ctx):
 
 # --------------------------------------------------------- 조건식 (unless 등)
 
-_CONDITION = re.compile(r"^\s*([A-Za-z0-9_.]+)\s*(==|!=)\s*(.+?)\s*$")
+# 포인터는 페이즈 id(`01-plan`)를 지날 수 있으므로 `-` 를 허용한다 (ADR-H042).
+_CONDITION = re.compile(r"^\s*([A-Za-z0-9_.\-]+)\s*(==|!=)\s*(.+?)\s*$")
 
 
 def eval_condition(expr, state):
@@ -752,6 +781,8 @@ def lint_phases(root, phases_dir=None):
             else:
                 seen_keys[key] = pid
         _lint_loop(name, pid, front, loaded, add)
+        _lint_converge(name, front, add)
+        _lint_skip_unedited(name, front, add)
 
         # ── 플레이스홀더와 경로
         _lint_placeholders(name, front, ctx, add)
@@ -790,6 +821,31 @@ def lint_phases(root, phases_dir=None):
     _lint_taxonomy(root, add)
     _lint_reviewers(root, config, add)
     return out
+
+
+def _lint_converge(name, front, add):
+    """`converge.blocking_severities` 가 **읽히는 값**인가 (ADR-H041)."""
+    conv = front.get("converge")
+    if not conv:
+        return
+    try:
+        _converge_blocking(front)
+    except ConfigDeclarationError as exc:
+        add(name, "blocking_severities", "FAIL", str(exc))
+
+
+def _lint_skip_unedited(name, front, add):
+    """`skip_unedited.when` 이 `eval_condition` 문법인가 (ADR-H042)."""
+    node = front.get("skip_unedited")
+    if not node:
+        return
+    try:
+        eval_condition(node.get("when"), {})
+    except ValueError as exc:
+        add(name, "skip_unedited", "FAIL", "skip_unedited.when: %s" % exc)
+    if node.get("status") not in st.PHASE_STATUS:
+        add(name, "skip_unedited", "FAIL",
+            "skip_unedited.status 가 어휘 밖이다: %r" % node.get("status"))
 
 
 def _lint_loop(name, pid, front, loaded, add):
@@ -1053,6 +1109,9 @@ def run_next(root, run_id=None):
 
     st.set_phase_status(s, pid, "running")
     st.append_event(paths, "phase_enter", cmd="next", phase=pid)
+    skipped = _skip_unedited(root, paths, s, phase, ctx, "next")
+    if skipped is not None:
+        return skipped
     if pid == "05-code-review":
         _plan_05_review(root, paths, s, ctx)
     # **지시를 낸 자리에서 센다** (M26). `next` 는 같은 페이즈에서 여러 번
@@ -1102,6 +1161,10 @@ def _plan_05_review(root, paths, s, ctx):
     node["contract_dropped"] = refreshed.get("dropped") or []
     node["mode"] = review_mod.mode(ctx["config"],
                                    pc._changed_lines(root, changed))
+    # **인라인 상한은 기계가 정한다** (ADR-H042). `review.inline_max` 는
+    # 정의만 있고 아무도 안 읽어 큰 diff 가 리뷰어 수만큼 인라인됐다.
+    node["inline"] = review_mod.inline_budget(ctx["config"],
+                                              _diff_text(root, changed))
     if not node["planned"]:
         # **여기서 확정하지 않으면 아무도 확정하지 않는다.** 리뷰어가 0명이면
         # 제출도 0건이고 `_judge_05` 가 아예 안 불린다 — 05 가 조용히 지나간다.
@@ -1109,6 +1172,25 @@ def _plan_05_review(root, paths, s, ctx):
         # 없다는 것이 G-4 의 절반이었다.
         _write_review05(s, node, planned=[], ok=0, merged=[], slot={})
     return node
+
+
+def _diff_text(root, changed):
+    """워크트리 diff 원문. 추적분은 `git diff HEAD`, 새 파일은 내용 그대로."""
+    r = harness._git(root, "diff", "HEAD", "--", *changed) if changed else None
+    text = r.stdout if (r is not None and r.returncode == 0) else ""
+    tracked = harness._git(root, "ls-files", "--", *changed) if changed else None
+    known = set()
+    if tracked is not None and tracked.returncode == 0:
+        known = {l.strip().replace("\\", "/") for l in tracked.stdout.splitlines()}
+    for rel in changed:
+        if rel in known:
+            continue
+        try:
+            text += (Path(root) / rel).read_text(encoding="utf-8",
+                                                 errors="replace")
+        except OSError:
+            continue
+    return text
 
 
 def _dedup_ordered(items):
@@ -1351,6 +1433,13 @@ def _review_render(s):
                   % ", ".join("`%s`" % d["code"] for d in routed["dropped"])]
     lines += ["", "프롬프트 첫 줄은 **스킬 파일을 읽으라는 지시**다. "
                   "본문을 복사하지 마라 — 리뷰어 수만큼 고정비가 곱해진다."]
+    inline = node.get("inline") or {}
+    if inline and not inline.get("inline"):
+        lines += ["", "**diff 를 인라인하지 마라 — 경로로 전달한다.** 인라인 "
+                      "상한(`review.inline_max`)을 넘었다: %s. 리뷰어 패킷의 "
+                      "`## 변경` 절에 diff 대신 변경 파일 경로 목록을 싣고, "
+                      "리뷰어가 그 파일만 읽게 한다. 이 사실은 원장에 남는다."
+                  % " · ".join(inline.get("over") or [])]
     return "\n".join(lines)
 
 
@@ -1443,8 +1532,10 @@ def _cross_verify_render(config, s, front):
 
     if mode == "primary":
         return ("## 교차검증\n\n외부 관측기 `%s` 를 쓴다. 이것이 있으면 "
-                "**1라운드 수렴이 열린다** — 둘 다 폴백이 아니고 Major 이상이 "
-                "0건이면 그 회차에서 끝난다." % cv.get("primary"))
+                "**1라운드 수렴이 열린다** — 둘 다 폴백이 아니고 차단 심각도"
+                "(`converge.blocking_severities`)가 0건이면 그 회차에서 끝난다. "
+                "그 아래 심각도는 기록되되 라운드를 강제하지 않는다."
+                % cv.get("primary"))
     if mode == "fallback":
         return ("## 교차검증\n\n외부 관측기가 없어 폴백 `%s` 를 쓴다. "
                 "**폴백이 섞이면 1라운드 수렴을 허용하지 않는다** — 독립 관측 "
@@ -1643,7 +1734,12 @@ def _instruction_keys(s, pid, ctx):
     if pid == "05-code-review":
         node = (s.get("phases") or {}).get("05-code-review") or {}
         r = used("review_repair") + 1
-        return ["05:r%d:%s" % (r, c) for c in _planned_for_round(node, r)]
+        planned = _planned_for_round(node, r)
+        # `merged` 는 한 에이전트가 관점을 순차 적용한다 — 기동 지시도 하나다.
+        # 제출은 M37 대로 리뷰어 수만큼 갈라지지만 그것은 계수가 아니다.
+        if r == 1 and node.get("mode") == "merged" and len(planned) > 1:
+            return ["05:r1:merged"]
+        return ["05:r%d:%s" % (r, c) for c in planned]
     return []
 
 
@@ -1735,15 +1831,22 @@ def _close_run(root, paths, s, phase_item, ctx, cmd):
                        _horizon_render(None), None)
 
 
-def _advance_to_next(root, paths, s, phase_item, ctx, cmd="record"):
-    """통과 시 전이하고 **다음 페이즈 지시문을 바로 낸다** (왕복 절약)."""
+def _advance_to_next(root, paths, s, phase_item, ctx, cmd="record",
+                     status="passed"):
+    """통과 시 전이하고 **다음 페이즈 지시문을 바로 낸다** (왕복 절약).
+
+    `status` 는 떠나는 페이즈에 남길 상태다 — 통과면 `passed`, `skip_unedited`
+    로 건너뛰면 `skipped` 다. 건너뛴 것을 `passed` 로 덮으면 보고서가 "관측이
+    있었다" 고 적는다.
+    """
     pid = phase_item["front"]["id"]
     nxt = phase_item["front"].get("on_success")
     if nxt == st.DONE:
         return _close_run(root, paths, s, phase_item, ctx, cmd)
 
-    st.set_phase_status(s, pid, "passed")
-    st.append_event(paths, "phase_pass", cmd=cmd, phase=pid)
+    st.set_phase_status(s, pid, status)
+    if status == "passed":
+        st.append_event(paths, "phase_pass", cmd=cmd, phase=pid)
     s["phase"] = nxt
     st.save(paths, s)
 
@@ -1764,9 +1867,39 @@ def _advance_to_next(root, paths, s, phase_item, ctx, cmd="record"):
                            "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
     st.set_phase_status(s, nxt, "running")
     st.append_event(paths, "phase_enter", cmd=cmd, phase=nxt)
+    skipped = _skip_unedited(root, paths, s, nxt_item, ctx, cmd)
+    if skipped is not None:
+        return skipped
+    # **지시를 낸 자리에서 센다.** 전이가 다음 패킷을 바로 내므로 `next` 의
+    # 계수를 지나친다 — 02 의 교차검증기가 그렇게 예산 밖에 있었다 (ADR-H042).
+    _t, _m, exhausted = st.count_instructions(
+        s, nxt, _instruction_keys(s, nxt, ctx))
     st.save(paths, s)
     render, next_cmd = render_packet(root, nxt_item, ctx, s, nxt_checks)
-    return st.envelope(cmd, True, 0, s, {"next_phase": nxt}, render, next_cmd)
+    env = st.envelope(cmd, True, 0, s, {"next_phase": nxt}, render, next_cmd)
+    return _budget_stop(paths, env) if exhausted else env
+
+
+def _skip_unedited(root, paths, s, phase_item, ctx, cmd):
+    """`skip_unedited` 가 참이면 이 페이즈를 **등급 강등 없이** 건너뛴다.
+
+    02 의 존재 이유는 "부분 편집으로 고친 전문의 모순" 이다. 01 이 1라운드에
+    수렴했으면 편집이 없었고, 그때 교차검증기가 본 것이 곧 전문이다 — 같은
+    관측기를 같은 텍스트에 한 번 더 부르는 것이다 (ADR-H042). `skip_when`
+    (관측기 부재)과 다르다: 그쪽은 관측이 없었던 것이라 등급이 내려간다.
+    """
+    front = phase_item["front"]
+    node = front.get("skip_unedited")
+    if not node or not eval_condition(node.get("when"), s):
+        return None
+    pid = front["id"]
+    st.set_phase_status(s, pid, node.get("status") or "skipped")
+    s.setdefault("cross_verify", {})["skip_reason"] = node.get("reason")
+    st.append_event(paths, "phase_skip", cmd=cmd, phase=pid,
+                    reason=node.get("reason"))
+    st.save(paths, s)
+    return _advance_to_next(root, paths, s, phase_item, ctx, cmd,
+                            status=node.get("status") or "skipped")
 
 
 # ------------------------------------------------------- 01 제출 처리
@@ -1853,7 +1986,8 @@ def _record_01_review(root, paths, s, phase_item, ctx, file, reviewer, round_):
 
     rounds = node.setdefault("rounds", {})
     prev_open = _previous_open(rounds, round_, reviewer)
-    got = verdict.check_review(payload, raw_text, prev_open)
+    got = verdict.check_review(payload, raw_text, prev_open,
+                               _converge_blocking(phase_item["front"]))
     if not got["ok"]:
         st.append_event(paths, "check_fail", cmd="record", phase="01-plan",
                         reviewer=reviewer, errors=len(got["errors"]))
@@ -1876,8 +2010,11 @@ def _record_01_review(root, paths, s, phase_item, ctx, file, reviewer, round_):
                                    payload.get("primary_error"))
     st.save(paths, s)
 
-    expected = [r["code"] for r in
-                ((phase_item["front"].get("review") or {}).get("reviewers") or [])]
+    # 2라운드부터는 **열린 차단 지적을 낸 리뷰어만** 다시 온다 (ADR-H041) —
+    # 05 의 델타 재리뷰와 같은 형태다. 1라운드는 전원이다.
+    expected = (node.get("rounds_planned") or {}).get(str(round_)) or [
+        r["code"] for r in
+        ((phase_item["front"].get("review") or {}).get("reviewers") or [])]
     missing = [c for c in expected if c not in slot]
     if missing:
         return st.envelope("record", True, 0, s,
@@ -1963,14 +2100,22 @@ def _note_cross_verify_gap(s):
         st.demote(s, "PASS_WITH_GAPS", gap="cross_verify:fallback")
 
 
+def _open_blocking_keys(rounds, upto_round, blocking):
+    """`upto_round` 까지 제출된 것 중 **아직 열린 차단 키** 집합."""
+    return {k["key"] for k in _previous_open(rounds, upto_round + 1)
+            if k.get("severity") in blocking}
+
+
 def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
+    front = phase_item["front"]
+    blocking = _converge_blocking(front)
     subs = [dict(v, code=k) for k, v in slot.items()]
     prev_keys = {k["key"] for r in rounds for sub in rounds[r].values()
                  for k in sub.get("keys") or [] if int(r) < round_}
     drift = (s["phases"]["01-plan"] or {}).get("drift_score") or 0
-    ok, reason = verdict.converged(round_, subs, prev_keys, drift)
+    ok, reason = verdict.converged(round_, subs, prev_keys, drift, blocking)
 
-    conv = phase_item["front"].get("converge") or {}
+    conv = front.get("converge") or {}
     profile = (s.get("profile") or {}).get("name") or "normal"
     max_rounds = (conv.get("max_by_profile") or {}).get(profile) or 5
 
@@ -1991,33 +2136,69 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
     # 왕복 뒤 지급을 받은 런에서 "5라운드 안에" 라고 적으면서 실제로는 10 을
     # 다 쓰고 멈춘다 — 사람이 그 숫자로 판단할 수 없다.
     used, max_eff, exceeded = st.counter_inc(
-        s, _loop_counter(phase_item["front"]), max_rounds,
-        "not_converged", paths=paths)
+        s, _loop_counter(front), max_rounds, "not_converged", paths=paths)
+    options = ["이대로 진행한다(미해결 지적을 안고 간다)",
+               "범위를 줄여 플랜을 다시 쓴다", "중단한다"]
     if exceeded:
-        _loop_on_exceed(phase_item["front"])
+        _loop_on_exceed(front)
         st.escalate(paths, s,
                     "01 이 %d라운드 안에 수렴하지 않았다: %s" % (max_eff, reason),
-                    ["이대로 진행한다(미해결 지적을 안고 간다)",
-                     "범위를 줄여 플랜을 다시 쓴다", "중단한다"],
-                    phase="01-plan")
+                    options, phase="01-plan")
         return _escalation_envelope("record", paths, s)
 
+    # **같은 차단 지적이 그대로 반복되면 상한 전에 멈춘다** (ADR-H041).
+    # `stuck_after_identical` 은 01 에 선언돼 있었지만 04 만 읽었다 — 01 은
+    # 같은 Critical 이 다섯 번 반복돼도 상한까지 태웠다.
+    stuck_after = _loop_stuck_after(front)
+    open_now = _open_blocking_keys(rounds, round_, blocking)
+    identical = 1
+    for r in range(round_ - 1, 0, -1):
+        if open_now and _open_blocking_keys(rounds, r, blocking) == open_now:
+            identical += 1
+        else:
+            break
+    if open_now and identical >= stuck_after:
+        _loop_on_exceed(front)
+        st.escalate(paths, s,
+                    "01 의 같은 %s 지적 %d건이 %d라운드 연속 반복됐다 — 플랜 "
+                    "수정이 지적을 닫지 못한다: %s"
+                    % ("·".join(blocking), len(open_now), identical, reason),
+                    options, phase="01-plan")
+        return _escalation_envelope("record", paths, s)
+
+    # **다음 라운드는 열린 차단 지적을 낸 리뷰어만 온다** (ADR-H041). 05 의
+    # 델타 재리뷰(`_delta_reviewer`)와 같은 규율이고, 결정론이다.
+    planned = [code for code in slot
+               if any(k["key"] in open_now for k in slot[code].get("keys") or [])]
+    if not planned:
+        # 차단 키가 없는데 미수렴 — 폴백 1라운드다. 전원이 다시 온다.
+        planned = list(slot)
+    s["phases"]["01-plan"].setdefault("rounds_planned", {})[str(used + 1)] = planned
+    # **지시를 낸 자리에서 센다.** 01 의 루프는 `record → record` 라 `next`
+    # 의 계수를 지나쳤고, 다섯 라운드 열 번을 불러도 예산은 2 였다 (ADR-H042).
+    _t, _m, exhausted = st.count_instructions(
+        s, "01-plan", ["01:r%d:%s" % (used, code) for code in planned])
     st.save(paths, s)
     focus = conv.get("focus_round_2") or ""
-    cv_note = _cross_verify_render(ctx["config"], s, phase_item["front"])
-    return st.envelope(
-        "record", True, 0, s, {"round": used + 1, "reason": reason},
+    cv_note = _cross_verify_render(ctx["config"], s, front)
+    env = st.envelope(
+        "record", True, 0, s,
+        {"round": used + 1, "reason": reason, "planned": planned},
         "## %d라운드가 필요하다\n\n%s\n\n다음 회차의 강제 초점: %s\n\n"
+        "**다시 부를 리뷰어는 `%s` 다** — 열린 차단 지적을 낸 쪽만 온다. "
+        "다른 리뷰어는 이번 회차에 부르지 않는다.\n\n"
         "플랜은 **부분 편집**으로 고친다 — 전체를 다시 쓰면 접두부가 라운드마다 "
         "쌓인다.%s"
         # **라운드마다 교차검증기를 다시 말한다.** 이 절은 `render_packet`
         # 에서만 나왔고 그건 `next` 에서만 불리는데, 01 의 루프는
         # `record → record` 라 봉투가 그 말을 다시 할 경로가 물리적으로
         # 없었다 — 그래서 한 번 폴백하면 그 런 내내 굳었다 (P3).
-        % (used + 1, reason, focus or "(없음)",
+        % (used + 1, reason, focus or "(없음)", "`, `".join(planned),
            ("\n\n" + cv_note) if cv_note else ""),
         "python scripts/pipeline/cli.py record --phase 01 --file <리뷰 json> "
-        "--reviewer <code> --round %d --run-id %s" % (used + 1, s["run_id"]))
+        "--reviewer %s --round %d --run-id %s"
+        % (planned[0], used + 1, s["run_id"]))
+    return _budget_stop(paths, env) if exhausted else env
 
 
 def _same_command(s, phase):
@@ -2029,6 +2210,9 @@ def _same_command(s, phase):
 
 def _record_02(root, paths, s, phase_item, ctx, file, reviewer, round_):
     front = phase_item["front"]
+    skipped = _skip_unedited(root, paths, s, phase_item, ctx, "record")
+    if skipped is not None:
+        return skipped
     if front.get("skip_when") and verdict and eval_condition(front["skip_when"], s):
         on_skip = front.get("on_skip") or {}
         st.set_phase_status(s, "02-cross-verify", on_skip.get("status") or "skipped")
@@ -2118,7 +2302,8 @@ def _grant_rounds(root, s, critical):
 
     01 의 라운드 상한과 **같은 출처**(`01-plan.md` 의 `converge.max_by_profile`)
     에서 읽는다. 두 곳이 갈라지면 "왕복 뒤 예산" 이 상한과 다른 뜻을 갖는다.
-    `_judge_round` 의 `or 5` 폴백도 그대로 따라간다.
+    `_judge_round` 의 `or 5` 폴백도 그대로 따라간다. 선언값은 normal 3 이다
+    (ADR-H041) — 왕복 한 번이면 실효 상한 6.
     """
     loaded, _broken = load_phases(root)
     conv = ((loaded.get("01-plan") or {}).get("front") or {}).get("converge") or {}
@@ -3708,6 +3893,9 @@ def run_promote(root, scan=False, stage=False, apply=False, flush=False,
         # 중복된다. **한 번 일어난 일이 재집계로 없던 일이 되면 안 된다.**
         promos = s.setdefault("promotions", [])
         pm.merge_staged(promos, pm.stage(scanned["candidates"]))
+        if scanned["needs_model"]:
+            # 승격 판정은 모델 호출이다 — 지시하는 자리에서 센다 (ADR-H042).
+            st.count_instructions(s, "07-pr-review", ["07:promote"])
         st.save(paths, s)
         data = dict(scanned, promotions=promos)
         return st.envelope("promote", True, 0, s, data,

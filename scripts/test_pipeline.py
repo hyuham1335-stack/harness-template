@@ -1529,10 +1529,11 @@ class TestReviewConvergence:
         assert st.phase_status(after, "01-plan") != "passed"
         assert "2라운드" in env["render"] or env["data"].get("round") == 2
 
-    def test_major_forces_a_second_round(self, run01):
+    def test_critical_forces_a_second_round(self, run01):
+        """ADR-H041 — 라운드를 강제하는 것은 Critical 뿐이다 (Major 는 아니다)."""
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
-        finding = {"id": "F-1", "severity": "major", "category": "scope",
+        finding = {"id": "F-1", "severity": "critical", "category": "scope",
                    "title": "범위가 넓다", "quote": "범위가 넓다"}
         _submit_review(repo, paths, _review("plan", findings=[finding]))
         _submit_review(repo, paths, _review("xv"))
@@ -1556,7 +1557,7 @@ class TestReviewConvergence:
         """지적이 조용히 증발하는 것을 막는다."""
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
-        finding = {"id": "F-1", "severity": "major", "title": "범위",
+        finding = {"id": "F-1", "severity": "critical", "title": "범위",
                    "quote": "범위가 넓다"}
         _submit_review(repo, paths, _review("plan", findings=[finding]))
         _submit_review(repo, paths, _review("xv"))
@@ -1574,12 +1575,12 @@ class TestReviewConvergence:
         """
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
-        first = {"id": "F-1", "severity": "major", "title": "범위가 넓다",
+        first = {"id": "F-1", "severity": "critical", "title": "범위가 넓다",
                  "quote": "범위가 넓다"}
         _submit_review(repo, paths, _review("plan", findings=[first]))
         _submit_review(repo, paths, _review("xv"))
 
-        reraised = {"id": "F-1", "severity": "major",
+        reraised = {"id": "F-1", "severity": "critical",
                     "title": "범위가 여전히 넓다", "quote": "범위가 넓다",
                     "reraised_from_previous": "F-1"}
         env = _submit_review(
@@ -1592,10 +1593,10 @@ class TestReviewConvergence:
         """없는 지적을 가리키는 재제기는 단조성을 우회하는 구멍이 된다."""
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
-        f1 = {"id": "F-1", "severity": "major", "title": "범위", "quote": "범위가 넓다"}
+        f1 = {"id": "F-1", "severity": "critical", "title": "범위", "quote": "범위가 넓다"}
         _submit_review(repo, paths, _review("plan", findings=[f1]))
         _submit_review(repo, paths, _review("xv"))
-        ghost = {"id": "F-9", "severity": "major", "title": "x", "quote": "범위가 넓다",
+        ghost = {"id": "F-9", "severity": "critical", "title": "x", "quote": "범위가 넓다",
                  "reraised_from_previous": "F-404"}
         env = _submit_review(
             repo, paths, _review("plan", round_=2, findings=[ghost]), round_=2)
@@ -1609,17 +1610,22 @@ class TestReviewConvergence:
         """
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
-        f1 = {"id": "F-1", "severity": "major", "title": "범위", "quote": "범위가 넓다"}
+        f1 = {"id": "F-1", "severity": "critical", "title": "범위", "quote": "범위가 넓다"}
+        g1 = {"id": "G-1", "severity": "critical", "title": "xv 의 것",
+              "quote": "범위가 넓다"}
         _submit_review(repo, paths, _review("plan", findings=[f1]))
-        _submit_review(repo, paths, _review("xv"))
+        _submit_review(repo, paths, _review("xv", findings=[g1]))
 
         _submit_review(repo, paths,
                        _review("plan", round_=2,
                                resolved=[{"id": "F-1", "resolved_by": "좁혔다"}]),
                        round_=2)
-        f2 = {"id": "F-2", "severity": "major", "title": "다른 것",
+        f2 = {"id": "F-2", "severity": "critical", "title": "다른 것",
               "quote": "범위가 넓다"}
-        _submit_review(repo, paths, _review("xv", round_=2, findings=[f2]), round_=2)
+        _submit_review(repo, paths,
+                       _review("xv", round_=2, findings=[f2],
+                               resolved=[{"id": "G-1", "resolved_by": "고쳤다"}]),
+                       round_=2)
 
         # 3라운드: F-1 은 1라운드에서 닫혔으므로 다시 적지 않아도 통과해야 한다.
         env = _submit_review(
@@ -1633,9 +1639,9 @@ class TestReviewConvergence:
         """③ 두 리뷰어가 모두 F-1·F-2… 를 쓰므로 id 한 줄이 둘을 동시에 닫았다."""
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
-        mine = {"id": "F-1", "severity": "major", "title": "내 지적",
+        mine = {"id": "F-1", "severity": "critical", "title": "내 지적",
                 "quote": "범위가 넓다"}
-        theirs = {"id": "F-1", "severity": "major", "title": "남의 지적",
+        theirs = {"id": "F-1", "severity": "critical", "title": "남의 지적",
                   "quote": "범위가 넓다"}
         _submit_review(repo, paths, _review("plan", findings=[mine]))
         _submit_review(repo, paths, _review("xv", findings=[theirs]))
@@ -1679,7 +1685,7 @@ class TestReviewConvergence:
     def test_resolved_from_previous_closes_it(self, run01):
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
-        finding = {"id": "F-1", "severity": "major", "title": "범위",
+        finding = {"id": "F-1", "severity": "critical", "title": "범위",
                    "quote": "범위가 넓다"}
         _submit_review(repo, paths, _review("plan", findings=[finding]))
         _submit_review(repo, paths, _review("xv"))
@@ -2098,9 +2104,17 @@ class TestRoundBudgetAfterRoundTrip:
                 "quote": "빈 문자열을 먼저 거른다."}
 
     def _converge_01(self, repo, paths):
+        """두 라운드로 수렴시킨다 — 1라운드 수렴은 02 를 건너뛴다 (ADR-H042)."""
         _submit_plan(repo, paths, _plan())
-        _submit_review(repo, paths, _review("plan"))
-        return _submit_review(repo, paths, _review("xv"))
+        crit = {"id": "F-0", "severity": "critical", "title": "1회차 지적",
+                "quote": "빈 문자열을 먼저 거른다."}
+        _submit_review(repo, paths, _review("plan", findings=[crit]))
+        _submit_review(repo, paths, _review("xv"))
+        return _submit_review(
+            repo, paths,
+            _review("plan", round_=2,
+                    resolved=[{"id": "F-0", "resolved_by": "고쳤다"}]),
+            round_=2)
 
     def _verdict(self, repo, paths, findings):
         v = paths.run_dir / "02_verdict.json"
@@ -2185,7 +2199,7 @@ class TestRoundBudgetAfterRoundTrip:
         self._verdict(repo, paths, [dict(self.CRITICAL)])
         _, granted = st.load(repo, paths.run_id)
         eff = granted["counters"]["round"]["max"]
-        assert eff == 10, granted["counters"]["round"]   # 선언 5 + 지급 5
+        assert eff == 6, granted["counters"]["round"]    # 선언 3 + 지급 3
 
         self._converge_01(repo, paths)                   # 되돌아간 01 이 한 바퀴 더
         _, after = st.load(repo, paths.run_id)
@@ -2204,17 +2218,17 @@ class TestRoundBudgetAfterRoundTrip:
         self._converge_01(repo, paths)
         self._verdict(repo, paths, [dict(self.CRITICAL)])
         _, mid = st.load(repo, paths.run_id)
-        mid["counters"]["round"]["used"] = 4      # 선언 상한 5 의 코앞
+        assert mid["counters"]["round"]["used"] == 2   # 선언 상한 3 의 코앞
         st.save(paths, mid)
 
         _submit_plan(repo, paths, _plan())
-        _submit_review(repo, paths, _review("plan", round_=2, findings=[MINOR]),
-                       round_=2)
-        env = _submit_review(repo, paths, _review("xv", round_=2, findings=[MINOR]),
-                             round_=2)
+        _submit_review(repo, paths, _review("plan", round_=3, findings=[MINOR]),
+                       round_=3)
+        env = _submit_review(repo, paths, _review("xv", round_=3, findings=[MINOR]),
+                             round_=3)
         _, after = st.load(repo, paths.run_id)
-        assert after["counters"]["round"]["used"] == 5, after["counters"]["round"]
-        # 실효 상한은 10 이다. 5 에서 멈추면 그것이 M56 이다.
+        assert after["counters"]["round"]["used"] == 3, after["counters"]["round"]
+        # 실효 상한은 6 이다. 3 에서 멈추면 그것이 M56 이다.
         assert not after.get("escalated"), env["render"]
 
 
@@ -2234,10 +2248,19 @@ class TestLoopDeclarationsAreRead:
         return repo / "harness" / "phases" / "02-cross-verify.md"
 
     def _round_trip(self, repo, paths):
-        """01 을 수렴시키고 02 에 Critical 판정을 낸다. 반환: 02 의 봉투."""
+        """01 을 두 라운드로 수렴시키고 02 에 Critical 판정을 낸다. 반환: 02 의 봉투.
+
+        1라운드 수렴은 02 를 건너뛰므로(ADR-H042) 2라운드로 간다.
+        """
         _submit_plan(repo, paths, _plan())
-        _submit_review(repo, paths, _review("plan"))
+        crit = {"id": "F-0", "severity": "critical", "title": "1회차 지적",
+                "quote": "빈 문자열을 먼저 거른다."}
+        _submit_review(repo, paths, _review("plan", findings=[crit]))
         _submit_review(repo, paths, _review("xv"))
+        _submit_review(repo, paths,
+                       _review("plan", round_=2,
+                               resolved=[{"id": "F-0", "resolved_by": "고쳤다"}]),
+                       round_=2)
         v = paths.run_dir / "02_verdict.json"
         v.write_text(json.dumps(
             {"reviewer": "xv", "mode": "primary", "status": "ok",
@@ -9298,3 +9321,351 @@ class TestHorizonRender:
         got = cli._horizon_render("09-nope", loaded)
         assert "01-plan" in got and "08-report" in got
         assert "01~04" not in got
+
+
+# ---------------------------------------------------------------------------
+# Z. ADR-H041 · H042 — 01 수렴 문턱 · 델타 리뷰어 · 02 미편집 생략 · 계수
+# ---------------------------------------------------------------------------
+
+def _crit(id_="F-1", title="설계가 요청과 어긋난다"):
+    return {"id": id_, "severity": "critical", "category": "scope",
+            "title": title, "quote": "빈 문자열을 먼저 거른다."}
+
+
+def _minor(id_="F-9", title="이름이 모호하다"):
+    return {"id": id_, "severity": "minor", "category": "naming",
+            "title": title, "quote": "빈 문자열을 먼저 거른다."}
+
+
+def _phase_file(repo, name):
+    return repo / "harness" / "phases" / name
+
+
+class TestConvergenceThreshold:
+    """ADR-H041 — 라운드를 강제하는 것은 Critical 뿐이다.
+
+    P2 는 Major 0건 · 신규 Minor 1건으로 다섯 라운드를 다 쓰고 에스컬레이션됐다.
+    02 는 이미 Critical 만 01 로 되돌리므로 01 이 같은 문턱을 쓰는 것이 일관된다.
+    """
+
+    def test_minor_alone_converges_in_round_one(self, run01):
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_minor()]))
+        env = _submit_review(repo, paths, _review("xv"))
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "01-plan") == "passed"
+
+    def test_major_does_not_force_a_round(self, run01):
+        """열린 Major 는 남되 라운드를 강제하지 않는다 — 02 와 같은 문턱."""
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        major = {"id": "F-1", "severity": "major", "category": "scope",
+                 "title": "범위가 넓다", "quote": "빈 문자열을 먼저 거른다."}
+        _submit_review(repo, paths, _review("plan", findings=[major]))
+        _submit_review(repo, paths, _review("xv"))
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "01-plan") == "passed"
+        keys = after["phases"]["01-plan"]["rounds"]["1"]["plan"]["keys"]
+        assert [k["severity"] for k in keys] == ["major"], "지적은 사라지지 않는다"
+
+    def test_critical_forces_a_second_round(self, run01):
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        env = _submit_review(repo, paths, _review("xv"))
+        assert env["exit"] == 0
+        assert env["data"]["round"] == 2, env["data"]
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "01-plan") != "passed"
+
+    def test_new_minor_in_round_two_does_not_block(self, run01):
+        """P2 의 모양 — Critical 을 닫았는데 제목이 다른 Minor 가 새로 나왔다."""
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        _submit_review(repo, paths, _review("xv"))
+        env = _submit_review(
+            repo, paths,
+            _review("plan", round_=2, findings=[_minor(title="전혀 다른 제목")],
+                    resolved=[{"id": "F-1", "resolved_by": "범위 절을 고쳤다"}]),
+            round_=2)
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "01-plan") == "passed"
+
+    def test_reraised_critical_is_not_new_but_still_open(self, run01):
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        _submit_review(repo, paths, _review("xv"))
+        again = dict(_crit(title="여전히 어긋난다"), reraised_from_previous="F-1")
+        env = _submit_review(repo, paths,
+                             _review("plan", round_=2, findings=[again]),
+                             round_=2)
+        assert env["exit"] == 0, env["render"]
+        assert "신규" not in env["data"]["reason"], env["data"]
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "01-plan") != "passed"
+
+    def test_identical_critical_two_rounds_escalates_before_the_cap(self, run01):
+        """`stuck_after_identical: 2` 를 01 도 읽는다 — 상한까지 태우지 않는다."""
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        _submit_review(repo, paths, _review("xv"))
+        env = _submit_review(repo, paths,
+                             _review("plan", round_=2, findings=[_crit()]),
+                             round_=2)
+        _, after = st.load(repo, paths.run_id)
+        assert after.get("escalated"), env["render"]
+        assert "반복" in after["escalation"]["reason"], after["escalation"]
+        assert after["counters"]["round"]["used"] < 3, after["counters"]["round"]
+
+    def test_stuck_after_identical_is_read_from_01(self, run01):
+        """변이 테스트 — 값을 3 으로 올리면 2라운드 반복은 아직 정체가 아니다."""
+        repo, paths, s = run01
+        _rewrite(_phase_file(repo, "01-plan.md"),
+                 lambda f: f["loop"].__setitem__("stuck_after_identical", 3))
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        _submit_review(repo, paths, _review("xv"))
+        _submit_review(repo, paths, _review("plan", round_=2, findings=[_crit()]),
+                       round_=2)
+        _, after = st.load(repo, paths.run_id)
+        assert not after.get("escalated"), after.get("escalation")
+
+    def test_second_round_names_only_the_reviewer_with_open_critical(self, run01):
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        env = _submit_review(repo, paths, _review("xv"))
+        assert env["data"]["planned"] == ["plan"], env["data"]
+        assert "--reviewer plan" in env["next_command"], env["next_command"]
+        assert "xv" not in env["next_command"], env["next_command"]
+        _, mid = st.load(repo, paths.run_id)
+        assert mid["phases"]["01-plan"]["rounds_planned"]["2"] == ["plan"]
+
+    def test_delta_reviewer_alone_closes_the_round(self, run01):
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        _submit_review(repo, paths, _review("xv"))
+        env = _submit_review(
+            repo, paths,
+            _review("plan", round_=2,
+                    resolved=[{"id": "F-1", "resolved_by": "고쳤다"}]),
+            round_=2)
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "01-plan") == "passed"
+        assert "xv" not in after["phases"]["01-plan"]["rounds"]["2"]
+
+    def test_both_reviewers_with_critical_are_both_planned(self, run01):
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        env = _submit_review(repo, paths,
+                             _review("xv", findings=[_crit(title="xv 의 지적")]))
+        assert sorted(env["data"]["planned"]) == ["plan", "xv"], env["data"]
+
+    def test_a_second_round_counts_the_model_calls_it_instructs(self, run01):
+        """01 의 루프는 record → record 라 `next` 의 계수를 지나치지 않았다."""
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        before = st.load(repo, paths.run_id)[1]["budget"]["model_calls"]["total"]
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        _submit_review(repo, paths, _review("xv"))
+        _, after = st.load(repo, paths.run_id)
+        assert after["budget"]["model_calls"]["total"] == before + 1, \
+            after["budget"]["model_calls"]
+        assert "01:r1:plan" in after["budget"]["model_calls"]["counted"]
+
+    def test_an_exhausted_budget_stops_the_second_round(self, run01):
+        repo, paths, s = run01
+        s["budget"]["model_calls"]["max"] = 1
+        st.save(paths, s)
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        env = _submit_review(repo, paths, _review("xv"))
+        assert env["exit"] == 5, env["render"]
+
+    def test_the_normal_cap_is_three(self, run01):
+        """미검증 상속값 5 → 3 (ADR-H041). 값의 회귀 방지다."""
+        repo, paths, s = run01
+        front = _front(_phase_file(repo, "01-plan.md"))
+        assert front["converge"]["max_by_profile"] == {"small": 2, "normal": 3}
+        assert front["loop"]["max_by_profile"] == front["converge"]["max_by_profile"]
+
+    def test_missing_blocking_severities_is_exit_2(self, run01):
+        repo, paths, s = run01
+        _rewrite(_phase_file(repo, "01-plan.md"),
+                 lambda f: f["converge"].pop("blocking_severities"))
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan"))
+        env = _submit_review(repo, paths, _review("xv"))
+        assert env["exit"] == 2, env["render"]
+        assert "blocking_severities" in env["data"]["key"], env["data"]
+
+    def test_lint_rejects_blocking_severities_out_of_vocab(self, repo, phases):
+        _rewrite(phases / "01-plan.md",
+                 lambda f: f["converge"].__setitem__("blocking_severities",
+                                                     ["blocker"]))
+        assert _fails(_lint(repo), "blocking_severities"), _lint(repo)
+
+    def test_lint_rejects_missing_blocking_severities(self, repo, phases):
+        _rewrite(phases / "01-plan.md",
+                 lambda f: f["converge"].pop("blocking_severities"))
+        assert _fails(_lint(repo), "blocking_severities"), _lint(repo)
+
+    def test_blocking_severities_is_read_not_hardcoded(self, run01):
+        """변이 테스트 — major 를 차단에 넣으면 major 가 다시 라운드를 강제한다."""
+        repo, paths, s = run01
+        _rewrite(_phase_file(repo, "01-plan.md"),
+                 lambda f: f["converge"].__setitem__("blocking_severities",
+                                                     ["critical", "major"]))
+        _submit_plan(repo, paths, _plan())
+        major = {"id": "F-1", "severity": "major", "category": "scope",
+                 "title": "범위가 넓다", "quote": "빈 문자열을 먼저 거른다."}
+        _submit_review(repo, paths, _review("plan", findings=[major]))
+        _submit_review(repo, paths, _review("xv"))
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "01-plan") != "passed"
+
+
+class TestCrossVerifySkipWhenUnedited:
+    """ADR-H042 — 1라운드 수렴은 편집이 없었다는 뜻이고, 그때 xv 가 본 것이
+    곧 전문이다. 02 의 존재 이유(부분 편집의 모순)가 성립하지 않는다."""
+
+    def _converge_r1(self, repo, paths):
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan"))
+        return _submit_review(repo, paths, _review("xv"))
+
+    def test_round_one_convergence_skips_02_without_demotion(self, run01):
+        repo, paths, s = run01
+        env = self._converge_r1(repo, paths)
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "02-cross-verify") == "skipped"
+        assert after["cross_verify"]["skip_reason"] == "plan_unedited"
+        assert after["phase"] == "03-implement", after["phase"]
+        assert after.get("grade") in (None, "PASS"), after.get("grade")
+        assert "cross_verify_unavailable" not in (after.get("gaps") or [])
+
+    def test_the_skip_does_not_count_an_xv_call(self, run01):
+        repo, paths, s = run01
+        self._converge_r1(repo, paths)
+        _, after = st.load(repo, paths.run_id)
+        assert not [k for k in after["budget"]["model_calls"]["counted"]
+                    if k.startswith("02:")], after["budget"]["model_calls"]
+
+    def test_round_two_convergence_runs_02(self, run01):
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
+        _submit_review(repo, paths, _review("xv"))
+        env = _submit_review(
+            repo, paths,
+            _review("plan", round_=2,
+                    resolved=[{"id": "F-1", "resolved_by": "고쳤다"}]),
+            round_=2)
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["phase"] == "02-cross-verify", after["phase"]
+        assert st.phase_status(after, "02-cross-verify") == "running"
+
+    def test_next_on_a_skippable_02_also_skips(self, run01):
+        """세션 복구로 `next` 가 02 에 서 있어도 같은 판단이다."""
+        repo, paths, s = run01
+        self._converge_r1(repo, paths)
+        _, mid = st.load(repo, paths.run_id)
+        mid["phase"] = "02-cross-verify"
+        st.set_phase_status(mid, "02-cross-verify", "running")
+        st.save(paths, mid)
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["phase"] == "03-implement", after["phase"]
+
+    def test_lint_rejects_an_unparseable_skip_condition(self, repo, phases):
+        _rewrite(phases / "02-cross-verify.md",
+                 lambda f: f["skip_unedited"].__setitem__("when", "1 == 1"))
+        assert _fails(_lint(repo), "skip_unedited"), _lint(repo)
+
+    def test_the_report_names_the_skip_reason(self, run01):
+        repo, paths, s = run01
+        self._converge_r1(repo, paths)
+        _, after = st.load(repo, paths.run_id)
+        text, _missing = rep_mod.build(after, {}, {}, [])
+        assert "plan_unedited" in text, text
+
+
+class TestMergedModeCountsOnce:
+    """05 `merged` 는 한 에이전트다 — 계수도 하나다. 제출은 M37 대로 갈라진다."""
+
+    def _node(self, repo, request_file, phases, mode):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        paths, s = st.load(repo, run_id)
+        node = s["phases"].setdefault("05-code-review", {})
+        node["planned"] = ["arch", "test"]
+        node["mode"] = mode
+        return s, cli.build_context(repo, paths, s)
+
+    def test_merged_counts_one_instruction(self, repo, request_file, phases):
+        s, ctx = self._node(repo, request_file, phases, "merged")
+        assert cli._instruction_keys(s, "05-code-review", ctx) == ["05:r1:merged"]
+
+    def test_fanout_counts_each_reviewer(self, repo, request_file, phases):
+        s, ctx = self._node(repo, request_file, phases, "fanout")
+        assert cli._instruction_keys(s, "05-code-review", ctx) == \
+            ["05:r1:arch", "05:r1:test"]
+
+
+class TestPromoteJudgementIsCounted:
+
+    def test_a_scan_with_candidates_counts_the_judgement(self, repo, request_file,
+                                                          phases):
+        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+                     ["r1", "r2"])
+        run_id, _p = _enter_06(repo, request_file, phases)
+        env = cli.run_promote(repo, scan=True, run_id=run_id)
+        assert env["data"]["needs_model"] is True
+        _, s = st.load(repo, run_id)
+        assert "07:promote" in s["budget"]["model_calls"]["counted"]
+
+    def test_a_scan_without_candidates_counts_nothing(self, repo, request_file,
+                                                      phases):
+        ldg.seed(repo)
+        run_id, _p = _enter_06(repo, request_file, phases)
+        cli.run_promote(repo, scan=True, run_id=run_id)
+        _, s = st.load(repo, run_id)
+        assert "07:promote" not in s["budget"]["model_calls"]["counted"]
+
+
+class TestInlineBudgetIsEnforced:
+    """`review.inline_max` 는 정의만 있고 아무도 안 읽었다 — 봉투가 정한다."""
+
+    def test_a_huge_diff_is_passed_by_path(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _git(repo, "add", "-A"); _git(repo, "commit", "-qm", "fixture")
+        big = repo / "src" / "lib" / "huge.ts"
+        big.parent.mkdir(parents=True, exist_ok=True)
+        big.write_text("export const x = 1;\n" * 2000, encoding="utf-8")
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 0, env["render"]
+        _, s = st.load(repo, run_id)
+        node = s["phases"]["05-code-review"]
+        assert node["inline"]["inline"] is False, node["inline"]
+        assert "경로" in env["render"] and "인라인" in env["render"]
+
+    def test_a_small_diff_stays_inline(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _git(repo, "add", "-A"); _git(repo, "commit", "-qm", "fixture")
+        small = repo / "src" / "lib" / "small.ts"
+        small.parent.mkdir(parents=True, exist_ok=True)
+        small.write_text("export const x = 1;\n", encoding="utf-8")
+        cli.run_next(repo, run_id)
+        _, s = st.load(repo, run_id)
+        assert s["phases"]["05-code-review"]["inline"]["inline"] is True

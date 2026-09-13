@@ -315,6 +315,9 @@ def build(state, data, calibration, promotions, timing=None):
         ("01 교차검증", cv.get("mode")),
         ("폴백 회차", "%s / %s" % (cv.get("degraded_rounds") or 0,
                                    len(cv.get("rounds") or {}))),
+        # **생략과 불가는 다르다** (ADR-H042). `plan_unedited` 는 1라운드 수렴이라
+        # 같은 관측기를 같은 전문에 다시 안 부른 것이고 등급이 안 내려간다.
+        ("02 생략 사유", cv.get("skip_reason")),
     ])
     if cv.get("last_primary_error"):
         lines += ["", "- **교차검증 primary 가 실패한 적이 있다** — `%s`. "

@@ -27,6 +27,10 @@ python scripts/pipeline/cli.py doctor
 쓴다. 요약·정리·다듬기·번역 전부 금지다.
 
 slug 는 `^[a-z0-9][a-z0-9-]*$` 형태로 제안하고 사용자에게 확인받는다.
+**같은 자리에서 프로파일도 묻는다** — 요청이 유닛 셋 이하로 보이면 `small` 을
+제안한다. 자동 판정은 계약이 생기는 03 에서야 돌기 때문에, 01 의 라운드 상한
+(small 2 / normal 3)과 05 의 리뷰어 상한(small 1 / normal 3)을 01 부터 살리는
+길은 `init --profile small` 뿐이다.
 
 > **이 단계의 한계를 알고 있어라.** `init` 이 바이트와 sha256 을 박으므로 그
 > **이후**의 변조는 기계가 잡는다. 그러나 네가 옮겨 적는 **그 순간**의 의역은
@@ -35,7 +39,7 @@ slug 는 `^[a-z0-9][a-z0-9-]*$` 형태로 제안하고 사용자에게 확인받
 
 ```bash
 python scripts/pipeline/cli.py init --feature {slug} \
-    --request-file _workspace/requests/{slug}.md
+    --request-file _workspace/requests/{slug}.md [--profile small]
 ```
 
 ## 2. 루프
@@ -63,6 +67,19 @@ python scripts/pipeline/cli.py next
 | 6 | 전이 거부 — 산출물 없음 · 지문 stale · 승격 미종결 | `render` 가 말한 것을 채운다. 승인이 무효면 재승인이다 |
 | 9 | **사람의 판단 대기.** 상태를 잠그지 않는다 | 사용자에게 선택지를 그대로 제시하고 답을 받는다. **네가 고르지 마라** |
 | 11 | 런 완료 | 종료 보고로 간다 |
+
+### 01-plan 에서
+
+1라운드는 리뷰어 둘(plan · xv)을 한 메시지 안에서 병렬 호출한다. **2라운드부터는
+봉투의 `planned` 에 있는 리뷰어만** 부른다 — 열린 Critical 을 낸 쪽이다. 다른
+리뷰어를 같이 부르지 마라. 라운드를 강제하는 것은 Critical 뿐이고, 열린
+Major·Minor 는 기록되어 보고서로 간다 — 고칠지는 네 판단이다.
+
+### 02-cross-verify 에서
+
+01 이 **1라운드에 수렴했으면 02 는 기계가 건너뛴다** (`plan_unedited`). 봉투가
+03 지시문을 바로 낸다 — 교차검증기를 부르지 마라. 2라운드 이상이면 평소대로
+전문을 교차검증기에 넘긴다.
 
 ### 03-implement 에서
 
