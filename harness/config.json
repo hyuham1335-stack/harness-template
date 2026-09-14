@@ -65,10 +65,12 @@
     ".env*"
   ],
 
+  "_cross_verify_note": "secondary 는 예약 자리이고(ADR-H045) 어떤 코드도 아직 읽지 않는다 — status 가 configured 가 되는 순간부터가 실제 구현 대상이다. 01 은 이제 xv 를 부르지 않는다 — primary·fallback 은 02 에서만 쓰인다.",
   "cross_verify": {
     "required": false,
     "primary": "mcp__plan-review__review_plan",
-    "fallback": "plan-reviewer"
+    "fallback": "plan-reviewer",
+    "secondary": {"provider": "openai", "status": "not_configured"}
   },
 
   "_reviewers_note": "when glob 이 변경 파일에 걸리면 그 리뷰어가 켜진다. when_role_owned 가 참이면 glob 대신 roles[].owns 가 소유한 파일이 바뀌었을 때 켜진다 — gen 이 그렇고, 소스 변경이 있으면 항상 켜지는 것이 07 생략의 근거다 (ADR-H043). 우선순위는 배열 순서다. skill 은 .claude/skills/{skill}/SKILL.md 를 가리키고, doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치면 거부한다 — 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",

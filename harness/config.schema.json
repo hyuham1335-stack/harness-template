@@ -247,6 +247,22 @@
         "fallback": {
           "description": "폴백으로 쓸 서브에이전트 이름. null 이면 폴백이 없다.",
           "type": ["string", "null"]
+        },
+        "secondary": {
+          "description": "예약된 2차 교차검증기 자리(ADR-H045). status 가 configured 가 아니면 어떤 코드도 이 값을 읽지 않는다 — 후속 ADR 전까지는 순수 문서화 값이다.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "description": "2차 교차검증기 공급자 식별자(예: openai). 문서화용.",
+              "type": "string"
+            },
+            "status": {
+              "description": "configured 가 아니면 코드가 이 필드 전체를 무시한다.",
+              "type": "string",
+              "enum": ["not_configured", "configured"]
+            }
+          }
         }
       }
     },

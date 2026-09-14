@@ -524,13 +524,13 @@ def _pipeline_checks(root):
     except (OSError, ValueError):
         config = {}
     #    폴백 교차검증기도 같이 본다 — config 가 이름을 부르는데 파일이 없으면
-    #    01 이 라운드마다 그 에이전트를 못 찾는다. 계약 계층은 roles 만 훑으므로
+    #    02 가 그 에이전트를 못 찾는다. 계약 계층은 roles 만 훑으므로
     #    이 구멍은 여기서만 닫힌다.
     wanted = [(r_.get("agent"), "03-implement 가 호출할 대상이다")
               for r_ in (config.get("roles") or [])]
     fb = (config.get("cross_verify") or {}).get("fallback")
     if fb:
-        wanted.append((fb, "01 의 폴백 교차검증기다"))
+        wanted.append((fb, "02 의 폴백 교차검증기다"))
     missing = ["%s (%s)" % (a, why) for a, why in wanted
                if not (root / ".claude" / "agents" / ("%s.md" % a)).exists()]
     if not config.get("roles"):
@@ -2679,6 +2679,11 @@ def _record_02(root, paths, s, phase_item, ctx, file, reviewer, round_):
     # 이었다는 사실이 없던 일이 되지 않는다.
     st.note_cross_verify_round(s, "02", payload.get("mode") or "primary",
                                payload.get("primary_error"))
+    # **폴백은 여기서도 드러나야 한다** (ADR-H045). 01 은 더는 xv 를 부르지
+    # 않으므로 `_judge_round`(01 자신의 수렴 체크)에서만 돌던 이 데모션이
+    # 02 자신의 폴백은 영영 보지 못하게 된다 — 02 가 이제 유일한 xv 호출처라
+    # 01 쪽 호출과 대칭으로 여기서도 불러야 한다.
+    _note_cross_verify_gap(s)
     if critical:
         front = phase_item["front"]
         # **왕복 N회 허용**이 02 의 셈법이다 — `used > max_` 다. `max: 1` 에서

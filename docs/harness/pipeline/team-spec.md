@@ -55,7 +55,7 @@ flowchart TD
     REQ["/feature 요청"] --> DOC{"doctor"}
     DOC -->|exit 2| STOP["진입 거부"]
     DOC -->|통과| P0["00-triage<br/>레인 예측 · 기계 우선"]
-    P0 -->|기계 확정| P1["01-plan<br/>의도 동결 · 이중 리뷰 루프"]
+    P0 -->|기계 확정| P1["01-plan<br/>의도 동결 · 내부 리뷰 루프"]
     P0 -.->|미확정 · 저가 모델 1회| P1
     P1 --> P2["02-cross-verify<br/>최종 확인 1회"]
     P2 --> P3["03-implement<br/>계약 고정 · 역할 병렬"]
@@ -352,7 +352,7 @@ docs 레인은 계약이 없어 재판정이 조기 반환하므로 **03(claims 
 **`config.triage` 의 임계값 셋과 `config.models` 의 등급 표는 전부 미검증
 초기값이다.** 첫 세 런의 `00_triage.json` 과 `triage_miss` 이벤트가 검사한다.
 
-### 3.1 `01-plan` — 의도 동결 · 이중 리뷰 루프 · 수렴 판정
+### 3.1 `01-plan` — 의도 동결 · 내부 리뷰 루프 · 수렴 판정
 
 **입력**: `00_original_request.md`(바이트 동결 + sha256) · `config.project.instruction_file` · `config.project.rules_dir`
 **출력**: `01_plan.md` 하나 — 상단 INV 블록, 본문, 하단 커버리지 표
@@ -384,21 +384,18 @@ docs 레인은 계약이 없어 재판정이 조기 반환하므로 **03(claims 
 
 `drift-check` 강제: `covers`가 모든 INV를 정확히 한 번씩 포함 / 모든 `plan_section` 문자열이 본문에 실제 존재 / `covered`가 아니면 `reason` 필수. **`drift_score > 0`이면 전이 거부(exit 4)** 하고 원문 인용과 함께 이탈 항목을 명시한 재조정 패킷을 낸다. `dropped` 상태의 `must` 불변식이 남은 채로는 넘어가지 못하며, 넘기려면 사용자 승인이 필요하다.
 
-#### 리뷰어 둘을 매 라운드 병렬로 돌린다
+#### 내부 plan-reviewer 만 매 라운드 돈다 (ADR-H045)
 
-작성자(main)와 격리된 **내부 플랜 리뷰어**와 **외부 교차검증기**(`config.cross_verify`)를 매 라운드 병렬로 돌린다. 교차검증이 마지막이 아니라 **매 라운드** 걸린다.
+작성자(main)와 격리된 **내부 plan-reviewer** 만 라운드마다 돈다. **외부
+교차검증기(`config.cross_verify`)는 01 에서 부르지 않는다** — xv 는 §3.2
+(`02-cross-verify`)에서 완성된 전문에 정확히 1회만 걸린다. 01 라운드
+루프는 이제 primary/fallback 이중성이 없는 단일 관측기다.
 
-**02 는 01 이 1라운드에 수렴했으면 건너뛴다** (`skip_unedited`, [[ADR-H042]]). 편집이 없었으니 1라운드의 교차검증기가 본 텍스트가 곧 전문이다. 등급은 내려가지 않고 사유 `plan_unedited` 가 상태·보고서에 남는다 — 관측기 부재(`skip_when`)와 다르다.
-
-**외부 교차검증기가 없는 머신이 있다.** `config.cross_verify.primary`가 부재하면 **폴백 에이전트**로 대체하고 `state.cross_verify.mode`에 기록한다. **둘 중 하나가 폴백이면 1라운드 수렴을 허용하지 않는다** — "독립 관측 두 개"라는 전제가 약해지기 때문이다.
-
-**부재와 일시 실패는 다르다.** 예전에는 이 절이 "부재" 만 알았고, 그래서 primary 가 살아 있는데 상류가 잠깐 과부하인 것과 그 도구가 애초에 없는 것이 **같은 어휘로 뭉개졌다.** P3 가 그 대가를 실측했다 — 상류 503 두 번에 폴백으로 갈아탄 뒤 **다섯 라운드 내내 폴백이 굳었고**, 같은 도구가 02 에서는 성공했다. 그 다섯 라운드가 민 설계를 02 의 primary 가 Critical 로 반려해 왕복 예산 1회와 라운드 예산 전부를 썼다.
-
-앱 코드에 `lookup_failed` ≠ `no_match` 를 요구하면서(ADR-005) 하네스가 그 둘을 뭉개고 있었다. 이제 가른다 — 제출의 **`primary_error`** 가 있으면 일시 실패이고 **다음 회차의 봉투가 다시 시도하라고 말한다**(상류 과부하는 대개 한 라운드보다 먼저 끝난다). 없으면 부재이고 재시도할 것이 없다.
-
-**`mode` 어휘는 둘로 유지한다.** 셋째 값을 만들면 `converged` 의 `mode == "fallback"` 검사가 그것을 놓쳐 **조용히 1라운드 수렴이 열린다.**
-
-**그리고 폴백은 드러난다.** 회차별 `mode` 가 `state.cross_verify.rounds` 에 접히고, 한 회차라도 폴백이면 `degraded_rounds` 가 오르며 gap `cross_verify:fallback` 이 등급을 `PASS_WITH_GAPS` 로 내린다. 보고서의 `## 리뷰` 표가 그 값을 적는다 — `external:disabled` 와 같은 형태이고, **약해진 관측은 통과가 아니다.**
+(구 설계 — [[ADR-H042]]가 두고 [[ADR-H045]]가 대체했다: 01 이 매 라운드
+`plan`+`xv` 를 병렬로 돌리고 02 는 01 이 1라운드에 수렴하면 `skip_unedited`
+로 건너뛰던 시절이 있었다. primary/fallback 부재·일시 실패 구분, `mode`
+어휘, 폴백 드러내기(`degraded_rounds` → gap `cross_verify:fallback`) 규칙은
+전부 유효하지만, 이제 **02 에서만** 적용된다 — §3.2 참고.)
 
 #### 수렴 판정 — 모델 자기판단 배제
 
@@ -413,8 +410,8 @@ new_keys    = keys(round k) - union(keys of rounds 1..k-1)
 
 **라운드 조건 — 무조건 2회를 강제하지 않는다.**
 
-- **1라운드 수렴 허용**: 리뷰어 둘이 **모두** 차단 지적 0건이고, **둘 다 폴백이 아닐 때만.** 독립적인 두 리뷰어가 동시에 놓칠 확률은 한 리뷰어를 두 번 돌리는 것보다 낮다.
-- 어느 한쪽이라도 차단 지적을 냈으면 **최소 2라운드.** 2회차는 페이즈 파일에 고정된 `focus`로 강제 재검토한다. **2라운드부터는 열린 차단 지적을 낸 리뷰어만 다시 온다**(`rounds_planned`, 05 의 델타 재리뷰와 같은 규율).
+- **1라운드 수렴 허용**: plan-reviewer 가 차단 지적 0건이면(`one_round_allowed_when: "blocking_free"`). 01 은 이제 단일 관측기라 폴백-이중성 조건이 없다 — "독립 관측 두 개" 전제는 02 로 옮겨갔다([[ADR-H045]]).
+- 차단 지적을 냈으면 **최소 2라운드.** 2회차는 페이즈 파일에 고정된 `focus`로 강제 재검토한다. **2라운드부터는 열린 차단 지적이 있을 때만 다시 온다**(`rounds_planned`, 05 의 델타 재리뷰와 같은 규율).
 - **같은 차단 키 집합이 `stuck_after_identical` 라운드 연속이면 상한 전에 에스컬레이션한다.** 01 도 이 선언을 읽는다.
 - 상한은 프로파일에 따라 2(`small`) 또는 3(`normal`) — [[ADR-H041]] 이 5 에서 내렸다. 초과 시 exit 7 → 에스컬레이션(미해결 Critical 전문 + "이대로 진행 / 범위 축소 / 중단" 3지선다).
 - **2라운드 이후의 리뷰어 지시도 예산에 센다** — 01 의 루프는 `record → record` 라 `next` 의 계수를 지나쳤다 ([[ADR-H042]]).
@@ -449,9 +446,15 @@ new_keys    = keys(round k) - union(keys of rounds 1..k-1)
 **출력**: `02_verdict.json`
 **성공 조건**: Critical 0
 
-01의 매 라운드에서 이미 교차검증이 걸렸으므로 여기서는 **최종 플랜 전문에 대한 확인 1회**만 한다. Critical이 남아 있으면 01로 되돌린다(최대 1회 왕복) — 01 루프에 교차검증이 들어갔으니 실제로는 거의 발생하지 않는다.
+**런 전체에서 외부 교차검증기(xv)를 부르는 유일한 지점**이다([[ADR-H045]]). 01 은 이제 내부 plan-reviewer 만 반복 검토하고 xv 를 부르지 않으므로, 여기서 처음이자 마지막으로 완성된 전문을 독립 관측기에 보인다 — `docs` 레인 제외, 런당 정확히 1회.
 
-`config.cross_verify.required: false`이고 primary·fallback이 **둘 다 불가**하면 **스킵 + 등급 `PASS_WITH_GAPS`**. 조용히 통과시키지 않는다.
+`config.cross_verify.primary`가 부재하면 **폴백 에이전트**(`fallback`)로 대체하고 `state.cross_verify.mode`에 기록한다. `primary_error` 가 있으면 일시 실패(다음 회차가 재시도), 없으면 구조적 부재다. `mode` 가 `fallback` 이면 `degraded_rounds` 가 올라 gap `cross_verify:fallback` 이 등급을 `PASS_WITH_GAPS` 로 내린다 — 약해진 관측은 통과가 아니다.
+
+Critical이 남아 있으면 01로 되돌린다(`loop.max`, 최대 1회 왕복) — 되돌리면 01 에 라운드 예산을 재지급한다.
+
+`config.cross_verify.required: false`이고 primary·fallback이 **둘 다 불가**하면 **스킵 + 등급 `PASS_WITH_GAPS`**. 조용히 통과시키지 않는다. `docs` 레인은 관측기 부재와 무관하게 정책으로 스킵한다(`docs_profile`).
+
+**2차 확인은 예약만 돼 있다.** `config.cross_verify.secondary` 는 `status: "not_configured"` 인 동안 어떤 코드도 읽지 않는다 — 실제 배선(지시 키·제출 스키마·1차/2차 비교 판정)은 이 값을 `"configured"` 로 켤 때 별도 ADR-H 로 설계한다([[ADR-H045]]).
 
 ### 3.3 `03-implement` — 계약 고정 + 역할 병렬
 
@@ -1262,11 +1265,11 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 | 00 | `profile` 어휘 밖 · `expected_paths` 가 원문에 없음 · `docs` 인데 docs glob 밖 경로 | 제출물 | exit 8, 재제출 |
 | 00 | 모델이 `unclear` | 판단 | exit 9 — 3지선다를 사람에게. 고른 값을 `decided_by: "user"` 로 재제출 |
 | 00 → 03·05 | 예측이 상향으로 빗나감 | 정책 | `triage_miss` gap + `PASS_WITH_GAPS` + 07 `medium`. docs 레인의 03 은 exit 3 으로 계약을 요구한다 |
-| 01 | `cross_verify.primary` 부재 | — | 폴백 에이전트 + **1라운드 수렴 불허** + 원장 기록 |
-| 01 | `cross_verify.primary` **일시 실패**(503·타임아웃) | — | 폴백 + 제출에 `primary_error` + **다음 회차 봉투가 재시도를 지시** + gap `cross_verify:fallback` |
 | 01 | `drift_score > 0` | 제출물 | exit 4 + 원문 인용과 함께 재조정 패킷 |
 | 01 | quote 위조 / 단조성 위반 | 제출물 | exit 8, 재제출(카운터 소모) |
 | 01 | 라운드 상한 초과 | 정책 | exit 7 → 에스컬레이션 3지선다 |
+| 02 | `cross_verify.primary` 부재 | — | 폴백 에이전트 + 원장 기록 (gap `cross_verify:fallback`) |
+| 02 | `cross_verify.primary` **일시 실패**(503·타임아웃) | — | 폴백 + 제출에 `primary_error` + **다음 회차 봉투가 재시도를 지시** + gap `cross_verify:fallback` |
 | 02 | primary·fallback 둘 다 불가 + `required: false` | — | 스킵 + 등급 `PASS_WITH_GAPS`. 조용히 통과 금지 |
 | 03 | `roles[].owns` glob 교집합 | 정책 | `doctor`가 사전 거부(`clean_ownership`이 무의미해진다) |
 | 03 | 소유 경계 위반 / orphan 파일 | 제출물 | exit 8 + 롤백 지시 |

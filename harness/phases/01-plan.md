@@ -22,17 +22,14 @@
     "reviewers": [
       {"code": "plan", "kind": "internal",
        "raw": "${run.dir}/01_review_r{n}.raw.md",
-       "json": "${run.dir}/01_review_r{n}.json"},
-      {"code": "xv", "kind": "cross_verify",
-       "raw": "${run.dir}/01_xverify_r{n}.raw.md",
-       "json": "${run.dir}/01_xverify_r{n}.json"}
+       "json": "${run.dir}/01_review_r{n}.json"}
     ]
   },
   "converge": {
     "counter": "round",
     "max_by_profile": {"small": 2, "normal": 3},
     "blocking_severities": ["critical"],
-    "one_round_allowed_when": "all_reviewers_non_fallback AND blocking_free",
+    "one_round_allowed_when": "blocking_free",
     "focus_round_2": "불변식 커버리지 · 범위 밖 항목 · 인수 조건의 검증 가능성",
     "on_exceed": "escalate"
   },
@@ -82,10 +79,10 @@
 3. **플랜 본문을 쓴다.** 절 제목은 자유이고, 커버리지가 그 제목을 참조한다.
 4. **커버리지 표를 채운다.** 모든 불변식을 정확히 한 번씩 덮어야 하고,
    `covered` 가 아니면 `reason` 이 필수다.
-5. **1라운드는 리뷰어 둘을 병렬로** 돌린다. 하나는 내부 플랜 리뷰어, 하나는 외부
-   교차검증기다. **2라운드부터는 열린 차단 지적을 낸 리뷰어만** 다시 온다 —
-   봉투의 `planned` 가 누구인지 말하고, 그 밖의 리뷰어는 부르지 않는다
-   (05 의 델타 재리뷰와 같은 규율, ADR-H041).
+5. **내부 plan-reviewer 만** 반복 검토한다. 외부 교차검증(xv)은 여기서 부르지
+   않는다 — 완성된 플랜 전문을 02 에서 정확히 1회 확인한다(ADR-H045). **2라운드
+   부터는 열린 차단 지적이 있을 때만** 다시 온다 — 봉투의 `planned` 가 누구인지
+   말한다(05 의 델타 재리뷰와 같은 규율, ADR-H041).
 6. 지적을 반영할 때 **플랜을 통째로 다시 쓰지 않는다.** 부분 편집으로 고친다 —
    전문이 라운드마다 다시 쌓이면 접두부가 라운드 수만큼 곱해진다.
 7. **라운드를 강제하는 것은 `converge.blocking_severities`(지금은 Critical)뿐이다.**
@@ -121,7 +118,7 @@
 리뷰어는 회차마다 **두 파일**을 낸다 — 출력 원문 `.raw.md` 와 구조화 `.json`.
 
 ```json
-{"reviewer":"plan|xv","round":1,"mode":"primary|fallback","primary_error":null,
+{"reviewer":"plan","round":1,"mode":"primary|fallback","primary_error":null,
  "findings":[{"id":"F-1","severity":"critical|major|minor","category":"…",
               "title":"…","quote":"raw 원문의 부분문자열","evidence":"…",
               "suggestion":"…"}],
@@ -218,7 +215,7 @@
 `init --profile` 을 줬으면 그 값이 이기고 재판정에 밀리지 않는다.
 
 **`review.unless` 가 `docs` 레인에서 리뷰어를 0명으로 만든다.** 문서만 바뀌는
-런에서 플랜 리뷰어 둘은 관측이 아니라 고정비다 — 기계 검사(인용 · 커버리지 ·
+런에서 plan-reviewer 는 관측이 아니라 고정비다 — 기계 검사(인용 · 커버리지 ·
 드리프트)가 이 페이즈의 전부이고 플랜 제출이 통과하면 1라운드에 닫힌다. 그
 사실이 `profile.applied` 에 `01:reviewers=0` 으로 남아, 예측이 빗나가면 gap
 이름이 된다.
