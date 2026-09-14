@@ -23,8 +23,8 @@
 | 가드레일 | `CLAUDE.md` — `## 작업 원칙` 넷만 채워져 있고 나머지는 플레이스홀더다. **8페이즈 코어는 이 파일을 자동 주입하지 않는다** (§4) |
 | **계약 계층** | `harness/config.json` · `config.schema.json` · `adapters/{self-python,nextjs-ts,_template}.json` + `adapter.schema.json` · `profiles/nextjs-ts/` · `templates/contract.md` |
 | 실행기 | `scripts/harness.py` — `init` · `doctor` · `calibrate`. `scripts/runtime.py` — 시각·트랜스크립트 읽기·출력 인코딩의 공유 원시요소 ([ADR-H037](DECISIONS.md)) |
-| **파이프라인 코어** | `scripts/pipeline/{cli,state,adapters,attribution,verdict,contract,gate,trace_contract,review,precheck,ledger,mask,pr,promote,review07,report}.py` — 8페이즈 실행기. `doctor` · `init --feature` · `next` · `record` · `gate` · `advance` · `retry` · `escalate` · `resume` · `status` · `lint-phases` · `precheck` · `contract-trace` · `approve` · `mask` · `pr` · `promote` · `review07` · `report`. **stdout 은 언제나 단일 JSON 봉투 하나**. 모듈명이 `trace.py` 가 아닌 것은 stdlib `trace` 를 가리기 때문이다 |
-| **페이즈 파일** | `harness/phases/{01-plan,02-cross-verify,03-implement,04-gate,05-code-review,06-pr,07-pr-review,08-report}.md` — `---` 로 감싼 JSON 프론트매터. 여덟이 다 섰고 `lint-phases` 의 FUTURE 전이는 0건이다 |
+| **파이프라인 코어** | `scripts/pipeline/{cli,state,adapters,attribution,verdict,contract,gate,trace_contract,review,precheck,ledger,mask,pr,promote,review07,report,triage}.py` — 8페이즈 실행기. `doctor` · `init --feature` · `next` · `record` · `gate` · `advance` · `retry` · `escalate` · `resume` · `status` · `lint-phases` · `precheck` · `contract-trace` · `approve` · `mask` · `pr` · `promote` · `review07` · `report`. **stdout 은 언제나 단일 JSON 봉투 하나**. 모듈명이 `trace.py` 가 아닌 것은 stdlib `trace` 를 가리기 때문이다 |
+| **페이즈 파일** | `harness/phases/{00-triage,01-plan,02-cross-verify,03-implement,04-gate,05-code-review,06-pr,07-pr-review,08-report}.md` — `---` 로 감싼 JSON 프론트매터. 00 은 요청을 레인(`docs`·`small`·`normal`)으로 나누는 예측이고 03·05 가 검증한다 (ADR-H044). 여덟이 다 섰고 `lint-phases` 의 FUTURE 전이는 0건이다 |
 | **리뷰어 · 원장** | `.claude/skills/{general,data-layer,security,architecture,test-quality,docs}-reviewer/SKILL.md` — 스택 비종속 관점 6종. `general` 은 소스 변경이 있으면 항상 켜지고 07 이 깨끗한 런을 생략하는 근거다 (ADR-H043). 각 파일의 `## 프로젝트 보강` 절은 **비운 채로** 배포한다(그 절이 비어 갈수록 하네스가 성숙한 것이다). `docs/harness/pipeline/ledger/{taxonomy.json,findings.jsonl,rules_changelog.md}` — `taxonomy.json` 하나가 **원장 어휘 · 승격 목적지 · 리뷰 범위** 셋의 단일 출처다. **`findings.jsonl` 은 비어 있다** (§6) |
 | **진입점** | `.claude/commands/feature.md` (`/feature` — 01~08 전부. push 는 실행기가 하고 **PR 생성·코멘트 게시는 메인 세션이 forge 도구로** 한다. **머지는 범위 밖**) · `.claude/commands/log.md` (`/log`) · `.claude/agents/{impl-writer,test-writer,plan-reviewer}.md` (각 3KB 이하 — 소유 경계·제출 형식·금지만 담고 규약은 담지 않는다) |
 | 테스트 | `scripts/test_harness.py` · `scripts/test_pipeline.py` · `scripts/test_runtime.py` — `python -m pytest scripts/` |
@@ -184,6 +184,11 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
    실측과 갈렸다. 원장이 쌓이면 답이 나온다. **01 의 2라운드 이후·전이가 바로 내는
    다음 페이즈 지시·05 `merged`·승격 판정이 계수 밖이던 것은 닫혔다**
    ([ADR-H042](DECISIONS.md)) — 남은 것은 형식 교정 왕복이다
+5. **트리아지 임계값 셋과 모델 등급 표.** `config.triage` 의 `small_max_paths` ·
+   `normal_min_chars` · `model_call_when_undecided` 와 `config.models` 의 슬롯별
+   등급은 실측 없이 고른 초기값이다 ([ADR-H044](DECISIONS.md)). 첫 세 런의
+   `00_triage.json` 과 `triage_miss` 이벤트가 검사한다 — miss 가 docs 예측에서만
+   나면 docs 규칙이 헐거운 것이고, 모델 호출이 매 런 나면 규칙이 너무 좁은 것이다
 
 ---
 

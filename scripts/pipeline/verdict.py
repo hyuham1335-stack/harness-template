@@ -289,5 +289,9 @@ def converged(round_no, submissions, previous_keys, drift_score,
         if any(s.get("mode") == "fallback" for s in submissions):
             return False, ("폴백 리뷰어가 섞였다 — 1라운드 수렴을 허용하지 않는다. "
                            "2라운드를 돈다")
+        if not submissions:
+            # docs 레인 — 리뷰어 0명은 정책 생략이다 (ADR-H044). "둘 다 0건"
+            # 이라고 적으면 관측이 있었던 것처럼 읽힌다.
+            return True, "리뷰어 0명 — 정책으로 생략했다"
         return True, "리뷰어 둘 다 %s 0건" % label
     return True, "신규 0건 · 열린 %s 0건" % label

@@ -105,6 +105,10 @@ EVENT_KINDS = (
     # 계약이 바뀌어 프로파일이 다시 정해졌다. 리뷰어 상한이 그 값에서 나오므로
     # 언제 무엇에서 무엇으로 바뀌었는지가 사후에 필요하다 (M34).
     "profile_reconfirmed",
+    # 00 이 레인을 정했다(`triage_decided`), 그 예측이 03·05 의 실물에서 상향으로
+    # 빗나갔다(`triage_miss`). 둘을 뭉치면 임계값을 고칠 근거(어느 예측이
+    # 얼마나 틀리나)가 원장에서 사라진다.
+    "triage_decided", "triage_miss",
 )
 
 GRADES = ("PASS", "PASS_WITH_GAPS", "INCOMPLETE")
@@ -217,7 +221,7 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
                     "verified": bool((adapter or {}).get("verified"))},
         "calibration": _calibration_summary(calibration),
         "vcs": {"baseline": _vcs_baseline(root)},
-        "phase": "01-plan",
+        "phase": "00-triage",
         "phases": {},
         "counters": {},
         "escalated": False,
@@ -231,24 +235,48 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
             "basis": BUDGET_BASIS,
             "blind_spots": list(BUDGET_BLIND_SPOTS),
             "by_phase": {}, "counted": []}},
+        "models": _models_node(),
     }
     save(paths, s)
-    append_event(paths, "run_created", cmd="init", phase="01-plan",
+    append_event(paths, "run_created", cmd="init", phase="00-triage",
                  slug=slug, request_bytes=len(raw))
     return paths, s
 
 
 def _initial_profile(profile):
-    """01 시점에는 계약이 없어 판정할 수 없다.
+    """`init` 시점의 프로파일. 사람이 줬으면 `user`, 아니면 00 이 정한다.
 
-    판정 기준이 계약의 유닛·진입점 항목 수인데(team-spec 3.1) 그 계약은
-    03 이 쓴다. 미정일 때는 라운드 상한이 큰 쪽(normal)으로 간다 —
-    보수적으로 더 검토하는 쪽이다. 03 이 계약을 세어 확정한다.
+    00 이 요청 원문의 구조 신호로 **예측**하고(`source: triage`), 03 의
+    계약(유닛·진입점 수)과 05 의 변경 파일이 그것을 재판정한다. 00 이 돌기
+    전의 값은 `default` 이고 라운드 상한이 큰 쪽(normal)이다 — 보수적으로
+    더 검토하는 쪽이다.
     """
     if profile:
         return {"name": profile, "source": "user"}
     return {"name": "normal", "source": "default",
-            "reason": "계약이 아직 없어 판정할 수 없다"}
+            "reason": "00 이 아직 판정하지 않았다"}
+
+
+# 모델 등급의 관측 단위. **실행기는 어느 모델이 돌았는지 볼 수 없다** —
+# 봉투가 지시 키마다 등급을 찍고 `/feature` 가 그것을 Agent 호출의 `model`
+# 인자로 넘길 뿐이다. `budget.model_calls` 와 같은 부류의 자진신고 없는 지시다.
+MODELS_BASIS = "instructed"
+MODELS_BLIND_SPOTS = (
+    "지시한 등급이 실제로 쓰였는지 실행기는 보지 못한다 — 자진신고도 없다",
+    "inherit 는 메인 세션의 모델이고 그 값은 상태에 없다",
+)
+
+
+def _models_node():
+    return {"basis": MODELS_BASIS, "instructed": {},
+            "blind_spots": list(MODELS_BLIND_SPOTS)}
+
+
+def note_model_instruction(s, key, tier):
+    """봉투가 지시 키 `key` 에 등급 `tier` 를 찍었다. `None` 이면 미선언이다."""
+    node = s.setdefault("models", _models_node())
+    node.setdefault("instructed", {})[key] = tier
+    return node
 
 
 def _adapter_and_calibration(root, config):

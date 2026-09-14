@@ -54,7 +54,9 @@ ruff jacoco testcontainers postgres redis docker nextjs backend-implementer unit
 flowchart TD
     REQ["/feature 요청"] --> DOC{"doctor"}
     DOC -->|exit 2| STOP["진입 거부"]
-    DOC -->|통과| P1["01-plan<br/>의도 동결 · 이중 리뷰 루프"]
+    DOC -->|통과| P0["00-triage<br/>레인 예측 · 기계 우선"]
+    P0 -->|기계 확정| P1["01-plan<br/>의도 동결 · 이중 리뷰 루프"]
+    P0 -.->|미확정 · 저가 모델 1회| P1
     P1 --> P2["02-cross-verify<br/>최종 확인 1회"]
     P2 --> P3["03-implement<br/>계약 고정 · 역할 병렬"]
     P3 --> P4["04-gate<br/>스테이지 체인 · 실패 귀속"]
@@ -166,7 +168,7 @@ stdout은 **항상 단일 JSON 봉투 하나**, stderr는 원시 도구 출력. 
 |---|---|---|
 | `doctor` | 설정과 리포의 어긋남을 실행 **전에** 잡는다 (§P5) | 0 / 2 |
 | `init [--adapter] [--name]` | config 생성 · 프로파일 정리 · 원장 초기화. **원격은 건드리지 않는다** | 0 / 2 |
-| `init --feature <slug> --request-file <p> [--profile]` | 런 생성. 원본 요청을 바이트 그대로 동결 + sha256. VCS baseline 기록 | 0 / 2 |
+| `init --feature <slug> --request-file <p> [--profile docs\|small\|normal]` | 런 생성. 원본 요청을 바이트 그대로 동결 + sha256. VCS baseline 기록. 첫 페이즈는 `00-triage` 다 | 0 / 2 |
 | `calibrate [--stage] [--select]` | 스테이지를 실측해 `calibration.json`을 쓴다 | 0 / 10 |
 | `next [--run-id]` | 선행조건 검증 → 지시문 패킷 렌더링. **`--run-id`가 세션 복구 경로** | 0 / 3 |
 | `record --phase --file` | 스키마 + quote 검증 → 판정(수렴/드리프트) → **통과 시 자동 전이 + 다음 지시문** | 0 / 3 / 8 |
@@ -295,6 +297,61 @@ docs/harness/pipeline/runs/{run_id}.md          # 08 보고서
 
 ## 3. 페이즈 01~08
 
+### 3.0 `00-triage` — 레인 예측 · 기계 우선 · 예측은 검증된다 (ADR-H044)
+
+**막는 실패**: 문서 한 줄 고치는 요청이 플랜 리뷰어 둘 · 교차검증 · 역할 둘 ·
+리뷰어 넷을 다 내는 것. 프로파일이 03 에서야 계약 유닛 수로 정해지므로 01·02 는
+요청 크기와 무관하게 언제나 `normal` 비용이었다.
+
+**레인은 `state.profile` 이다** — 별도 개념이 아니다. 값은 `docs` · `small` ·
+`normal` 셋이고, 각 값이 뒤 페이즈에서 적용하는 양보:
+
+| 페이즈 | `docs` | `small` | `normal` |
+|---|---|---|---|
+| 01 | 기계 검사만(인용 · 커버리지 · 드리프트), **리뷰어 0** (`review.unless`) | 리뷰어 2 · 라운드 상한 2 (00 부터) | 지금과 같음 |
+| 02 | 정책 스킵 `docs_profile` (`skip_policy` 첫 항목, 등급 유지) | `plan_unedited` | 〃 |
+| 03 | `no_contract` · **역할 0** (`allow.unless`) · 메인이 직접 편집 · claims `roles: []` | 역할 2 · model sonnet | 역할 2 · inherit |
+| 04 | 어댑터 스테이지 그대로 (무료) | 〃 | 〃 |
+| 05 | glob 라우팅 그대로 → docs 리뷰어 1 · cap 1 | cap 2 (00 부터) | cap 4 |
+| 07 | `decide()` skip `docs_profile` | 기존 | 기존 |
+
+**판정은 기계 우선이다.** 실행기가 요청 원문에서 경로 토큰을 뽑아 역할 소유 ·
+docs glob(**docs 리뷰어의 `when` 이 단일 출처** — `main_owned_paths` 전체가
+아니다, 하네스 소스가 docs 로 새지 않게) · 미해결로 나누고 글자 수를 센다
+(`scripts/pipeline/triage.py`). **언어 키워드는 보지 않는다** — 같은 경로를 어느
+언어의 산문에 넣어도 판정이 같다. 역할 소유 경로가 있으면 개수·글자 수 임계
+(`config.triage`)로 `small`/`normal`, docs 경로만 있으면 `docs`, 그 밖은 미확정.
+확정되면 **모델을 부르지 않고** 실행기가 `00_triage.json` 을 쓰고 같은 봉투에서
+01 지시문을 낸다. 미확정이면 저가 모델 1회(`config.models.triage`)가 같은 어휘로
+예측하고 `record --phase 00` 으로 낸다. `unclear` 면 exit 9 — 사람이 고른 값을
+`decided_by: "user"` 로 재제출한다. `init --profile` 이 있으면 신호만 기록하고
+판정을 덮지 않는다.
+
+**제출에서 기계가 검사하는 것 셋**: 어휘 · `expected_paths` 각각이 요청 원문의
+부분문자열인가(`source_quote` 와 같은 손잡이) · `docs` 라면 그 경로가 전부 docs
+glob 안인가. `touches_source` 는 자진신고다.
+
+**예측은 검증된다.** `source: triage` 는 03·04·05 의 `_refresh_profile` 재판정에
+**밀린다**(`user` 는 안 밀린다). 상향(`docs → small/normal`, `small → normal`)이면
+앞 페이즈가 양보를 적용한 채 지나간 것이라 `triage_miss` 이벤트 + gap
+`triage_miss:<적용된 양보>` + `PASS_WITH_GAPS`, 07 의 내장 리뷰가 `medium` 으로
+메운다. 하향은 관측을 더 한 것이라 gap 이 아니고 `profile.previous` 만 남는다.
+docs 레인은 계약이 없어 재판정이 조기 반환하므로 **03(claims 제출)과 05(라우팅
+직전) 두 자리가 소스 변경을 따로 묻는다** — 03 에서 잡히면 exit 3 으로 계약을
+쓰고 역할 패킷을 받는다. 실제로 적용된 양보만 `profile.applied` 에 쌓이고 gap
+이름은 그것으로 만들어진다 — 재지 않은 것을 적지 않는다.
+
+**모델 등급도 여기서 갈린다.** `config.models` 가 지시 키 슬롯(`triage` · `plan`
+· `xv` · `roles` · `reviewers`)별 · 프로파일별 등급을 선언하고, 봉투가 지시
+키마다 `model: X` 를 찍는다. `/feature` 는 그것을 Agent 호출의 `model` 인자로
+그대로 넘긴다 — 메인이 고르지 않는다. **실행기는 실제 모델을 검증할 수 없다**
+(`state.models.blind_spots`). 에이전트 프론트매터에 `model:` 을 박지 않는다 —
+레인별로 못 바꾸고 두 출처가 되면 어느 쪽이 이겼는지 볼 수 없다.
+`lint-phases` 가 그것을 WARN 으로 잡는다.
+
+**`config.triage` 의 임계값 셋과 `config.models` 의 등급 표는 전부 미검증
+초기값이다.** 첫 세 런의 `00_triage.json` 과 `triage_miss` 이벤트가 검사한다.
+
 ### 3.1 `01-plan` — 의도 동결 · 이중 리뷰 루프 · 수렴 판정
 
 **입력**: `00_original_request.md`(바이트 동결 + sha256) · `config.project.instruction_file` · `config.project.rules_dir`
@@ -362,7 +419,7 @@ new_keys    = keys(round k) - union(keys of rounds 1..k-1)
 - 상한은 프로파일에 따라 2(`small`) 또는 3(`normal`) — [[ADR-H041]] 이 5 에서 내렸다. 초과 시 exit 7 → 에스컬레이션(미해결 Critical 전문 + "이대로 진행 / 범위 축소 / 중단" 3지선다).
 - **2라운드 이후의 리뷰어 지시도 예산에 센다** — 01 의 루프는 `record → record` 라 `next` 의 계수를 지나쳤다 ([[ADR-H042]]).
 - **02 가 Critical 로 되돌리면 라운드 예산을 새로 지급한다** — `used` 를 되돌리는 리셋이 아니라 상한을 올리는 지급이고, 지급 사실이 `counters.round.grants` 에 남아 보고서가 그것을 말한다. 바뀐 설계는 새 설계이고 한 라운드로 수렴할 이유가 없다. 지급은 왕복 예산(`xverify_return` 상한 1)에 묶여 런당 한 번뿐이다 (M32 · [[ADR-H024]]).
-- **`max_by_profile` 의 `small: 2` 는 사람이 `init --profile small` 을 준 런에서만 산다** — 자동 판정 기준이 계약의 항목 수인데 그 계약은 03 이 쓰므로, 01 이 도는 동안 자동값은 항상 `normal` 이다. `/feature` 가 slug 확인 때 프로파일을 함께 묻는다.
+- **`max_by_profile` 의 `small: 2` 는 00 의 예측으로 01 부터 산다** (§3.0 · ADR-H044). 03 이 계약을 세어 `normal` 로 올리면 `triage_miss` 가 gap 으로 남는다. 사람이 `init --profile` 을 줬으면 그 값이 이기고 재판정에 밀리지 않는다. **`docs` 레인은 `review.unless` 로 리뷰어가 0명이다** — 기계 검사만 돌고 플랜 제출이 통과하면 1라운드에 닫힌다.
 
 **거짓 수렴 차단** (전부 값싼 검사)
 
@@ -1015,6 +1072,8 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 | 05 `requires` | 계약 절 검사 | 계약 검사 없음 |
 | 완료 등급 | 영향 없음 | **계약 대조가 없었음을 보고서에 명시** |
 
+**`no_contract` 를 켜는 것은 00 이다** (ADR-H044). `docs` 레인으로 예측하면 `state.contract.mode = "no_contract"` 가 되고 03 은 역할 0명 · 메인 직접 편집이다. 그 런에서 역할 소유 경로가 바뀌면 03 의 claims 제출이 exit 3 으로 되돌아오고(`triage_miss`), `contract` 모드로 올라가 계약을 쓴다. 이 경로는 **아직 실물로 완주한 적이 없다** — 04 의 `tests_from: contract` 가 계약 없이 무엇을 고르는지는 첫 docs 런이 말한다.
+
 **계약이 재개 사이에 바뀐 경우**: `state.contract.sha256`을 재개 시 대조한다. 다르면 04 게이트 결과와 `contract-trace` 결과가 전부 무효 → **exit 3 + "03부터 재실행" 안내.** 조용히 이어가지 않는다.
 
 ### E4. 인코딩 · 경로 · 파일 I/O
@@ -1200,6 +1259,9 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 | 전역 | `record` 중복 호출 | 정책 | 이미 `passed`면 exit 3. 재작업은 `retry`로만 (§E13) |
 | 전역 | `budget.model_calls` 초과 | 정책 | 페이즈 경계에서 에스컬레이션 + **어느 페이즈가 넘었는지** 명시 |
 | 전역 | 인코딩 · 경로 길이 | 정책 | 모든 I/O UTF-8, 240자 초과는 `lint-phases`가 거부 (§E4) |
+| 00 | `profile` 어휘 밖 · `expected_paths` 가 원문에 없음 · `docs` 인데 docs glob 밖 경로 | 제출물 | exit 8, 재제출 |
+| 00 | 모델이 `unclear` | 판단 | exit 9 — 3지선다를 사람에게. 고른 값을 `decided_by: "user"` 로 재제출 |
+| 00 → 03·05 | 예측이 상향으로 빗나감 | 정책 | `triage_miss` gap + `PASS_WITH_GAPS` + 07 `medium`. docs 레인의 03 은 exit 3 으로 계약을 요구한다 |
 | 01 | `cross_verify.primary` 부재 | — | 폴백 에이전트 + **1라운드 수렴 불허** + 원장 기록 |
 | 01 | `cross_verify.primary` **일시 실패**(503·타임아웃) | — | 폴백 + 제출에 `primary_error` + **다음 회차 봉투가 재시도를 지시** + gap `cross_verify:fallback` |
 | 01 | `drift_score > 0` | 제출물 | exit 4 + 원문 인용과 함께 재조정 패킷 |

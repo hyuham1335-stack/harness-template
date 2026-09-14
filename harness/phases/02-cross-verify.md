@@ -15,8 +15,12 @@
   "skip_when": "state.cross_verify.mode == \"skipped\"",
   "on_skip": {"status": "skipped", "grade": "PASS_WITH_GAPS",
               "gap": "cross_verify_unavailable"},
-  "skip_unedited": {"when": "state.phases.01-plan.converged_at_round == 1",
-                    "status": "skipped", "reason": "plan_unedited"},
+  "skip_policy": [
+    {"when": "state.profile.name == \"docs\"",
+     "status": "skipped", "reason": "docs_profile"},
+    {"when": "state.phases.01-plan.converged_at_round == 1",
+     "status": "skipped", "reason": "plan_unedited"}
+  ],
   "submit_checks": [
     {"id": "reviewer_not_main", "on_fail": 8},
     {"id": "source_quote_substring", "on_fail": 8},
@@ -39,11 +43,18 @@
 봤지 완성된 전문을 본 적이 없기 때문이다. 부분 편집으로 고쳐 온 문서는 부분끼리
 모순될 수 있고, 그 모순은 전문을 한 번 읽어야 보인다.
 
-**그래서 01 이 1라운드에 수렴했으면 이 페이즈는 건너뛴다** (`skip_unedited`,
-ADR-H042). 편집이 없었으니 1라운드의 교차검증기가 본 텍스트가 곧 전문이고, 같은
-관측기를 같은 텍스트에 한 번 더 부르는 것이다. 이 생략은 **등급을 내리지 않는다**
-— 관측이 없었던 것(`skip_when`, 관측기 부재)과 다르다. 사유 `plan_unedited` 가
-상태와 보고서에 남는다.
+**그래서 01 이 1라운드에 수렴했으면 이 페이즈는 건너뛴다** (`skip_policy` 의
+`plan_unedited`, ADR-H042). 편집이 없었으니 1라운드의 교차검증기가 본 텍스트가
+곧 전문이고, 같은 관측기를 같은 텍스트에 한 번 더 부르는 것이다. 이 생략은
+**등급을 내리지 않는다** — 관측이 없었던 것(`skip_when`, 관측기 부재)과 다르다.
+사유가 상태와 보고서에 남는다.
+
+**`docs` 레인도 건너뛴다 — 그러나 사유가 다르다** (`docs_profile`, ADR-H044).
+docs 레인의 01 은 리뷰어가 0명이라 1라운드에 닫히므로 `plan_unedited` 조건도
+참이 되지만, 그 사유("교차검증기가 본 텍스트가 곧 전문")는 거짓이다 — 아무
+교차검증기도 보지 않았다. `skip_policy` 는 리스트이고 **첫 일치가 이긴다.**
+`docs_profile` 이 앞에 있는 이유가 그것이다. 이 생략도 등급을 내리지 않는다 —
+정책 스킵이고, 예측이 빗나가면 `triage_miss` 가 그것을 gap 으로 만든다.
 
 ## 진입 조건
 

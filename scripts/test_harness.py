@@ -167,6 +167,13 @@ class BrokenConfigRejectedTest(DoctorTestBase):
         self.save_adapter(ad)
         self.assertRejected(self.doctor(), "sh")
 
+    def test_9_model_tier_out_of_vocabulary(self):
+        """`config.models` 의 등급은 닫힌 어휘다 (ADR-H044) — 밖의 값은 거부."""
+        cfg = self.config()
+        cfg["models"]["plan"]["default"] = "gpt-9"
+        self.save_config(cfg)
+        self.assertRejected(self.doctor(), "gpt-9")
+
     def test_4_stage_cmd_references_missing_script(self):
         ad = self.adapter()
         ad["stages"]["compile"]["cmd"] = ["run", "nonexistent"]

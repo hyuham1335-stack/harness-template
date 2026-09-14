@@ -26,7 +26,8 @@
      "claims": "${run.dir}/03_claims.json", "on_fail": 8}
   ],
   "gate": {"runner": "adapter", "fail_fast": true, "steps": [{"id": "compile"}]},
-  "allow": {"agents": "config.roles[].agent", "parallel": true},
+  "allow": {"agents": "config.roles[].agent", "parallel": true,
+            "unless": "state.profile.name == \"docs\""},
   "on_success": "04-gate"
 }
 ---
@@ -62,6 +63,18 @@
    준다 — 패킷에 **소유권 표**가 들어 있고, 그 표가 소유 경계의 유일한 출처다.
 4. 각 역할의 제출물을 받아 `03_claims.json` 으로 합친다.
 5. 소유 검사와 컴파일 게이트를 돌린다.
+
+### docs 레인 — 역할 0명 (ADR-H044)
+
+00 이 `docs` 로 예측한 런은 **역할 에이전트를 부르지 않고 계약도 쓰지 않는다**
+(`allow.unless` · `state.contract.mode == "no_contract"`). 메인이 직접 문서를
+고치고 `03_claims.json` 을 `{"schema":1,"roles":[]}` 로 낸다 — 문서는
+`main_owned_paths` 라 소유 검사가 그것을 위반으로 보지 않는다.
+
+**역할 소유 경로(소스)를 건드리면 제출이 exit 3 으로 되돌아온다.** 예측이
+빗나간 것이다 — 프로파일이 `normal` 로 오르고 `triage_miss` 가 gap 으로
+남으며(01 리뷰어 · 02 · 역할을 건너뛴 채 여기까지 왔으므로), 계약을 쓰고
+`next` 로 역할 패킷을 받는다. 이미 고친 소스는 그 역할이 claim 한다.
 
 ## 역할 프롬프트 템플릿
 

@@ -118,6 +118,37 @@
         "inv_skip_below_chars": {"type": "integer", "minimum": 0}
       }
     },
+    "triage": {
+      "description": "00 의 기계 신호 임계값. **전부 미검증 초기값이다.** 구조 신호(경로·길이·개수)만 쓰고 언어 키워드는 쓰지 않는다.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "small_max_paths": {
+          "description": "역할 소유 경로가 이 수 이하(그리고 normal_min_chars 미만)면 small 로 예측한다.",
+          "type": "integer", "minimum": 1
+        },
+        "normal_min_chars": {
+          "description": "요청이 이 글자 수 이상이면 small 로 예측하지 않는다.",
+          "type": "integer", "minimum": 1
+        },
+        "model_call_when_undecided": {
+          "description": "기계 신호로 못 정하면 저가 모델 1회를 부른다. false 면 normal 로 낙하한다.",
+          "type": "boolean"
+        }
+      }
+    },
+    "models": {
+      "description": "지시 키 슬롯별 모델 등급. **전부 미검증 초기값이다.** 실행기는 실제 모델을 검증할 수 없고 봉투의 지시로만 남는다. 프로파일 키가 없으면 default 로 낙하한다.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "triage": {"$ref": "#/definitions/model_slot"},
+        "plan": {"$ref": "#/definitions/model_slot"},
+        "xv": {"$ref": "#/definitions/model_slot"},
+        "roles": {"$ref": "#/definitions/model_slot"},
+        "reviewers": {"$ref": "#/definitions/model_slot"}
+      }
+    },
     "reviewers": {
       "description": "05-code-review 의 리뷰어 목록. when glob 이 변경 파일에 걸리면 켜지고, 우선순위는 배열 순서다. skill 은 .claude/skills/{skill}/SKILL.md 를 가리키며 doctor 와 lint-phases 가 기동 전에 실재를 확인한다 — 없는 스킬을 부르면 05 가 라운드마다 헛돈다. roles[].agent 와 겹치는 skill 은 거부한다: 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
       "type": "array",
@@ -166,6 +197,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "docs": {"type": "integer", "minimum": 1},
             "small": {"type": "integer", "minimum": 1},
             "normal": {"type": "integer", "minimum": 1}
           }
@@ -226,6 +258,21 @@
     "calibration_file": {"type": "string"}
   },
   "definitions": {
+    "model_tier": {
+      "type": "string",
+      "enum": ["haiku", "sonnet", "opus", "inherit"]
+    },
+    "model_slot": {
+      "type": "object",
+      "required": ["default"],
+      "additionalProperties": false,
+      "properties": {
+        "default": {"$ref": "#/definitions/model_tier"},
+        "docs": {"$ref": "#/definitions/model_tier"},
+        "small": {"$ref": "#/definitions/model_tier"},
+        "normal": {"$ref": "#/definitions/model_tier"}
+      }
+    },
     "role": {
       "type": "object",
       "required": ["id", "agent", "code", "owns"],

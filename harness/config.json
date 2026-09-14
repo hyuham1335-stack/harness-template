@@ -92,7 +92,7 @@
   "_review_note": "아래 여섯 값은 전부 **미검증 상속값**이다 — 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 첫 세 런의 원장이 이 값을 검사한다: 절단이 한 번도 안 걸리면 findings_max 가 헐거운 것이고, 승격이 매 런 발생하면 baseline_runs 가 짧은 것이다. 값을 재기 전에 굳히지 않는다. profile_caps 는 gen 을 넣으며 각 1 올렸다 (1→2 · 3→4, ADR-H043) — 여전히 미검증이다.",
   "review": {
     "merge_below_diff_lines": 150,
-    "profile_caps": {"small": 2, "normal": 4},
+    "profile_caps": {"docs": 1, "small": 2, "normal": 4},
     "findings_max": 50,
     "inline_max": {"lines": 600, "bytes": 25000},
     "baseline_runs": 3
@@ -107,6 +107,22 @@
   },
   "budget": {"files_max": 10, "lines_max": 400, "model_calls_max": 24},
   "profile": {"small_max_units": 3, "inv_skip_below_chars": 400},
+
+  "_triage_note": "전부 **미검증**이다 — 기계 신호 임계값은 실측 없이 고른 초기값이다. 00 이 요청 원문의 구조 신호(언급된 경로·길이·개수)만 읽고 언어 키워드는 읽지 않는다. 첫 세 런의 00_triage.json 과 triage_miss 이벤트가 이 값을 검사한다: miss 가 docs 예측에서만 나면 docs 규칙이 헐거운 것이고, 모델 호출이 매 런 나면 규칙이 너무 좁은 것이다.",
+  "triage": {
+    "small_max_paths": 3,
+    "normal_min_chars": 1500,
+    "model_call_when_undecided": true
+  },
+
+  "_models_note": "전부 **미검증**이다 — 슬롯별 모델 등급은 실측 없이 고른 초기값이다. 실행기는 실제로 어느 모델이 돌았는지 볼 수 없다(자진신고도 없다 — budget.blind_spots 와 같은 부류). 봉투가 지시 키마다 `model: X` 를 찍고 /feature 가 그 값을 Agent 호출의 model 인자로 그대로 넘긴다. inherit 는 메인 세션의 모델을 그대로 쓴다. xv 는 primary 가 MCP 도구라 폴백 에이전트(plan-reviewer)에만 적용된다. 프로파일 키가 없으면 default 로 낙하한다.",
+  "models": {
+    "triage":    {"default": "haiku"},
+    "plan":      {"default": "sonnet"},
+    "xv":        {"default": "inherit"},
+    "roles":     {"default": "inherit", "small": "sonnet"},
+    "reviewers": {"default": "sonnet", "normal": "inherit"}
+  },
   "background_threshold_sec": 180,
   "calibration_file": "harness/calibration.json"
 }

@@ -881,7 +881,7 @@ class TestModelCallBudget:
 # B. lint-phases — 페이즈 파일이 깨진 채로 /feature 가 시작하지 않는다
 # ---------------------------------------------------------------------------
 
-PHASE_IDS = ["01-plan", "02-cross-verify", "03-implement", "04-gate",
+PHASE_IDS = ["00-triage", "01-plan", "02-cross-verify", "03-implement", "04-gate",
              "05-code-review", "06-pr", "07-pr-review", "08-report"]
 
 
@@ -1400,6 +1400,13 @@ def _raw(findings):
     return "\n".join(lines) + "\n"
 
 
+def _past_00(paths, s):
+    """00 을 지나 01 앞에 세운다 — 00 의 판정은 `TestPhase00Wiring` 이 따로 묻는다."""
+    st.set_phase_status(s, "00-triage", "passed")
+    s["phase"] = "01-plan"
+    st.save(paths, s)
+
+
 @pytest.fixture
 def run01(repo, phases):
     """01 지시문까지 진행된 런."""
@@ -1407,6 +1414,7 @@ def run01(repo, phases):
     req.parent.mkdir(parents=True, exist_ok=True)
     req.write_text(REQUEST_TEXT, encoding="utf-8")
     paths, s = st.create_run(repo, "sim", req)
+    _past_00(paths, s)
     st.set_phase_status(s, "01-plan", "running")
     st.save(paths, s)
     return repo, paths, s
@@ -1752,6 +1760,7 @@ class TestCrossVerifySource:
         """페이즈 파일 본문은 플레이스홀더가 풀리지 않는다 — 봉투가 알려줘야 한다."""
         self._set_primary(repo, "some-external-reviewer")
         paths, s = st.create_run(repo, "demo", request_file)
+        _past_00(paths, s)
         env = cli.run_next(repo, run_id=paths.run_id)
         assert "## 교차검증" in env["render"]
         assert "some-external-reviewer" in env["render"]
@@ -1761,6 +1770,7 @@ class TestCrossVerifySource:
         """폴백이라는 사실이 드러나야 1라운드 수렴이 막히는 이유를 안다."""
         self._set_primary(repo, None)
         paths, s = st.create_run(repo, "demo", request_file)
+        _past_00(paths, s)
         env = cli.run_next(repo, run_id=paths.run_id)
         assert "폴백" in env["render"]
         assert "plan-reviewer" in env["render"]
@@ -2364,9 +2374,12 @@ class TestInitAndNext:
         out2 = _run_cli(repo, "next")
         env2 = json.loads(out2.stdout)
         assert env2["exit"] == 0, env2["render"]
-        assert env2["phase"] == "01-plan"
-        assert "01_plan.md" in env2["render"]
-        assert "cli.py record" in (env2["next_command"] or "")
+        # 경로 언급이 없는 요청은 기계가 못 정한다 — 첫 패킷은 00 이고 저가
+        # 모델 1회를 지시한다 (ADR-H044). docs 요청의 첫 패킷이 01 인 것은
+        # `TestPhase00Wiring` 이 묻는다.
+        assert env2["phase"] == "00-triage"
+        assert "00_triage.json" in env2["render"]
+        assert "record --phase 00" in (env2["next_command"] or "")
 
     def test_init_rejects_a_bad_slug(self, repo, phases, request_file):
         out = _run_cli(repo, "init", "--feature", "Bad Slug",
@@ -6001,9 +6014,9 @@ class TestPhase05File:
         """**M24.** 08 이 아무것도 안 가리키면 런이 닫히는 자리가 없다."""
         loaded, broken = cli.load_phases(ROOT)
         assert broken == []
-        assert sorted(loaded) == ["01-plan", "02-cross-verify", "03-implement",
-                                  "04-gate", "05-code-review", "06-pr",
-                                  "07-pr-review", "08-report"]
+        assert sorted(loaded) == ["00-triage", "01-plan", "02-cross-verify",
+                                  "03-implement", "04-gate", "05-code-review",
+                                  "06-pr", "07-pr-review", "08-report"]
         assert loaded["08-report"]["front"].get("on_success") == st.DONE
 
     def test_전이_사슬이_01_에서_done_까지_이어진다(self, repo):
@@ -9490,7 +9503,7 @@ class TestHorizonRender:
     def test_범위를_문자열로_박지_않고_페이즈에서_유도한다(self):
         loaded, _broken = cli.load_phases(ROOT)
         got = cli._horizon_render("09-nope", loaded)
-        assert "01-plan" in got and "08-report" in got
+        assert "00-triage" in got and "08-report" in got
         assert "01~04" not in got
 
 
@@ -9762,8 +9775,8 @@ class TestCrossVerifySkipWhenUnedited:
 
     def test_lint_rejects_an_unparseable_skip_condition(self, repo, phases):
         _rewrite(phases / "02-cross-verify.md",
-                 lambda f: f["skip_unedited"].__setitem__("when", "1 == 1"))
-        assert _fails(_lint(repo), "skip_unedited"), _lint(repo)
+                 lambda f: f["skip_policy"][1].__setitem__("when", "1 == 1"))
+        assert _fails(_lint(repo), "skip_policy"), _lint(repo)
 
     def test_the_report_names_the_skip_reason(self, run01):
         repo, paths, s = run01
@@ -9840,3 +9853,487 @@ class TestInlineBudgetIsEnforced:
         cli.run_next(repo, run_id)
         _, s = st.load(repo, run_id)
         assert s["phases"]["05-code-review"]["inline"]["inline"] is True
+
+
+# ---------------------------------------------------------------------------
+# J. 00-triage — 요청을 파이프라인에 넣기 전에 레인을 정한다 (ADR-H044)
+# ---------------------------------------------------------------------------
+
+import triage as triage_mod  # noqa: E402
+import review07 as rv7_mod  # noqa: E402
+
+DOCS_REQUEST = REQUEST_TEXT + "그리고 docs/PRD.md 에 그 규칙을 적어 줘.\n"
+SOURCE_REQUEST = REQUEST_TEXT + "src/lib/match.ts 를 고친다.\n"
+
+
+def _cfg():
+    return json.loads((ROOT / "harness" / "config.json").read_text(encoding="utf-8"))
+
+
+def _init(repo, text, slug="tri", profile=None):
+    req = repo / "_workspace" / "requests" / ("%s.md" % slug)
+    req.parent.mkdir(parents=True, exist_ok=True)
+    req.write_text(text, encoding="utf-8")
+    paths, s = st.create_run(repo, slug, req, profile=profile)
+    return paths, s
+
+
+def _submit_triage(repo, paths, payload):
+    f = paths.run_dir / "00_triage.json"
+    f.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return cli.run_record(repo, phase="00", file=str(f), reviewer=None, round_=None)
+
+
+class TestTriageSignals:
+    """순수 함수. 언어 키워드를 쓰지 않는다 — 같은 경로면 어느 언어든 같은 판정."""
+
+    def test_docs_path_in_korean_and_english_prose_decide_the_same(self):
+        cfg = _cfg()
+        ko = "docs/PRD.md 의 3절을 고쳐 줘."
+        en = "Please fix section 3 of docs/PRD.md."
+        a = triage_mod.decide(triage_mod.signals(ko, cfg), cfg)
+        b = triage_mod.decide(triage_mod.signals(en, cfg), cfg)
+        assert a["profile"] == b["profile"] == "docs", (a, b)
+        assert a["decided_by"] == "machine"
+        assert a["expected_paths"] == ["docs/PRD.md"]
+
+    def test_a_korean_particle_glued_to_the_path_does_not_break_it(self):
+        sig = triage_mod.signals("docs/PRD.md를 고쳐줘", _cfg())
+        assert sig["paths_docs"] == ["docs/PRD.md"], sig
+
+    def test_role_owned_paths_predict_small_under_the_thresholds(self):
+        cfg = _cfg()
+        got = triage_mod.decide(triage_mod.signals(SOURCE_REQUEST, cfg), cfg)
+        assert got["profile"] == "small", got
+        assert got["touches_source"] is True
+        assert "src/lib/match.ts" in got["expected_paths"]
+
+    def test_too_many_role_owned_paths_predict_normal(self):
+        cfg = _cfg()
+        text = " ".join("src/lib/f%d.ts" % i for i in range(5))
+        got = triage_mod.decide(triage_mod.signals(text, cfg), cfg)
+        assert got["profile"] == "normal", got
+
+    def test_a_long_request_predicts_normal_even_with_one_path(self):
+        cfg = _cfg()
+        text = "src/lib/match.ts " + ("요구사항 " * 400)
+        got = triage_mod.decide(triage_mod.signals(text, cfg), cfg)
+        assert got["profile"] == "normal", got
+
+    def test_no_path_at_all_is_undecided(self):
+        cfg = _cfg()
+        assert triage_mod.decide(triage_mod.signals(REQUEST_TEXT, cfg), cfg) is None
+
+    def test_harness_source_is_not_docs_even_though_main_owned(self):
+        """`scripts/**` 는 main_owned 이지만 하네스 소스다 — docs 로 새면 안 된다."""
+        cfg = _cfg()
+        sig = triage_mod.signals("scripts/pipeline/cli.py 를 고쳐 줘", cfg)
+        assert sig["paths_unresolved"] == ["scripts/pipeline/cli.py"], sig
+        assert triage_mod.decide(sig, cfg) is None
+
+    def test_a_url_is_not_a_path(self):
+        sig = triage_mod.signals("https://example.com/a/b 를 봐", _cfg())
+        assert sig["paths_unresolved"] == [] and sig["paths_docs"] == [], sig
+
+    def test_docs_and_unresolved_together_is_undecided(self):
+        cfg = _cfg()
+        sig = triage_mod.signals("docs/PRD.md 와 tools/x/y.sh", cfg)
+        assert triage_mod.decide(sig, cfg) is None
+
+    def test_missing_thresholds_raise_instead_of_falling_back(self):
+        """선언이 없으면 폴백이 곧 새 하드코딩이다 (M36)."""
+        cfg = _cfg()
+        cfg.pop("triage")
+        with pytest.raises(ValueError):
+            triage_mod.decide(triage_mod.signals(SOURCE_REQUEST, cfg), cfg)
+
+    def test_submission_vocabulary_and_substring_are_checked(self):
+        cfg = _cfg()
+        assert triage_mod.check_submission(
+            {"profile": "huge", "expected_paths": []}, DOCS_REQUEST, cfg)
+        errs = triage_mod.check_submission(
+            {"profile": "small", "expected_paths": ["src/lib/other.ts"]},
+            DOCS_REQUEST, cfg)
+        assert any("요청 원문에 없다" in e for e in errs), errs
+        assert triage_mod.check_submission(
+            {"profile": "docs", "expected_paths": ["docs/PRD.md"]},
+            DOCS_REQUEST, cfg) == []
+
+    def test_docs_submission_must_stay_inside_the_docs_globs(self):
+        cfg = _cfg()
+        errs = triage_mod.check_submission(
+            {"profile": "docs", "expected_paths": ["src/lib/match.ts"]},
+            SOURCE_REQUEST, cfg)
+        assert any("docs glob" in e for e in errs), errs
+        errs = triage_mod.check_submission(
+            {"profile": "docs", "expected_paths": []}, DOCS_REQUEST, cfg)
+        assert any("최소 하나" in e for e in errs), errs
+
+
+class TestPhase00Wiring:
+
+    def test_a_docs_request_reaches_01_in_one_envelope_without_a_model(self, repo, phases):
+        paths, s = _init(repo, DOCS_REQUEST)
+        assert s["phase"] == "00-triage"
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert env["exit"] == 0, env["render"]
+        assert env["phase"] == "01-plan", env["phase"]
+        assert "리뷰어 — 0명" in env["render"], env["render"]
+        assert "prescan" in env["data"]
+        _, after = st.load(repo, paths.run_id)
+        prof = after["profile"]
+        assert prof["name"] == "docs" and prof["source"] == "triage", prof
+        assert prof["predicted"]["decided_by"] == "machine"
+        assert prof["signals"]["paths_docs"] == ["docs/PRD.md"]
+        assert after["contract"]["mode"] == "no_contract"
+        assert st.phase_status(after, "00-triage") == "passed"
+        assert after["budget"]["model_calls"]["total"] == 0
+        assert (paths.run_dir / "00_triage.json").exists()
+        kinds = [e["kind"] for e in st.read_events(paths)]
+        assert "triage_decided" in kinds, kinds
+
+    def test_an_undecided_request_asks_one_cheap_model_call(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT)
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert env["exit"] == 0, env["render"]
+        assert env["phase"] == "00-triage"
+        assert "model: `haiku`" in env["render"], env["render"]
+        assert "00_original_request.md" in env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["budget"]["model_calls"]["counted"] == ["00:triage"]
+        assert after["models"]["instructed"]["00:triage"] == "haiku"
+        assert after["phases"]["00-triage"]["needs_model"] is True
+
+    def test_next_is_idempotent_on_00(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT)
+        cli.run_next(repo, run_id=paths.run_id)
+        cli.run_next(repo, run_id=paths.run_id)
+        _, after = st.load(repo, paths.run_id)
+        assert after["budget"]["model_calls"]["total"] == 1
+
+    def test_a_model_prediction_is_recorded_and_advances_to_01(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT)
+        cli.run_next(repo, run_id=paths.run_id)
+        env = _submit_triage(repo, paths, {
+            "profile": "small", "expected_paths": [], "touches_source": True,
+            "reasons": ["한 함수"]})
+        assert env["exit"] == 0, env["render"]
+        assert env["phase"] == "01-plan"
+        _, after = st.load(repo, paths.run_id)
+        assert after["profile"] == dict(after["profile"], name="small",
+                                        source="triage")
+        assert after["profile"]["predicted"]["decided_by"] == "model"
+        assert after["phases"]["00-triage"]["decided_by"] == "model"
+
+    def test_unclear_is_exit_9_and_the_human_answer_wins(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT)
+        cli.run_next(repo, run_id=paths.run_id)
+        env = _submit_triage(repo, paths, {"profile": "unclear",
+                                           "expected_paths": [], "reasons": []})
+        assert env["exit"] == 9, env["render"]
+        assert len(env["data"]["options"]) == 3
+        _, mid = st.load(repo, paths.run_id)
+        assert mid["phase"] == "00-triage" and not mid.get("escalated")
+        env = _submit_triage(repo, paths, {"profile": "normal", "expected_paths": [],
+                                           "decided_by": "user"})
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["profile"]["source"] == "user"
+        assert after["profile"]["predicted"]["decided_by"] == "user"
+
+    def test_a_bad_submission_is_exit_8(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT)
+        cli.run_next(repo, run_id=paths.run_id)
+        env = _submit_triage(repo, paths, {"profile": "docs",
+                                           "expected_paths": ["docs/없는.md"]})
+        assert env["exit"] == 8, env["render"]
+        assert "record --phase 00" in env["next_command"]
+
+    def test_a_user_profile_is_not_overridden_and_costs_no_model(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT, profile="small")
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert env["exit"] == 0 and env["phase"] == "01-plan", env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["profile"]["name"] == "small"
+        assert after["profile"]["source"] == "user"
+        assert after["profile"]["predicted"]["decided_by"] == "user"
+        assert "request_chars" in after["profile"]["signals"]
+        assert after["budget"]["model_calls"]["counted"] == ["01:r0:plan", "01:r0:xv"]
+
+    def test_a_user_docs_profile_turns_the_contract_off(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT, profile="docs")
+        cli.run_next(repo, run_id=paths.run_id)
+        _, after = st.load(repo, paths.run_id)
+        assert after["contract"]["mode"] == "no_contract"
+
+    def test_no_model_fallback_goes_normal(self, repo, phases):
+        cfg_path = repo / "harness" / "config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["triage"]["model_call_when_undecided"] = False
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+        paths, s = _init(repo, REQUEST_TEXT)
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert env["phase"] == "01-plan", env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["profile"]["name"] == "normal"
+        assert "undecided_no_model" in after["profile"]["predicted"]["reasons"]
+        assert after["budget"]["model_calls"]["total"] == 2   # 01 의 리뷰어 둘
+
+    def test_init_cli_accepts_docs(self, repo, phases, request_file):
+        out = _run_cli(repo, "init", "--feature", "d", "--request-file",
+                       str(request_file), "--profile", "docs")
+        assert out.returncode == 0, out.stderr
+
+    def test_the_first_next_carries_the_prescan(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT)
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert "prescan" in env["data"]
+
+
+class TestDocsLane:
+    """docs 레인 — 01 리뷰어 0 → 02 docs_profile → 03 역할 0, 모델 호출 0."""
+
+    def _at_01(self, repo):
+        paths, s = _init(repo, DOCS_REQUEST)
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert env["phase"] == "01-plan", env["render"]
+        return paths
+
+    def test_plan_submission_alone_closes_01_and_skips_02_for_docs(self, repo, phases):
+        paths = self._at_01(repo)
+        env = _submit_plan(repo, paths, _plan())
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["phases"]["01-plan"]["converged_at_round"] == 1
+        assert st.phase_status(after, "02-cross-verify") == "skipped"
+        assert after["cross_verify"]["skip_reason"] == "docs_profile"
+        assert after["phase"] == "03-implement", after["phase"]
+        assert "역할 — 0명" in env["render"], env["render"]
+        assert after["profile"]["applied"] == ["01:reviewers=0", "02:skipped"]
+        assert after["budget"]["model_calls"]["total"] == 0
+        assert after.get("grade") in (None, "PASS"), after.get("gaps")
+
+    def test_a_reviewer_submission_is_rejected_when_none_was_planned(self, repo, phases):
+        paths = self._at_01(repo)
+        _submit_plan(repo, paths, _plan())
+        env = _submit_review(repo, paths, _review("plan"))
+        assert env["exit"] != 0, env["render"]
+
+    def test_main_edits_docs_and_claims_no_roles(self, repo, phases, monkeypatch):
+        paths = self._at_01(repo)
+        _submit_plan(repo, paths, _plan())
+        (repo / "docs").mkdir(exist_ok=True)
+        (repo / "docs" / "PRD.md").write_text("# PRD\n", encoding="utf-8")
+        monkeypatch.setattr(adapters, "run_stage",
+                            lambda *a, **k: {"exit": 0, "output": ""})
+        claims = paths.run_dir / "03_claims.json"
+        claims.write_text('{"schema":1,"roles":[]}', encoding="utf-8")
+        env = cli.run_record(repo, phase="03", file=str(claims), reviewer=None,
+                             round_=None)
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "03-implement") == "passed"
+        assert "03:roles=0" in after["profile"]["applied"]
+        assert after["budget"]["model_calls"]["total"] == 0
+
+    def test_touching_source_in_the_docs_lane_is_a_triage_miss(self, repo, phases):
+        paths = self._at_01(repo)
+        _submit_plan(repo, paths, _plan())
+        (repo / "src" / "lib" / "match.ts").write_text("export const x = 1\n",
+                                                        encoding="utf-8")
+        claims = paths.run_dir / "03_claims.json"
+        claims.write_text('{"schema":1,"roles":[]}', encoding="utf-8")
+        env = cli.run_record(repo, phase="03", file=str(claims), reviewer=None,
+                             round_=None)
+        assert env["exit"] == 3, env["render"]
+        assert "next --run-id" in env["next_command"]
+        _, after = st.load(repo, paths.run_id)
+        prof = after["profile"]
+        assert prof["name"] == "normal" and prof["previous"]["name"] == "docs"
+        assert prof["triage_miss"]["at"] == "03-implement"
+        assert prof["predicted"]["profile"] == "docs"      # 예측은 남는다
+        assert after["contract"]["mode"] == "contract"
+        assert after["grade"] == "PASS_WITH_GAPS"
+        assert "triage_miss:01:reviewers=0;02:skipped;03:roles=0" in after["gaps"]
+        kinds = [e["kind"] for e in st.read_events(paths)]
+        assert "triage_miss" in kinds
+        # 다음 `next` 는 계약을 요구한다 — 역할 패킷은 그 뒤다.
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert env["exit"] == 3, env["render"]
+
+
+class TestTriageMiss:
+    """예측은 03·05 의 실물에 밀린다 — 상향만 miss 다."""
+
+    def _at_05(self, repo, paths, s, profile):
+        s["profile"] = dict(profile)
+        s["contract"]["sha256"] = "낡은값"
+        st.set_phase_status(s, "04-gate", "passed")
+        s["phase"] = "05-code-review"
+        st.save(paths, s)
+
+    def test_small_prediction_beaten_by_a_five_unit_contract_is_a_miss(self, gated, phases):
+        repo, paths, s = gated
+        self._at_05(repo, paths, s, {"name": "small", "source": "triage",
+                                     "predicted": {"profile": "small"},
+                                     "applied": ["01:max_rounds=2"]})
+        (repo / "_workspace" / "contract_sim.md").write_text(
+            FIVE_UNIT_CONTRACT, encoding="utf-8")
+        cli.run_next(repo, run_id=paths.run_id)
+        _, after = st.load(repo, paths.run_id)
+        prof = after["profile"]
+        assert prof["name"] == "normal" and prof["source"] == "auto", prof
+        assert prof["triage_miss"]["was"] == "small"
+        assert prof["triage_miss"]["at"] == "05-code-review"
+        assert prof["predicted"]["profile"] == "small"
+        assert "triage_miss:01:max_rounds=2" in after["gaps"]
+        assert after["grade"] == "PASS_WITH_GAPS"
+
+    def test_normal_prediction_beaten_downward_is_quiet(self, gated, phases):
+        repo, paths, s = gated
+        self._at_05(repo, paths, s, {"name": "normal", "source": "triage",
+                                     "predicted": {"profile": "normal"},
+                                     "applied": []})
+        cli.run_next(repo, run_id=paths.run_id)
+        _, after = st.load(repo, paths.run_id)
+        prof = after["profile"]
+        assert prof["name"] == "small" and prof["previous"]["name"] == "normal"
+        assert "triage_miss" not in prof
+        assert not any(g.startswith("triage_miss") for g in after.get("gaps") or [])
+
+    def test_a_confirmed_prediction_keeps_its_source(self, gated, phases):
+        repo, paths, s = gated
+        self._at_05(repo, paths, s, {"name": "small", "source": "triage",
+                                     "predicted": {"profile": "small"},
+                                     "applied": ["01:max_rounds=2"]})
+        cli.run_next(repo, run_id=paths.run_id)
+        _, after = st.load(repo, paths.run_id)
+        prof = after["profile"]
+        assert prof["name"] == "small" and prof["source"] == "triage", prof
+        assert prof["applied"] == ["01:max_rounds=2"]
+        assert prof.get("confirmed_at") == "05-code-review"
+
+    def test_07_decide_reads_the_miss_and_the_docs_lane(self):
+        cfg = _cfg()
+        ext = {"status": "disabled", "major": 0}
+        got = rv7_mod.decide({"review05": {"status": "ok", "major": 0},
+                              "profile": {"name": "normal",
+                                          "triage_miss": {"was": "docs",
+                                                          "became": "normal",
+                                                          "at": "03-implement",
+                                                          "applied": ["01:reviewers=0"]}}},
+                             ext, cfg)
+        assert got["effort"] == "medium" and got["skip"] is False, got
+        assert got["gaps"] == []          # gap 은 miss 시점에 이미 적혔다
+        got = rv7_mod.decide({"review05": {"status": "ok", "major": 0},
+                              "profile": {"name": "docs"}}, ext, cfg)
+        assert got["skip"] is True and got["skip_reason"] == "docs_profile", got
+        # 05 결손이 docs 생략보다 앞선다 — 관측이 없었던 것이 먼저다.
+        got = rv7_mod.decide({"review05": {"status": "degraded", "major": 0},
+                              "profile": {"name": "docs"}}, ext, cfg)
+        assert got["effort"] == "medium", got
+
+    def test_the_report_names_the_prediction_and_the_miss(self, gated, phases):
+        repo, paths, s = gated
+        self._at_05(repo, paths, s, {"name": "small", "source": "triage",
+                                     "predicted": {"profile": "small",
+                                                   "decided_by": "machine"},
+                                     "applied": ["01:max_rounds=2"]})
+        s["phases"]["00-triage"] = {"decided_by": "machine", "profile": "small",
+                                    "signals": {"paths_role_owned": ["a"],
+                                                "paths_docs": [],
+                                                "paths_unresolved": [],
+                                                "request_chars": 10}}
+        st.save(paths, s)
+        (repo / "_workspace" / "contract_sim.md").write_text(
+            FIVE_UNIT_CONTRACT, encoding="utf-8")
+        cli.run_next(repo, run_id=paths.run_id)
+        _, after = st.load(repo, paths.run_id)
+        text, _missing = rep_mod.build(after, {}, {}, [])
+        line = next(l for l in text.splitlines() if l.startswith("| 프로파일"))
+        assert "빗나감" in line and "00 예측 small" in line, line
+        assert "| 00 트리아지" in text and "machine → small" in text, text
+        assert "triage_miss" in text
+        assert "| 트리아지 적용 양보" in text
+
+
+class TestModelTierRouting:
+    """등급은 봉투가 정한다 — 지시이지 실측이 아니다."""
+
+    def test_slot_and_profile_fallback(self):
+        cfg = _cfg()
+        assert cli._model_for(cfg, "01:r0:plan", "normal") == "sonnet"
+        assert cli._model_for(cfg, "01:r0:xv", "normal") == "inherit"
+        assert cli._model_for(cfg, "03:r0:impl", "small") == "sonnet"
+        assert cli._model_for(cfg, "03:r0:impl", "normal") == "inherit"
+        assert cli._model_for(cfg, "04:r1:impl", "small") == "sonnet"
+        assert cli._model_for(cfg, "05:r1:gen", "normal") == "inherit"
+        assert cli._model_for(cfg, "05:r1:gen", "small") == "sonnet"
+        assert cli._model_for(cfg, "00:triage", "normal") == "haiku"
+        assert cli._model_for(cfg, "07:code-review", "normal") is None
+        cfg.pop("models")
+        assert cli._model_for(cfg, "01:r0:plan", "normal") is None
+
+    def test_the_01_packet_names_the_tiers_and_state_records_them(self, repo, phases):
+        paths, s = _init(repo, SOURCE_REQUEST)
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert env["phase"] == "01-plan", env["render"]
+        assert "## 모델 등급" in env["render"]
+        assert "`01:r0:plan` → model: `sonnet`" in env["render"], env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["models"]["instructed"] == {"01:r0:plan": "sonnet",
+                                                 "01:r0:xv": "inherit"}
+        assert after["models"]["basis"] == "instructed"
+        assert after["models"]["blind_spots"]
+
+    def test_without_a_models_block_the_packet_says_so(self, repo, phases):
+        cfg_path = repo / "harness" / "config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg.pop("models")
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+        paths, s = _init(repo, SOURCE_REQUEST)
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert "`config.models` 가 없다" in env["render"], env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["models"]["instructed"]["01:r0:plan"] is None
+
+    def test_the_report_names_the_instructed_tiers(self, repo, phases):
+        paths, s = _init(repo, SOURCE_REQUEST)
+        cli.run_next(repo, run_id=paths.run_id)
+        _, after = st.load(repo, paths.run_id)
+        text, _missing = rep_mod.build(after, {}, {}, [])
+        assert "| 지시된 모델 등급" in text and "sonnet: 1" in text, text
+
+    def test_lint_warns_when_an_agent_file_pins_a_model(self, repo, phases):
+        (repo / ".claude" / "agents" / "impl-writer.md").write_text(
+            "---\nname: impl-writer\nmodel: opus\n---\n# x\n", encoding="utf-8")
+        got = [f for f in _lint(repo) if f["rule"] == "agent_model"]
+        assert got and got[0]["status"] == "WARN", got
+        assert _fails(_lint(repo)) == []
+
+
+class TestSkipPolicy:
+
+    def test_the_old_key_is_rejected(self, repo, phases):
+        _rewrite(phases / "02-cross-verify.md",
+                 lambda f: f.__setitem__("skip_unedited", f.pop("skip_policy")[1]))
+        assert _fails(_lint(repo), "front_keys"), _lint(repo)
+
+    def test_a_skip_without_a_reason_is_rejected(self, repo, phases):
+        _rewrite(phases / "02-cross-verify.md",
+                 lambda f: f["skip_policy"][0].pop("reason"))
+        assert _fails(_lint(repo), "skip_policy"), _lint(repo)
+
+    def test_an_unparseable_unless_is_rejected(self, repo, phases):
+        _rewrite(phases / "01-plan.md",
+                 lambda f: f["review"].__setitem__("unless", "profile is docs"))
+        assert _fails(_lint(repo), "review_unless"), _lint(repo)
+        _rewrite(phases / "03-implement.md",
+                 lambda f: f["allow"].__setitem__("unless", "x"))
+        assert _fails(_lint(repo), "allow_unless"), _lint(repo)
+
+    def test_index_zero_lints_clean_and_sorts_first(self, repo, phases):
+        assert _fails(_lint(repo)) == []
+        loaded, _ = cli.load_phases(repo)
+        assert sorted(loaded)[0] == "00-triage"
+        assert loaded["00-triage"]["front"]["index"] == 0

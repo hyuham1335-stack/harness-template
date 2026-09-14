@@ -43,6 +43,8 @@ GAP_REASONS = {
     "local_only": "원격이 없어 로컬 커밋까지만 했다",
     "promotion_baseline_unverified":
         "어댑터에 `baseline_cmd` 가 없어 lint 승격이 무엇을 막는지 재지 못했다",
+    "triage_miss": ("00 의 레인 예측이 빗나가 앞 페이즈가 그 양보(콜론 뒤)를 "
+                    "적용한 채 지나갔다 — 03·05 의 실물이 상향으로 재판정했다"),
 }
 
 
@@ -106,17 +108,58 @@ def explain_gap(gap):
 
 
 def _profile_cell(node):
-    """`이름 (출처 · 유닛 n)`. 재판정이 있었으면 `무엇에서 무엇으로` 까지."""
+    """`이름 (출처 · 유닛 n)`. 재판정이 있었으면 `무엇에서 무엇으로` 까지.
+
+    00 이 예측한 런은 누가 정했는지(기계 · 모델 · 사람)와 빗나갔는지도 적는다 —
+    임계값을 고칠 근거가 이 칸에서 나온다 (ADR-H044).
+    """
     if not node:
         return None
     cell = "%s (%s · 유닛 %s)" % (node.get("name"), node.get("source"),
                                   node.get("units"))
+    pred = node.get("predicted")
+    if pred:
+        cell = "%s — 00 예측 %s (%s)" % (cell, pred.get("profile"),
+                                        pred.get("decided_by"))
     prev = node.get("previous")
     if prev:
-        cell = "%s — 계약이 바뀌어 다시 셌다: %s(유닛 %s) → %s(유닛 %s)" % (
+        cell = "%s — 다시 셌다: %s(유닛 %s) → %s(유닛 %s)" % (
             cell, prev.get("name"), prev.get("units"),
             node.get("name"), node.get("units"))
+    miss = node.get("triage_miss")
+    if miss:
+        cell = "%s — **빗나감**: %s → %s (%s)" % (
+            cell, miss.get("was"), miss.get("became"), miss.get("at"))
     return cell
+
+
+def _triage_cell(state):
+    """00 이 무엇을 보고 정했나. 없으면 None — 표가 `미측정` 을 찍는다."""
+    node = (state.get("phases") or {}).get("00-triage") or {}
+    if not node.get("decided_by"):
+        return None
+    sig = node.get("signals") or {}
+    return "%s → %s (소유 경로 %d · docs 경로 %d · 미해결 %d · %s자)" % (
+        node.get("decided_by"), node.get("profile"),
+        len(sig.get("paths_role_owned") or []),
+        len(sig.get("paths_docs") or []),
+        len(sig.get("paths_unresolved") or []),
+        sig.get("request_chars"))
+
+
+def _models_cell(state):
+    """봉투가 지시한 등급. **지시이지 실측이 아니다** — blind spot 을 함께 적는다."""
+    node = state.get("models") or {}
+    inst = node.get("instructed") or {}
+    if not inst:
+        return None
+    by = {}
+    for tier in inst.values():
+        by[tier or "inherit"] = by.get(tier or "inherit", 0) + 1
+    return "%s\n  기준: **%s** — 봉투가 지시한 등급이다.\n%s" % (
+        " · ".join("%s: %d" % (k, v) for k, v in sorted(by.items())),
+        node.get("basis"),
+        "\n".join("  - %s" % b for b in node.get("blind_spots") or []))
 
 
 def _counter_cell(node):
@@ -293,6 +336,9 @@ def build(state, data, calibration, promotions, timing=None):
          _counter_cell((state.get("counters") or {}).get("review_repair"))),
         ("테스트 실행 수", tests.get("ran")),
         ("테스트 상태", tests.get("status")),
+        # **지시된 등급이지 실측이 아니다** (ADR-H044). 어느 모델이 돌았는지
+        # 실행기는 보지 못한다 — blind spot 이 셀 안에 같이 적힌다.
+        ("지시된 모델 등급", _models_cell(state)),
     ])
     lines += _timing_lines(timing)
 
@@ -325,6 +371,10 @@ def build(state, data, calibration, promotions, timing=None):
         # **프로파일이 리뷰어 상한을 정한다.** 그 값이 어디서 나왔는지가
         # 보고서에 없으면 "리뷰어 1명" 이 계획인지 결함인지 갈리지 않는다 (M34).
         ("프로파일", _profile_cell(state.get("profile"))),
+        # 00 이 무엇을 보고 정했고 어떤 양보가 실제로 적용됐나 (ADR-H044).
+        ("00 트리아지", _triage_cell(state)),
+        ("트리아지 적용 양보",
+         " · ".join((state.get("profile") or {}).get("applied") or []) or None),
         ("01 교차검증", cv.get("mode")),
         ("폴백 회차", "%s / %s" % (cv.get("degraded_rounds") or 0,
                                    len(cv.get("rounds") or {}))),

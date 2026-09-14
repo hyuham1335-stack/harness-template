@@ -18,6 +18,7 @@
   ],
   "review": {
     "parallel": true,
+    "unless": "state.profile.name == \"docs\"",
     "reviewers": [
       {"code": "plan", "kind": "internal",
        "raw": "${run.dir}/01_review_r{n}.raw.md",
@@ -211,10 +212,16 @@
 `loop.on_exceed` 와 같아야 한다. 코드가 읽는 것은 `loop` 쪽이라 갈리면 `converge`
 가 조용히 무시된다.
 
-**`max_by_profile` 의 `small: 2` 는 사람이 `init --profile small` 을 준 런에서만
-산다.** 자동 판정 기준이 계약의 항목 수인데 그 계약은 03 이 쓰므로, 01 이 도는
-동안 자동값은 항상 `normal` 이다. `/feature` 가 slug 를 확인할 때 프로파일도
-함께 묻는다.
+**`max_by_profile` 의 `small: 2` 는 00 의 예측으로 01 부터 산다** (ADR-H044).
+00 이 요청 원문의 구조 신호로 `small` 을 예측하면 이 상한이 처음부터 적용되고,
+03 이 계약을 세어 `normal` 로 올리면 `triage_miss` 가 gap 으로 남는다. 사람이
+`init --profile` 을 줬으면 그 값이 이기고 재판정에 밀리지 않는다.
+
+**`review.unless` 가 `docs` 레인에서 리뷰어를 0명으로 만든다.** 문서만 바뀌는
+런에서 플랜 리뷰어 둘은 관측이 아니라 고정비다 — 기계 검사(인용 · 커버리지 ·
+드리프트)가 이 페이즈의 전부이고 플랜 제출이 통과하면 1라운드에 닫힌다. 그
+사실이 `profile.applied` 에 `01:reviewers=0` 으로 남아, 예측이 빗나가면 gap
+이름이 된다.
 
 **02 가 Critical 로 되돌리면 라운드 예산을 새로 지급받는다.** 리셋이 아니라
 지급이라 `used` 는 그대로이고, 지급 사실이 `counters.round.grants` 에 남는다.

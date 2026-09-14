@@ -42,9 +42,14 @@ AUDIT_EVERY = 5
 # 내장 리뷰를 받는다.
 REPAIR_REASONS = ("gate_failure", "review_blocking")
 
-# 정책 생략의 사유. `skip_unedited` 의 `plan_unedited` 와 같은 부류다 —
+# 정책 생략의 사유. `skip_policy` 의 `plan_unedited` 와 같은 부류다 —
 # 관측기 부재가 아니라 "같은 관측을 이미 했다" 이므로 등급이 안 내려간다.
 SKIP_CLEAN_05 = "clean_05"
+
+# docs 레인의 생략 (ADR-H044). 문서만 바뀐 런은 05 의 docs 리뷰어가 봤고 소스
+# 변경이 없다 — 내장 코드 리뷰가 볼 코드가 없다. 예측이 빗나갔으면(소스가
+# 바뀌었으면) 프로파일이 이미 `normal` 이라 이 분기에 오지 않는다.
+SKIP_DOCS_PROFILE = "docs_profile"
 
 
 def repaired_before_07(state):
@@ -160,14 +165,28 @@ def decide(state, external, config, audit=False):
 
     reasons = []
     skip, skip_reason = False, None
+    triage_miss = (state.get("profile") or {}).get("triage_miss")
     if r05.get("status") != "ok":
         effort = "medium"
         reasons.append("05 가 `%s` 다 — 리뷰 결손을 비싼 쪽으로 메운다."
                        % r05.get("status"))
+    elif triage_miss:
+        # 00 의 예측이 빗나가 앞 페이즈가 양보를 적용한 채 지나갔다 (ADR-H044).
+        # gap 은 miss 시점에 이미 `state.gaps` 에 있다 — 여기서 다시 세지 않는다.
+        effort = "medium"
+        reasons.append("트리아지 예측이 빗나갔다 (%s → %s, %s) — 건너뛴 관측(%s)을 "
+                       "비싼 쪽으로 메운다."
+                       % (triage_miss.get("was"), triage_miss.get("became"),
+                          triage_miss.get("at"),
+                          ", ".join(triage_miss.get("applied") or []) or "없음"))
     elif enabled and not reviewed:
         effort = "low"
         reasons.append("외부 리뷰가 `%s` 다 — 켜 놓은 관측기가 없는 것이라 "
                        "내장 리뷰가 대신 돈다." % ext_status)
+    elif profile == "docs":
+        skip, effort, skip_reason = True, "skipped", SKIP_DOCS_PROFILE
+        reasons.append("docs 레인이다 — 소스 변경이 없고 05 의 docs 리뷰어가 봤다. "
+                       "내장 코드 리뷰가 볼 코드가 없다 (ADR-H044).")
     elif reviewed and profile == "small":
         # **`small` 은 Major 가 있어도 생략한다** — 명세가 그렇게 정했다. 작은
         # 변경이고 외부가 실제로 봤다면 내장 리뷰를 또 태우지 않는다는 판단이고,
