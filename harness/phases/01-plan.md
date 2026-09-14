@@ -97,7 +97,8 @@
 {"invariants":[{"id":"INV-1","kind":"must|must_not","text":"…",
                 "source_quote":"요청 원문의 부분문자열"}],
  "out_of_scope":["…"],
- "acceptance":[{"id":"AC-1","text":"…","source_quote":"…"}]}
+ "acceptance":[{"id":"AC-1","text":"…","source_quote":"…"}],
+ "summary":"…"}
 -->
 
 # 플랜
@@ -112,6 +113,14 @@
 
 요청이 짧으면(`config.profile.inv_skip_below_chars` 미만) INV 블록을 생략한다.
 한 문단짜리 요청에서 의도 이탈은 물리적으로 일어나기 어렵다.
+
+`summary` 는 **선택**이다 — 2~3문장, PR 본문 개요 맨 위에 그대로 실린다
+(`pr.py` 의 `_summary_block`). **이미 이 INTENT 블록에 적은 사실만 요약한다 —
+새 주장을 추가하지 않는다.** `invariants`·`acceptance`·계약의 유닛 절이
+이미 검증 대상이고, `summary` 는 그것들을 사람이 훑기 좋게 압축한 것이지
+별도로 근거를 대야 하는 새 진술이 아니다. 없으면 본문이 INV 목록으로
+바로 시작한다 — 없다고 적지 않는다(가독성 보조일 뿐 완료 등급의 근거가
+아니다).
 
 ## 제출 형식
 

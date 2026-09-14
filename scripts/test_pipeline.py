@@ -7297,7 +7297,7 @@ class TestPr06BodyTruth:
                                "reason": "관계의 한쪽 끝이 외부가 아니다"}])
         body = self._body(repo, paths, s)
         assert "{'id'" not in body, body
-        assert "F-1" in body and "reject" in body, body
+        assert "F-1" in body and "반영 안 함" in body, body
         assert "관계의 한쪽 끝이 외부가 아니다" in body, body
 
     def test_문자열_원소도_받는다(self, repo, request_file, phases):
@@ -7393,6 +7393,122 @@ class TestPr06Body:
         cli.run_pr(repo, run_id=run_id)
         out = (paths.run_dir / "06_pr_body.md").read_text(encoding="utf-8")
         assert "아주비밀한값0123" not in out
+
+
+class TestPr06BodyReadability:
+    """가독성 개선 — 원문 사실은 그대로 두고 렌더링만 사람이 읽기 좋게 감싼다.
+
+    05-code-review 의 findings 스키마가 아니라 여기(pr.py 의 조립부)가
+    "기계적이다" 는 지적의 실제 출처였다 — 실제 PR
+    (banana-island-ops#2)을 읽고 확인했다.
+    """
+
+    def _body(self, repo, paths, s):
+        return pr_mod.build_body(repo, paths, s,
+                                 harness._read_json(repo / harness.CONFIG_REL))
+
+    def test_아는_gap_코드는_한글_설명이_붙는다(self, repo, request_file, phases):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases,
+                                  grade="PASS_WITH_GAPS")
+        _pp, s = st.load(repo, run_id)
+        s["gaps"] = ["review05:failed"]
+        st.save(_pp, s)
+        first = self._body(repo, paths, s).strip().splitlines()[0]
+        assert "review05:failed (" in first, first
+
+    def test_모르는_gap_코드는_라벨_없이_원래대로_나온다(self, repo, request_file,
+                                                       phases):
+        """표가 불완전해도 정보가 사라지면 안 된다 — 안전 폴백."""
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases,
+                                  grade="PASS_WITH_GAPS")
+        _pp, s = st.load(repo, run_id)
+        s["gaps"] = ["내가_지어낸_코드"]
+        st.save(_pp, s)
+        first = self._body(repo, paths, s).strip().splitlines()[0]
+        assert "내가_지어낸_코드" in first
+        assert "내가_지어낸_코드 (" not in first
+
+    def test_채택_판정의_verdict_가_한글_동사로_나온다(self, repo, request_file,
+                                                     phases):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _pp, s = st.load(repo, run_id)
+        (paths.run_dir / "02_verdict.json").write_text(json.dumps(
+            {"reviewer": "xv", "adopted": [
+                {"id": "F-1", "verdict": "accept", "reason": "근거1"},
+                {"id": "F-2", "verdict": "reject", "reason": "근거2"},
+                {"id": "F-3", "verdict": "modify", "reason": "근거3"}]},
+            ensure_ascii=False), encoding="utf-8")
+        body = self._body(repo, paths, s)
+        assert "반영함" in body and "근거1" in body
+        assert "반영 안 함" in body and "근거2" in body
+        assert "수정해서 반영함" in body and "근거3" in body
+
+    def test_알_수_없는_verdict_는_원래_코드가_그대로_보인다(self, repo,
+                                                          request_file, phases):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _pp, s = st.load(repo, run_id)
+        (paths.run_dir / "02_verdict.json").write_text(json.dumps(
+            {"reviewer": "xv", "adopted": [
+                {"id": "F-9", "verdict": "새어휘", "reason": "근거"}]},
+            ensure_ascii=False), encoding="utf-8")
+        assert "새어휘" in self._body(repo, paths, s)
+
+    def test_summary_가_있으면_개요_맨_위에_들어간다(self, repo, request_file,
+                                                   phases):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _pp, s = st.load(repo, run_id)
+        intent = json.dumps({"summary": "시트 동기화 API 를 추가한다."},
+                            ensure_ascii=False)
+        (paths.run_dir / "01_plan.md").write_text(
+            "<!-- INTENT " + intent + " -->" + chr(10) * 2 + "# 플랜" + chr(10),
+            encoding="utf-8")
+        body = self._body(repo, paths, s)
+        lines = body.splitlines()
+        i = lines.index("## 개요")
+        assert lines[i + 2] == "시트 동기화 API 를 추가한다.", body
+
+    def test_summary_가_없으면_아무_줄도_추가되지_않는다(self, repo, request_file,
+                                                      phases):
+        """감사 대상이 아니다 — INV 절과 달리 '없다' 고 적지 않는다."""
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _pp, s = st.load(repo, run_id)
+        (paths.run_dir / "01_plan.md").write_text(
+            "# 플랜" + chr(10) * 2 + "본문뿐이다." + chr(10), encoding="utf-8")
+        body = self._body(repo, paths, s)
+        lines = body.splitlines()
+        i = lines.index("## 개요")
+        assert lines[i + 2] == "_01 의 INV 블록이 없다._", body
+
+    def test_작업_내용의_계약_원문이_details_로_접힌다(self, repo, request_file,
+                                                    phases):
+        """실물 06 은 `_refresh_contract` 가 `path` 를 싣는다 — 픽스처는 직접
+        싣는다 (TestPr06ContractAfterDrop 의 `_with_path` 와 같은 이유)."""
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _pp, s = st.load(repo, run_id)
+        s["contract"] = dict(s.get("contract") or {},
+                             path="_workspace/contract_x.md")
+        st.save(_pp, s)
+        body = self._body(repo, paths, s)
+        assert "<details>" in body and "</details>" in body, body
+        assert (body.index("## 작업 내용") < body.index("<details>")
+                < body.index("</details>") < body.index("## 기술적 고려사항")), body
+
+    def test_계약이_없으면_details_로_감싸지_않는다(self, repo, request_file,
+                                                 phases):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _pp, s = st.load(repo, run_id)
+        s["contract"] = {"mode": "no_contract", "present": False}
+        body = self._body(repo, paths, s)
+        assert "<details>" not in body, body
+        assert "(no_contract)" in body, body
 
 
 class TestPr06Push:

@@ -35,6 +35,7 @@ sys.path.insert(0, str(_HERE.parent))
 
 import harness  # noqa: E402
 import mask as mask_mod  # noqa: E402
+import report as report_mod  # noqa: E402
 import review as review_mod  # noqa: E402
 
 
@@ -206,6 +207,36 @@ def _contract_sections(root, state, config):
     return "\n\n".join(out)
 
 
+def _gap_display(gap):
+    """gap 코드 뒤에 한글 설명을 병기한다. **모르는 코드는 그대로 보여준다** —
+
+    `report.py` 의 `GAP_REASONS` 를 그대로 쓴다 — 08 보고서와 06 PR 본문이
+    같은 gap 코드에 다른 설명을 달면 두 문서가 서로 다른 말을 하게 된다.
+    이 절은 08 처럼 "어휘에 없다" 고 적지 않는다 — 완료 등급 옆 한 줄은
+    빠르게 훑는 자리라 라벨이 없으면 코드만 남기는 쪽이 더 읽기 좋다.
+    """
+    head = str(gap).split(":")[0]
+    label = report_mod.GAP_REASONS.get(head)
+    return "%s (%s)" % (gap, label) if label else gap
+
+
+def _summary_block(plan_text):
+    """01 의 짧은 총평. **감사 대상이 아니다 — 없다고 적지 않는다.**
+
+    INV·계약 절은 없으면 결손이라 "없다" 고 적어야 완료 등급의 근거가
+    맞는다. 이 필드는 그런 사실이 아니라 순수 가독성 보조라, 없다고 적으면
+    이 필드가 없던 과거 모든 런의 본문에 결손처럼 보이는 줄이 하나 늘어난다.
+    """
+    m = _INTENT.search(plan_text or "")
+    if not m:
+        return ""
+    try:
+        summary = (json.loads(m.group(1)) or {}).get("summary")
+    except ValueError:
+        return ""
+    return summary.strip() if isinstance(summary, str) else ""
+
+
 def _no_units(state):
     """유닛 절이 비었을 때의 문구. **실패와 데이터 없음을 뭉개지 않는다.**
 
@@ -217,6 +248,19 @@ def _no_units(state):
         return "_계약의 유닛·진입점 절이 없다 (no_contract)._"
     return ("_계약의 유닛·진입점 절을 읽지 못했다 — 계약 파일도 스냅샷도 "
             "없다._")
+
+
+_VERDICT_LABELS = {
+    "accept": "반영함",
+    "reject": "반영 안 함",
+    "modify": "수정해서 반영함",
+}
+
+
+def _verdict_label(v):
+    """판정 코드 → 한글 동사. **모르는 코드는 코드 그대로 보여준다** — 표가
+    새 어휘를 못 따라가도 정보가 사라지지 않는 안전 폴백이다."""
+    return _VERDICT_LABELS.get(v, v or "판정 없음")
 
 
 def _adopted(paths):
@@ -236,9 +280,9 @@ def _adopted(paths):
     out = []
     for a in d.get("adopted") or []:
         if isinstance(a, dict) and a.get("id"):
-            head = "**%s** `%s`" % (a.get("id"), a.get("verdict") or "판정 없음")
+            head = "**%s** — %s" % (a.get("id"), _verdict_label(a.get("verdict")))
             reason = (a.get("reason") or "").strip()
-            out.append("%s — %s" % (head, reason) if reason else head)
+            out.append("%s: %s" % (head, reason) if reason else head)
         else:
             out.append(str(a))
     return out
@@ -310,9 +354,12 @@ def build_body(root, paths, state, config):
     grade = state.get("grade") or "미정"
     gaps = state.get("gaps") or []
     head = "**완료 등급: %s**%s" % (
-        grade, (" (" + ", ".join(gaps) + ")" if gaps else ""))
+        grade,
+        (" (" + ", ".join(_gap_display(g) for g in gaps) + ")" if gaps else ""))
 
-    inv = _inv_block(_read(paths.run_dir / "01_plan.md"))
+    plan_text = _read(paths.run_dir / "01_plan.md")
+    inv = _inv_block(plan_text)
+    summary = _summary_block(plan_text)
     request, request_note = _quoted_request(paths.request)
     units = _contract_sections(root, state, config)
     stat = _diff_stat(root, config)
@@ -335,6 +382,8 @@ def build_body(root, paths, state, config):
 
     lines = [head, ""]
     lines += ["## 개요", ""]
+    if summary:
+        lines += [summary, ""]
     lines += [inv or "_01 의 INV 블록이 없다._", ""]
     lines += ["**원본 요청**", ""]
     lines += ["> " + request.replace("\n", "\n> ") if request
@@ -342,7 +391,12 @@ def build_body(root, paths, state, config):
     if request_note:
         lines += [request_note, ""]
     lines += ["## 작업 내용", ""]
-    lines += [units or _no_units(state), ""]
+    if units:
+        lines += ["<details><summary>계약 상세 (유닛·진입점)</summary>", ""]
+        lines += [units, ""]
+        lines += ["</details>", ""]
+    else:
+        lines += [_no_units(state), ""]
     lines += ["- 변경 규모: %s" % stat, ""]
     lines += ["## 기술적 고려사항", ""]
     lines += (["- %s" % a for a in adopted] if adopted
