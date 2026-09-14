@@ -5247,7 +5247,7 @@ class TestPrecheckBudget:
 
     def test_too_many_lines_is_exit_9(self, repo):
         _branch(repo, "feat-x")
-        _bulk_change(repo, 1, lines=500)   # budget.lines_max 는 400 이다
+        _bulk_change(repo, 1, lines=1200)   # budget.lines_max 는 1000 이다
         got = pc.run(repo, scope="pr")
         assert got["exit"] == 9
 
