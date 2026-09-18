@@ -29,6 +29,13 @@
           "minimum": 0
         },
         "rules_dir": {"type": "string"},
+        "instruction_review": {
+          "description": "08 끝 지시문 검토 (ADR-H056). skill 은 메인이 부를 스킬 이름이고 불투명 문자열이다 — 존재를 검사하지 않는다. 스킬이 없는 환경은 null 로 두고 사람이 검토한다(비강등 gap instruction_review_manual). 끄는 스위치는 없다 — 열린 런의 08 은 늘 08_instruction_review.json 을 요구한다.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["skill"],
+          "properties": {"skill": {"type": ["string", "null"]}}
+        },
         "secret_files": {"type": "array", "items": {"type": "string"}},
         "source_inject_max_chars": {
           "description": "steps[].sources 로 프롬프트에 실을 소스 파일 합계의 상한(문자). 접두부는 모든 turn 에 곱해지므로 상한 없는 첨부는 개선이 아니라 악화다. 기본 60000.",

@@ -2617,7 +2617,7 @@ ADR 을 인용한 새 ADR 로 한다.
 
 ### ADR-H056: 원장 승격은 기계 강제만 — prose 는 08 검토로, 규칙 단위 `retire`
 
-**날짜**: 2026-09-18 · **상태**: 제안됨 · **구현 상태**: 구현됨 (2026-09-18 — `ledger.stage_promotions` 의 세 갈래 · `ledger.retire` · `promote` 의 `retire` 판정. 08 지시문 검토 게이트는 후속 묶음)
+**날짜**: 2026-09-18 · **상태**: 제안됨 · **구현 상태**: 구현됨 (2026-09-18 — `ledger.stage_promotions` 의 세 갈래 · `ledger.retire` · `promote` 의 `retire` 판정. 08 지시문 검토 게이트는 아래 추기)
 
 **맥락**: 파일럿 15런의 `rules_changelog.md` 13행이 전부 `skipped` 였다. **임계가 높았던 것이 아니다**
 — [[ADR-H033]] 의 판정 시한(9런)이 지난 뒤에도 후보 셋이 임계를 넘은 채 7런 연속 미뤄졌다
@@ -2649,7 +2649,36 @@ ADR 을 인용한 새 ADR 로 한다.
 소음(`promotion_overdue`)이 사라진다. `retire` 의 컷오프는 초 단위 ts 비교라 은퇴와 같은 초의 관측은
 은퇴 쪽으로 들어간다.
 
-관련: [[ADR-H033]] · [[ADR-H034]](축은 `rule_key`) · [[ADR-H049]] · [[ADR-H051]](skip 에는 사유)
+**추기 (2026-09-18) — 08 지시문 검토 게이트** (구현: `cli._instruction_review` · `_instruction_slots` ·
+`run_pr` 닫힌 런 경로 · `pr._rule_changes`):
+5. **`report` 전에 메인이 지시문을 검토하고 결과를 `08_instruction_review.json` 으로 낸다.** 스킬은
+   `config.project.instruction_review.skill`(불투명 문자열, 끄는 스위치 없음 — 없는 환경은 null 로 두고
+   비강등 gap `instruction_review_manual`). 열린 런에서 파일이 없거나 대조가 어긋나면 **exit 8** 이고
+   보고서를 쓰지 않는다 — 80자 되묻기와 같은 모양이다. 닫힌 런의 재작성은 종전대로 요구하지 않는다.
+6. **자진신고를 기계로 대조한다.** prose 후보는 `absorbed`·`declined`(사유 필수 — [[ADR-H051]] 과
+   같은 규율) 중 정확히 한쪽이다. 후보도, 이 런이 이미 은퇴시킨 키도 아닌 키는 받지 않는다 — 기계
+   강제 후보를 여기서 은퇴시키는 것은 07 판정 우회다. 흡수에는 지시문 목적지(`instruction_file` ·
+   `rules_dir` 직속 `*.md` · `.claude/agent-memory/**`)의 변경이 있어야 하고, 증거 창은 **06 push
+   이후**(`state.pr.head_sha` 이후 diff ∪ 미커밋)다 — base 이후 전체를 보면 기능 런마다 바뀌는
+   `rules_dir` 문서가 증거로 통과한다. 흡수 키마다 `changes[].rule_keys` 대응이 있어야 하며, 통과하면
+   흡수 키는 `retire` 로 닫힌다.
+7. **지시문 변경이 기능 PR 에 실리는 것은 새 결정이다.** [[ADR-H052]] 는 비활성 기록 문서의 선례이지
+   지시문의 선례가 아니다 — 지시문은 06 승인 지문 밖이라 05·07 리뷰어가 못 본다. 그래서 닫힌 런의
+   `pr` 갱신이 가시성을 붙인다: 검토가 바꾼 파일이 전부 **커밋돼**(`base..HEAD`) 있으면 비강등 gap
+   `instruction_changed` + PR 본문 「규칙 변경」 절, 하나라도 빠졌으면 `run_record_missing` 과 같은 급의
+   강등 gap `instruction_change_missing`. 미커밋은 push 되지 않으므로 세지 않는다. 기계 강제 승격은
+   종전대로 별도 브랜치다.
+8. **`instruction_slot_budget` 의 첫 소비자.** `CRITICAL:` 라벨은 자기 선언이라 세지 않고, 지시문 파일의
+   **0열 불릿**(`-`·`*`·`+`, 펜스·표 제외) 수를 `used` 로 잰다. 초과는 비강등 gap
+   `instruction_slot_over_budget`, 본문은 있는데 불릿이 0이면 `instruction_slot_unmeasured`. 값 12 는
+   미검증 상속값이라 이 템플릿 자신의 `CLAUDE.md`(최상위 불릿 13)도 초과한다 — 등급은 안 내리고
+   사람이 예산을 고치거나 규칙을 줄인다([[ADR-H054]] 방식). 런 단위 기록이고 누적되지 않는다.
+
+`rules_read`([[ADR-H055]]) 대조는 03 에서만 일어나고 08 은 그 뒤라 재제출을 유발하지 않는다. 그래서
+08 금지에 "지시문 파일은 이 단계 전에 고치지 마라" 를 둔다.
+
+관련: [[ADR-H033]] · [[ADR-H034]](축은 `rule_key`) · [[ADR-H049]] · [[ADR-H051]](skip 에는 사유) ·
+[[ADR-H052]] · [[ADR-H055]]
 
 ---
 

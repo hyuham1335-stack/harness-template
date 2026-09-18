@@ -7,7 +7,9 @@
   "requires": [
     {"kind": "state", "pointer": "phases.07-pr-review.status",
      "equals": "passed"},
-    {"kind": "file", "path": "${run.dir}/08_report_data.json", "min_bytes": 2}
+    {"kind": "file", "path": "${run.dir}/08_report_data.json", "min_bytes": 2},
+    {"kind": "file", "path": "${run.dir}/08_instruction_review.json",
+     "min_bytes": 2}
   ],
   "produces": [
     {"key": "report", "path": "docs/harness/pipeline/runs/${run.id}.md",
@@ -31,7 +33,7 @@
 
 ## 진입 조건
 
-- 07 이 `passed` 이고 `08_report_data.json` 이 있다
+- 07 이 `passed` 이고 `08_report_data.json` 과 `08_instruction_review.json` 이 있다
 - **`grade == INCOMPLETE` 면 08 을 돌리지 않는다** — `ESCALATION.md` 가
   보고서를 겸한다 (§E12)
 - `promote --flush` 가 먼저 돌았다. `staged` 가 남아 있으면 **exit 6**
@@ -43,18 +45,44 @@
 ## 절차
 
 ```
-1. promote --flush         정적        잔여 승격을 강제 종결
-2. PR 상태 재확인          너          늦게 온 변경 요청 → 등급 강등
-3. 08_report_data.json     너          집계값 + 상위 N개 제목만 (<= 20KB)
-4. report --out            정적        결정론 표 조립 + 필수 섹션 검사
-                                       + PILOT-LOG 런 절 · ledger/deferred.md 재생성
-5. 커밋 → pr --run-id      너          런 기록을 기능 PR 에 싣는다 (ADR-H052)
+1.   promote --flush              정적   잔여 승격을 강제 종결
+2.   PR 상태 재확인               너     늦게 온 변경 요청 → 등급 강등
+3.   08_report_data.json          너     집계값 + 상위 N개 제목만 (<= 20KB)
+3.5. 08_instruction_review.json   너     지시문 검토 스킬 → 결과를 옮겨 적는다 (ADR-H056)
+4.   report --out                 정적   검토 대조 + 결정론 표 조립 + 필수 섹션 검사
+                                         + PILOT-LOG 런 절 · ledger/deferred.md 재생성
+5.   커밋 → pr --run-id           너     런 기록·지시문 변경을 기능 PR 에 싣는다 (ADR-H052)
 ```
 
 ### 3번 — 08 은 diff 도 코드도 읽지 않는다
 
-입력은 `08_report_data.json` **하나뿐이다.** 전문은 파일 경로로만 가리킨다.
+서술 입력은 `08_report_data.json` **하나뿐이다.** 전문은 파일 경로로만 가리킨다.
 이 제약이 08 의 비용을 런 크기와 무관하게 만든다.
+
+### 3.5번 — 지시문 검토 (ADR-H056)
+
+prose 규칙은 원장 승격이 아니라 **여기로 온다** — 07 판정자가 13/13 skip 한
+경로를 대신한다. `config.project.instruction_review.skill` 을 부르고, 입력은
+보고서·`promote --scan` 의 「지시문 검토 후보」(`prose_candidates`)와 이 런의
+「배운 점」이다. **작성자는 너다** — 스킬 결과를 옮겨 적는다. 바꾼 것 없음도
+유효하다(`changes: []`).
+
+`report` 가 자진신고를 기계로 대조한다:
+
+- 후보의 `rule_key` 는 `absorbed`·`declined` 중 **정확히 한쪽**이다.
+  `declined[].reason` 이 비면 안 된다 — skip 에는 rationale 이 있다 (ADR-H051)
+- 후보도, 이 런이 이미 은퇴시킨 키도 아닌 키는 받지 않는다 — 기계 강제 후보의
+  은퇴는 07 의 `retire` 판정이다
+- `absorbed` 가 있으면 `changes` 가 있고, 각 `file` 은 **지시문 목적지**
+  (`instruction_file` · `rules_dir` 직속 `*.md` · `.claude/agent-memory/**`)
+  이며 **06 push 이후** 실제로 바뀌었어야 한다. 흡수한 키는 어느 변경에
+  대응하는지 `changes[].rule_keys` 에 적는다
+- 통과하면 흡수한 키는 원장에 `retire` 로 닫힌다. `skill` 이 null 이면 비강등
+  gap `instruction_review_manual`
+- `instruction_slot_budget` 은 지시문 파일의 **최상위 불릿 수**(0열 `-`·`*`·`+`,
+  펜스·표 제외)로 잰다. 초과는 비강등 gap `instruction_slot_over_budget`, 본문은
+  있는데 불릿이 0이면 `instruction_slot_unmeasured` — 보고서 `## 리뷰` 표에
+  `used/budget` 이 나온다
 
 **서술은 네가 쓰고, 표는 실행기가 조립한다.**
 
@@ -94,6 +122,18 @@ python scripts/pipeline/cli.py report --out docs/harness/pipeline/runs/{run_id}.
 - 서술이 비어도 보고서는 나온다 — **필수 섹션이 빠져도 파이프라인을
   실패시키지 않는다.** 원장에 기록만 한다
 
+`{run_dir}/08_instruction_review.json` — 지시문 검토 결과 (3.5번).
+
+```json
+{"schema": 1, "reviewed": true,
+ "skill": "config 의 instruction_review.skill 그대로 (없으면 null)",
+ "absorbed": ["<rule_key>"],
+ "declined": [{"rule_key": "<rule_key>", "reason": "왜 지시문에 넣지 않나"}],
+ "changes": [{"file": "CLAUDE.md", "summary": "무엇을 바꿨나",
+              "rule_keys": ["<rule_key>"]}],
+ "note": "선택"}
+```
+
 ## 금지
 
 - **diff 나 소스를 읽지 마라.** 이유: 08 의 입력은 파일 하나이고, 그 제약이
@@ -105,6 +145,11 @@ python scripts/pipeline/cli.py report --out docs/harness/pipeline/runs/{run_id}.
   커밋하고 `pr --run-id` 를 다시 돌려 PR 을 갱신한다. 닫힌 런의 그 갱신에 런
   기록이 diff 에 없으면 gap `run_record_missing` 이다 (ADR-H052). 승격은 여전히
   별도 브랜치다
+- **지시문 파일은 이 단계 전에 고치지 마라.** 이유: 03 이전에 바뀌면 워커의
+  `rules_read` 해시가 어긋나 재제출이다 (ADR-H055). 검토가 바꾼 파일은 06 승인
+  지문 밖이라 리뷰어가 못 본다 — 닫힌 런의 `pr` 갱신이 비강등 gap
+  `instruction_changed` 와 PR 본문 「규칙 변경」 절로 드러내고, 커밋하지 않았으면
+  `instruction_change_missing` 이다
 - **`INCOMPLETE` 인 런에서 08 을 돌리지 마라.** 이유: 에스컬레이션으로 멈춘
   런은 `ESCALATION.md` 가 보고서다. 그 위에 성공한 것 같은 문서를 얹지 않는다
 
@@ -115,6 +160,8 @@ python scripts/pipeline/cli.py report --out docs/harness/pipeline/runs/{run_id}.
 | `grade == INCOMPLETE` | — | **08 을 돌리지 않는다.** `ESCALATION.md` 가 보고서를 겸한다 (§E12) |
 | 원장 누락 · 손상 | — | **"미측정" 으로 표기하고 산출한다.** 보고서는 파이프라인을 실패시키지 않는다 |
 | `promotions` 미종결 | 정책 | **exit 6** → `promote --flush` |
+| `08_instruction_review.json` 없음 · 대조 불일치 (열린 런) | 정책 | 보고서를 쓰지 않고 **exit 8** — 파일을 고쳐 같은 명령으로 다시 낸다. 등급 X. 닫힌 런의 재작성은 요구하지 않는다 |
+| 지시문 슬롯 예산 초과 | — | 비강등 gap `instruction_slot_over_budget` — 사람이 예산을 고치거나 규칙을 줄인다 |
 | 필수 섹션 누락 | — | 원장에 기록하고 산출한다 |
 | `배운 점`·`next_run` 80자 미만 | 정책 | 보고서는 쓰되 **exit 8** — 같은 명령으로 다시 낸다. 등급 X. 닫힌 런의 재작성은 되묻지 않는다 |
 | 같은 `run_id` 로 재개해 다시 씀 | — | **덮어쓴다.** 최종본이 맞다 |

@@ -860,7 +860,7 @@ gap 은 effort 와 **따로 센다**:
 
 ### 3.8 `08-report` — 보고서
 
-**입력**: `08_report_data.json` 하나 (20KB 이하)
+**입력**: `08_report_data.json`(20KB 이하, 서술) + `08_instruction_review.json`(지시문 검토 결과, ADR-H056 추기)
 **출력**: `docs/harness/pipeline/runs/{run_id}.md`
 **성공 조건**: 필수 섹션 존재
 **성공 시**: 08 → `passed`, `phase` → `done`, `run_status` → `done`, **exit 11**
@@ -881,7 +881,8 @@ gap 은 effort 와 **따로 센다**:
 
 마지막 섹션이 새로 붙은 이유는 §11.1이다 — 미캘리브레이션 런과 `verified: false` 어댑터가 보고서에 드러나지 않으면 "조용히 통과"가 된다.
 
-- **08은 diff도 코드도 읽지 않는다.** 입력은 `08_report_data.json` 하나뿐이다.
+- **08은 diff도 코드도 읽지 않는다.** 서술 입력은 `08_report_data.json` 하나뿐이다.
+- **지시문 검토가 보고서보다 먼저다** (ADR-H056 추기). 메인이 `config.project.instruction_review.skill` 로 원장의 `prose_candidates` 와 이 런의 「배운 점」을 검토하고 `08_instruction_review.json` 을 쓴다. 열린 런에서 파일이 없거나 자진신고가 어긋나면 `report` 는 **exit 8** 이다 — prose 후보는 `absorbed`·`declined`(사유 필수) 중 정확히 한쪽, 흡수는 지시문 목적지가 06 push 이후 실제로 바뀐 `changes` 가 있어야 하고, 흡수된 rule_key 는 원장에 `retire` 로 닫힌다. `instruction_slot_budget` 은 지시문 파일의 최상위 불릿 수로 재고 초과는 비강등 gap 이다.
 - **필수 섹션 존재 검사는 결정론이다.** 빠지면 원장에 기록하되 **보고서는 파이프라인을 실패시키지 않는다.**
 - 같은 `run_id`로 재개해 다시 쓰면 **덮어쓴다**(최종본이 맞다). 이미 닫힌 런이면 **덮어쓰기만 하고 exit 0** — 전이는 한 번뿐이다.
 - **런을 닫는 것은 `report`다.** §1의 페이즈 표가 08의 성공 시 다음을 `done`이라 적은 그 전이이고, 전이 조건은 08 자신의 `requires`다. 조건이 안 맞으면 보고서는 쓰되 닫지 않는다(exit 0) — **보고서는 파이프라인을 실패시키지 않는다.**
