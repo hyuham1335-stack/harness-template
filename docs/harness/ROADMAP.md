@@ -158,7 +158,7 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 | 8페이즈 01~08 실물 완주 | **검증됨** — 한 파일럿에서 파이프라인 런 8회 |
 | `doctor` 의 거부 8종 | **검증됨** — 일부러 깨뜨린 config 를 전부 거부한다 |
 | 스택 교체 시 코어 무변경 | **검증됨** — 어댑터를 갈아도 코어는 0줄이다 ([ADR-H038](DECISIONS.md)) |
-| **어댑터 `verified`** | **`false` 다.** 동봉 어댑터가 셋 다 `false` 이고, 그것이 정직한 값이다. 2차 파일럿이 `nextjs-ts` 로 15런을 완주했지만 그 값은 파일럿 리포의 것이다 — 완주 런 수로 올리는 `verify-adapter` 는 [ADR-H047](DECISIONS.md) 이 결정했고 미구현이다 |
+| **어댑터 `verified`** | **`false` 다.** 동봉 어댑터가 셋 다 `false` 이고, 그것이 정직한 값이다. 2차 파일럿이 `nextjs-ts` 로 15런을 완주했지만 그 값은 파일럿 리포의 것이다 — 클론은 `python scripts/harness.py verify-adapter` 로 올린다 — 완주 런 ≥ 3 이 전부 01~08 `passed` 면 `true` ([ADR-H047](DECISIONS.md)). 측정 뒤 완주 런이 5 이상 쌓이면 `precheck` 가 `calibration_stale` 로 재측정을 권한다(등급 X) |
 | **`calibration.json`** | **템플릿은 영구 미측정** ([ADR-H039](DECISIONS.md)). 클론이 첫 `calibrate` 로 채우고, 그 뒤로는 `promote --flush` 가 런마다 `tests_ran_floor` 를 올린다 ([ADR-H047](DECISIONS.md)) — 2차 파일럿은 1회 측정값(14)이 652개 시점까지 고정돼 급감 감지가 꺼져 있었다 |
 | **`findings.jsonl` · 승격 임계** | **템플릿 표본 0.** 2차 파일럿 표본(15런 · 140행 · 판정 13회 전부 skip)은 [ADR-H051](DECISIONS.md) · [ADR-H054](DECISIONS.md) 에 근거로만 남겼다. `THRESHOLDS` 여섯 숫자는 아직 바꾸지 않는다 — 시한 뒤 skip 은 이제 gap 이다 |
 

@@ -14,6 +14,8 @@
 런이 같은 미검증 값을 물려받는다.
 """
 
+import re
+import re
 import sys
 from pathlib import Path
 
@@ -23,6 +25,26 @@ sys.path.insert(0, str(_HERE.parent))
 
 REQUIRED_SECTIONS = ("## 완료 등급", "## 승격된 규칙", "## 건너뛴 게이트",
                      "## 비용과 시간", "## 캘리브레이션 상태")
+
+# 서술 필드의 하한 (ADR-H052 결정 5). `5568` 의 08 은 서술이 통째로 비었고
+# 그 런은 07 major 6건으로 최다였다 — 「왜 그랬는가는 이 런이 말하지 않았다」.
+# **등급은 건드리지 않는다.** 봉투가 되묻는다. 미검증 초기값이다.
+NARRATIVE_MIN_CHARS = 80
+NARRATIVE_REQUIRED = (("narrative", "배운 점"), ("next_run",))
+
+PILOT_LOG_REL = "docs/harness/PILOT-LOG.md"
+PILOT_LOG_HEADING = "## 런 기록"
+_PILOT_RUN_RE = re.compile(r"^## 파이프라인 런 P(\d+) — ", re.M)
+
+# 서술 필드의 하한 (ADR-H052 결정 5). `5568` 의 08 은 서술이 통째로 비었고
+# 그 런은 07 major 6건으로 최다였다 — 「왜 그랬는가는 이 런이 말하지 않았다」.
+# **등급은 건드리지 않는다.** 봉투가 되묻는다. 미검증 초기값이다.
+NARRATIVE_MIN_CHARS = 80
+NARRATIVE_REQUIRED = (("narrative", "배운 점"), ("next_run",))
+
+PILOT_LOG_REL = "docs/harness/PILOT-LOG.md"
+PILOT_LOG_HEADING = "## 런 기록"
+_PILOT_RUN_RE = re.compile(r"^## 파이프라인 런 P(\d+) — ", re.M)
 
 # `gaps[]` 의 어휘. **명세가 열거형으로 주지 않았다** — 문서 전체에 흩어진
 # `PASS_WITH_GAPS` 유발 사유를 여기 모은 것이고, 그 사실을 적어 둔다.
@@ -60,7 +82,264 @@ GAP_REASONS = {
     "tests_ran_zero": "테스트가 0개 돌았다 — 빈 스위트의 초록불은 통과가 아니다",
     "promotion_overdue": ("승격 판정 시한(ADR-H033)이 지났는데 이 런이 후보를 "
                           "skip 으로 닫았다 — 미룸이 등급을 치른다 (ADR-H051)"),
+    "run_record_missing": ("닫힌 런의 PR 갱신인데 런 기록 "
+                           "`docs/harness/pipeline/runs/{run_id}.md` 가 diff 에 "
+                           "없다 — 08 이 쓴 기록은 기능 PR 에 실린다 (ADR-H052)"),
+    "calibration_stale": ("캘리브레이션 측정 뒤 완주 런이 기준 이상 쌓였다 — "
+                          "게이트의 타임아웃·테스트 수 하한이 옛 실측이다. "
+                          "`python scripts/harness.py calibrate` 로 다시 잰다. "
+                          "표시이고 등급은 내리지 않는다 (ADR-H047)"),
 }
+
+# 등급을 내리지 않는 gap. `gaps[]` 에는 남아 보고서·PR 본문이 이름으로 적되
+# `demote` 는 등급을 건드리지 않는다 — "관측 결손" 이 아니라 "사람이 할 일이
+# 밀렸다" 는 표시다 (ADR-H047 결정 2). 부르는 쪽(`cli.run_precheck`)이 이
+# 목록으로 가른다.
+NON_DEMOTING_GAPS = ("calibration_stale",)
+
+
+def short_narrative(data):
+    """하한 미달인 서술 필드 [(경로, 글자 수)]. 비어 있으면 통과다."""
+    out = []
+    for path in NARRATIVE_REQUIRED:
+        node = data or {}
+        for k in path:
+            node = node.get(k) if isinstance(node, dict) else None
+        n = len(str(node or "").strip())
+        if n < NARRATIVE_MIN_CHARS:
+            out.append((".".join(path), n))
+    return out
+
+
+def _sum_phase(timing, key):
+    return sum((c.get(key) or 0) for c in (timing or {}).get("phases", {}).values())
+
+
+def pilot_log_section(state, timing, report_rel, number):
+    """PILOT-LOG 의 런 절. **파일 상단의 골격 그대로**이고, 상태에 있는 값만
+    채우고 나머지는 「미측정」이다 — 칸을 지우면 재본 적 없다는 사실도 같이
+    사라진다 (ADR-H052 결정 4).
+    """
+    run_id = state.get("run_id")
+    stamp = state.get("closed_at") or state.get("updated_at") or ""
+    day = stamp[:10] if stamp else "미측정"
+    adapter = state.get("adapter") or {}
+    pr = state.get("pr") or {}
+    gaps = state.get("gaps") or []
+    tests = state.get("tests") or {}
+    promos = [p for p in (state.get("promotions") or [])
+              if p.get("status") == "applied"]
+    lines = ["## 파이프라인 런 P%d — `%s` (%s)" % (number, state.get("slug") or "?",
+                                                   day), "",
+             "| 항목 | 값 |", "|------|-----|",
+             "| 일자 | %s |" % day,
+             "| 런 ID | `_workspace/runs/%s` |" % run_id,
+             "| 브랜치 | %s |" % ("`%s`" % pr["head"] if pr.get("head") else "미측정"),
+             "| 대상 | 런 보고서 `%s` 의 계약 절을 본다 (계약은 06 에서 지워진다) |"
+             % report_rel,
+             "| 어댑터 | `%s` (`verified: %s`) |"
+             % (adapter.get("id") or "미측정",
+                str(bool(adapter.get("verified"))).lower()),
+             "| 결과 | %s · gaps %d%s |"
+             % (state.get("grade") or "미정", len(gaps),
+                (" (" + ", ".join(gaps) + ")") if gaps else ""),
+             "| 머신 | 미측정 |", "",
+             "### 스테이지 실측", "",
+             "| 스테이지 | 소요 | 종료 코드 | 테스트 | 비고 |",
+             "|---|---:|---:|---:|---|"]
+    phases = (timing or {}).get("phases") or {}
+    if phases:
+        for name in sorted(phases):
+            c = phases[name]
+            waits = (c.get("escalation_wait_sec") or 0) + (c.get("human_wait_sec") or 0)
+            lines.append("| %s | %s | — | — | 페이즈 벽시계 · 순 작업 %s · 대기 %s |"
+                         % (name, _hms(c.get("wall_sec")), _hms(c.get("work_sec")),
+                            _hms(waits) if waits else "—"))
+    else:
+        lines.append("| — | 미측정 | 미측정 | 미측정 | 이벤트가 없어 소요를 유도하지 못했다 |")
+    lines.append("| 테스트 | — | — | %s | %s |"
+                 % (tests.get("ran") if tests.get("ran") is not None else "미측정",
+                    tests.get("status") or "미측정"))
+    lines += ["", "### 이 런이 확인하기로 했던 것 — 그리고 결과", "",
+              "미측정 — 런 전에 적은 예측이 상태에 없다. 런 보고서 `%s` 의 서술을 본다."
+              % report_rel, "",
+              "### 막힌 지점 · 수동 개입", ""]
+    esc = _sum_phase(timing, "escalations")
+    human = (timing or {}).get("human_wait_sec")
+    if timing:
+        lines.append("에스컬레이션 %d회 · 사람 판단 대기 %s · 형식 반려 %d회"
+                     % (esc, _hms(human) if human else "—",
+                        _sum_phase(timing, "format_rejects")))
+    else:
+        lines.append("미측정")
+    lines += ["", "### 이 런이 연 하네스 결함", "",
+              "| ID | 무엇 | 상태 |", "|---|---|---|",
+              "| — | 미측정 — 사람이 적는다 | |", "",
+              "### 이 런이 승격 판단에 주는 답", "",
+              ("승격 적용 %d건: %s" % (len(promos), ", ".join(
+                  "`%s`" % p.get("rule_id") for p in promos))
+               if promos else "승격된 규칙 없음 — ROADMAP §6 표는 움직이지 않았다."),
+              "", "### 다음 런에서 볼 것", "",
+              "런 보고서 `%s` 의 「다음 런에서 바꿀 것」." % report_rel, ""]
+    return "\n".join(lines)
+
+
+def append_pilot_log(root, state, timing, report_rel):
+    """`## 런 기록` 아래에 런 절을 붙인다. 같은 run_id 절은 **교체**한다(멱등).
+
+    파일이나 헤딩이 없으면 아무것도 하지 않고 False — 템플릿 자신은 파일럿
+    기록을 싣지 않는다 (ADR-H039). 클론의 PILOT-LOG 는 클론의 것이다.
+    """
+    path = Path(root) / PILOT_LOG_REL
+    if not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8")
+    if PILOT_LOG_HEADING not in text:
+        return False
+    head, tail = text.split(PILOT_LOG_HEADING, 1)
+    starts = [m.start() for m in _PILOT_RUN_RE.finditer(tail)]
+    blocks = [tail[a:b] for a, b in zip(starts, starts[1:] + [len(tail)])]
+    prefix = tail[:starts[0]] if starts else tail
+    marker = "_workspace/runs/%s`" % state.get("run_id")
+    replaced = False
+    out = []
+    for b in blocks:
+        if marker in b and not replaced:
+            m = _PILOT_RUN_RE.match(b)
+            number = int(m.group(1)) if m else len(out) + 1
+            out.append(pilot_log_section(state, timing, report_rel, number)
+                       .rstrip("\n") + "\n\n")
+            replaced = True
+        else:
+            out.append(b if b.endswith("\n") else b + "\n")
+    if not replaced:
+        out.append("\n" + pilot_log_section(state, timing, report_rel,
+                                            len(blocks) + 1))
+    new = head + PILOT_LOG_HEADING + prefix.rstrip("\n") + "\n" + "".join(out)
+    path.write_text(new.rstrip("\n") + "\n", encoding="utf-8")
+    return True
+
+
+def short_narrative(data):
+    """하한 미달인 서술 필드 [(경로, 글자 수)]. 비어 있으면 통과다."""
+    out = []
+    for path in NARRATIVE_REQUIRED:
+        node = data or {}
+        for k in path:
+            node = node.get(k) if isinstance(node, dict) else None
+        n = len(str(node or "").strip())
+        if n < NARRATIVE_MIN_CHARS:
+            out.append((".".join(path), n))
+    return out
+
+
+def _sum_phase(timing, key):
+    return sum((c.get(key) or 0) for c in (timing or {}).get("phases", {}).values())
+
+
+def pilot_log_section(state, timing, report_rel, number):
+    """PILOT-LOG 의 런 절. **파일 상단의 골격 그대로**이고, 상태에 있는 값만
+    채우고 나머지는 「미측정」이다 — 칸을 지우면 재본 적 없다는 사실도 같이
+    사라진다 (ADR-H052 결정 4).
+    """
+    run_id = state.get("run_id")
+    stamp = state.get("closed_at") or state.get("updated_at") or ""
+    day = stamp[:10] if stamp else "미측정"
+    adapter = state.get("adapter") or {}
+    pr = state.get("pr") or {}
+    gaps = state.get("gaps") or []
+    tests = state.get("tests") or {}
+    promos = [p for p in (state.get("promotions") or [])
+              if p.get("status") == "applied"]
+    lines = ["## 파이프라인 런 P%d — `%s` (%s)" % (number, state.get("slug") or "?",
+                                                   day), "",
+             "| 항목 | 값 |", "|------|-----|",
+             "| 일자 | %s |" % day,
+             "| 런 ID | `_workspace/runs/%s` |" % run_id,
+             "| 브랜치 | %s |" % ("`%s`" % pr["head"] if pr.get("head") else "미측정"),
+             "| 대상 | 런 보고서 `%s` 의 계약 절을 본다 (계약은 06 에서 지워진다) |"
+             % report_rel,
+             "| 어댑터 | `%s` (`verified: %s`) |"
+             % (adapter.get("id") or "미측정",
+                str(bool(adapter.get("verified"))).lower()),
+             "| 결과 | %s · gaps %d%s |"
+             % (state.get("grade") or "미정", len(gaps),
+                (" (" + ", ".join(gaps) + ")") if gaps else ""),
+             "| 머신 | 미측정 |", "",
+             "### 스테이지 실측", "",
+             "| 스테이지 | 소요 | 종료 코드 | 테스트 | 비고 |",
+             "|---|---:|---:|---:|---|"]
+    phases = (timing or {}).get("phases") or {}
+    if phases:
+        for name in sorted(phases):
+            c = phases[name]
+            waits = (c.get("escalation_wait_sec") or 0) + (c.get("human_wait_sec") or 0)
+            lines.append("| %s | %s | — | — | 페이즈 벽시계 · 순 작업 %s · 대기 %s |"
+                         % (name, _hms(c.get("wall_sec")), _hms(c.get("work_sec")),
+                            _hms(waits) if waits else "—"))
+    else:
+        lines.append("| — | 미측정 | 미측정 | 미측정 | 이벤트가 없어 소요를 유도하지 못했다 |")
+    lines.append("| 테스트 | — | — | %s | %s |"
+                 % (tests.get("ran") if tests.get("ran") is not None else "미측정",
+                    tests.get("status") or "미측정"))
+    lines += ["", "### 이 런이 확인하기로 했던 것 — 그리고 결과", "",
+              "미측정 — 런 전에 적은 예측이 상태에 없다. 런 보고서 `%s` 의 서술을 본다."
+              % report_rel, "",
+              "### 막힌 지점 · 수동 개입", ""]
+    esc = _sum_phase(timing, "escalations")
+    human = (timing or {}).get("human_wait_sec")
+    if timing:
+        lines.append("에스컬레이션 %d회 · 사람 판단 대기 %s · 형식 반려 %d회"
+                     % (esc, _hms(human) if human else "—",
+                        _sum_phase(timing, "format_rejects")))
+    else:
+        lines.append("미측정")
+    lines += ["", "### 이 런이 연 하네스 결함", "",
+              "| ID | 무엇 | 상태 |", "|---|---|---|",
+              "| — | 미측정 — 사람이 적는다 | |", "",
+              "### 이 런이 승격 판단에 주는 답", "",
+              ("승격 적용 %d건: %s" % (len(promos), ", ".join(
+                  "`%s`" % p.get("rule_id") for p in promos))
+               if promos else "승격된 규칙 없음 — ROADMAP §6 표는 움직이지 않았다."),
+              "", "### 다음 런에서 볼 것", "",
+              "런 보고서 `%s` 의 「다음 런에서 바꿀 것」." % report_rel, ""]
+    return "\n".join(lines)
+
+
+def append_pilot_log(root, state, timing, report_rel):
+    """`## 런 기록` 아래에 런 절을 붙인다. 같은 run_id 절은 **교체**한다(멱등).
+
+    파일이나 헤딩이 없으면 아무것도 하지 않고 False — 템플릿 자신은 파일럿
+    기록을 싣지 않는다 (ADR-H039). 클론의 PILOT-LOG 는 클론의 것이다.
+    """
+    path = Path(root) / PILOT_LOG_REL
+    if not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8")
+    if PILOT_LOG_HEADING not in text:
+        return False
+    head, tail = text.split(PILOT_LOG_HEADING, 1)
+    starts = [m.start() for m in _PILOT_RUN_RE.finditer(tail)]
+    blocks = [tail[a:b] for a, b in zip(starts, starts[1:] + [len(tail)])]
+    prefix = tail[:starts[0]] if starts else tail
+    marker = "_workspace/runs/%s`" % state.get("run_id")
+    replaced = False
+    out = []
+    for b in blocks:
+        if marker in b and not replaced:
+            m = _PILOT_RUN_RE.match(b)
+            number = int(m.group(1)) if m else len(out) + 1
+            out.append(pilot_log_section(state, timing, report_rel, number)
+                       .rstrip("\n") + "\n\n")
+            replaced = True
+        else:
+            out.append(b if b.endswith("\n") else b + "\n")
+    if not replaced:
+        out.append("\n" + pilot_log_section(state, timing, report_rel,
+                                            len(blocks) + 1))
+    new = head + PILOT_LOG_HEADING + prefix.rstrip("\n") + "\n" + "".join(out)
+    path.write_text(new.rstrip("\n") + "\n", encoding="utf-8")
+    return True
 
 
 def _ledger_axis_lines(data):
@@ -192,18 +471,41 @@ def _triage_cell(state):
 
 
 def _models_cell(state):
-    """봉투가 지시한 등급. **지시이지 실측이 아니다** — blind spot 을 함께 적는다."""
+    """봉투가 지시한 등급 + 리뷰어의 자진신고. **둘 다 실측이 아니다** — blind
+    spot 을 함께 적는다 (ADR-H052 결정 2)."""
     node = state.get("models") or {}
     inst = node.get("instructed") or {}
-    if not inst:
+    reported = node.get("reported") or {}
+    if not inst and not reported:
         return None
     by = {}
     for tier in inst.values():
         by[tier or "inherit"] = by.get(tier or "inherit", 0) + 1
-    return "%s\n  기준: **%s** — 봉투가 지시한 등급이다.\n%s" % (
-        " · ".join("%s: %d" % (k, v) for k, v in sorted(by.items())),
-        node.get("basis"),
+    head = " · ".join("%s: %d" % (k, v) for k, v in sorted(by.items())) or "지시 없음"
+    if reported:
+        seen = {}
+        for m in reported.values():
+            seen[m] = seen.get(m, 0) + 1
+        head += "\n  자진신고(`model_used`): %s" % " · ".join(
+            "%s: %d" % (k, v) for k, v in sorted(seen.items()))
+    return "%s\n  기준: **%s** — 봉투가 지시한 등급과 리뷰어의 자진신고다.\n%s" % (
+        head, node.get("basis"),
         "\n".join("  - %s" % b for b in node.get("blind_spots") or []))
+
+
+def _cost_cell(cost):
+    """「비용(있으면)」. 값이 없으면 **`미계측`** 이라고 적는다 — 0 이 아니다.
+
+    `cmd_cost` 는 트랜스크립트의 `cost-state` 를 읽고, 08 을 돌리는 세션 자신은
+    아직 그 줄을 안 썼다 — 그래서 값이 있어도 **미완**이다 (ADR-H032 · H052).
+    파일럿 클론처럼 `cmd_cost` 가 없는 리포에서는 항상 `미계측` 이다.
+    """
+    if not cost or "cost_usd" not in cost:
+        return "미계측 — `cmd_cost` 가 값을 내지 못했다"
+    sessions = [c for c in (cost.get("sessions") or [])
+                if c.get("basis") == "touched"]
+    return "$%.2f (세션 %d · 읽지 못한 세션 %d · 08 세션은 미완이라 제외)" % (
+        cost["cost_usd"], len(sessions), cost.get("unread_sessions") or 0)
 
 
 def _counter_cell(node):
@@ -261,32 +563,56 @@ def _timing_lines(timing):
     if not timing or not timing.get("phases"):
         return ["", UNMEASURED_DURATION, ""]
 
-    rows = ["", "| 페이즈 | 벽시계(대기 포함) | 그중 에스컬레이션 대기 | 구간 |",
-            "|---|---|---|---|"]
+    # **순 작업과 두 종류의 대기를 갈라 적는다** (ADR-H052). `728c` 는 2h48m
+    # 중 1h09m 이 05 의 사람 대기였는데 "05 가 1h50m 걸렸다" 로 읽혔다.
+    # 형식 반려 수는 소요가 아니라 **왕복 비용**이다 — 같은 표에 두는 이유는
+    # 그것이 그 페이즈의 벽시계를 먹기 때문이다.
+    rows = ["", "| 페이즈 | 벽시계(대기 포함) | 순 작업 | 에스컬레이션 대기 "
+                "| 사람 판단 대기 | 형식 반려 | 구간 |",
+            "|---|---|---|---|---|---|---|"]
     for name in sorted(timing["phases"]):
         cell = timing["phases"][name]
         wait = cell.get("escalation_wait_sec")
+        human = cell.get("human_wait_sec")
+        rejects = cell.get("format_rejects") or 0
         segs = "%s구간" % cell.get("segments")
         entries = cell.get("entries") or 0
         if entries != 1:
             # 진입 이벤트가 0 이거나 여럿인 것 자체가 사실이다 — 08 은 0 이고
             # 되돌아간 01 은 여러 번이다. 구간 수와 다른 것을 말한다.
             segs = "%s · 진입 %s" % (segs, entries)
-        rows.append("| %s | %s | %s | %s |"
+        rows.append("| %s | %s | %s | %s | %s | %s | %s |"
                     % (name, _hms(cell.get("wall_sec")),
-                       _hms(wait) if wait else "—", segs))
+                       _hms(cell.get("work_sec")),
+                       _hms(wait) if wait else "—",
+                       _hms(human) if human else "—",
+                       rejects if rejects else "—", segs))
 
     total_wait = timing.get("escalation_wait_sec")
+    total_human = timing.get("human_wait_sec")
     wall = timing.get("wall_sec")
-    share = ""
-    if total_wait and wall:
-        share = " (%.1f%%)" % (100.0 * total_wait / wall)
-    rows.append("| **합계** | **%s** | **%s** | |"
-                % (_hms(wall), (_hms(total_wait) + share) if total_wait else "—"))
+
+    def _share(v):
+        if v and wall:
+            return "%s (%.1f%%)" % (_hms(v), 100.0 * v / wall)
+        return _hms(v) if v else "—"
+
+    work = None
+    if wall is not None:
+        work = wall - (total_wait or 0) - (total_human or 0)
+    rejects_total = sum(c.get("format_rejects") or 0
+                        for c in timing["phases"].values())
+    rows.append("| **합계** | **%s** | **%s** | **%s** | **%s** | **%s** | |"
+                % (_hms(wall), _hms(work) if work is not None else "—",
+                   _share(total_wait), _share(total_human),
+                   rejects_total if rejects_total else "—"))
 
     if timing.get("unresumed_escalations"):
         rows += ["", "재개되지 않은 에스컬레이션 %s건 — **대기 길이는 아직 없다.**"
                  % timing["unresumed_escalations"]]
+    if timing.get("unanswered_waits"):
+        rows += ["", "답이 오지 않은 사람 판단 대기 %s건 — **대기 길이는 아직 없다.**"
+                 % timing["unanswered_waits"]]
 
     rows += ["", "기준: **%s** — 이벤트를 seq 순으로 걸으며 인접한 두 `ts` 의 "
                  "차를 그때 활성인 페이즈에 더한다. `Σ 페이즈 소요 == 런 "
@@ -305,7 +631,7 @@ def _tbl(rows):
     return out
 
 
-def build(state, data, calibration, promotions, timing=None):
+def build(state, data, calibration, promotions, timing=None, cost=None):
     """보고서 마크다운. 반환: (text, missing_sections).
 
     **필수 섹션이 빠져도 파이프라인을 실패시키지 않는다** — 원장에 기록만
@@ -384,6 +710,8 @@ def build(state, data, calibration, promotions, timing=None):
         # **지시된 등급이지 실측이 아니다** (ADR-H044). 어느 모델이 돌았는지
         # 실행기는 보지 못한다 — blind spot 이 셀 안에 같이 적힌다.
         ("지시된 모델 등급", _models_cell(state)),
+        # 비용은 있으면 적고 없으면 `미계측` 이다. 0 으로 적지 않는다.
+        ("비용(있으면)", _cost_cell(cost)),
     ])
     lines += _timing_lines(timing)
 
@@ -447,6 +775,10 @@ def build(state, data, calibration, promotions, timing=None):
     if verified is False:
         notes.append("**어댑터가 `verified: false` 다** — 실패 경로가 실물에서 "
                      "돈 적이 없다. 이 런의 초록불은 그만큼만 말한다.")
+    if "calibration_stale" in gaps:
+        notes.append("**측정 뒤 완주 런이 기준 이상 쌓였다** (`calibration_stale`) — "
+                     "다음 런 전에 `python scripts/harness.py calibrate` 로 다시 "
+                     "잰다. 등급은 내리지 않았다 (ADR-H047).")
     lines += ([""] + ["- %s" % n for n in notes] if notes
               else ["", "- 캘리브레이션에 표시할 결손이 없다."])
     lines.append("")

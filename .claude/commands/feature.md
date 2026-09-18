@@ -263,7 +263,17 @@ python scripts/pipeline/cli.py report --run-id <id>
 
 `08_report_data.json` 하나만 쓴다 (20KB 이하). **08 은 diff 도 코드도 읽지
 않는다.** 표는 실행기가 조립하니 너는 서술만 쓴다 — **재지 않은 것을 숫자로
-적지 마라.**
+적지 마라.** `배운 점`·`next_run` 은 80자 이상이다 — 미달이면 exit 8 로 되묻는다.
+
+`report` 가 exit 11 로 런을 닫으면 **런 기록을 기능 PR 에 싣는다** (ADR-H052):
+
+```bash
+git add docs/harness/pipeline/runs/<id>.md docs/harness/PILOT-LOG.md docs/harness/pipeline/ledger/
+git commit -m "chore: 파이프라인 실행 기록 반영 (<id> 런)"
+python scripts/pipeline/cli.py pr --run-id <id>      # 닫힌 런의 PR 갱신 — 06 record 로 이어지지 않는다
+```
+
+기록이 diff 에 없으면 gap `run_record_missing` 으로 등급이 내려간다.
 
 ## 3. 종료 보고
 

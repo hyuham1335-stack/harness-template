@@ -1235,6 +1235,15 @@ def _plan_00_triage(root, paths, s, phase_item, ctx):
     text = paths.request.read_text(encoding="utf-8")
     sig = triage.signals(text, config)
     node["signals"] = sig
+    # 원장의 열린 `deferred` 중 요청 경로와 겹치는 것 — 이월은 여기서 다음
+    # 런에 닿는다 (ADR-H051 결정 3). 원장이 없거나 깨졌으면 0 이 아니라 미계측.
+    import ledger
+    try:
+        node["deferred_overlap"] = ledger.deferred_overlap(
+            root, (sig.get("paths_role_owned") or []) + (sig.get("paths_docs") or [])
+            + (sig.get("paths_unresolved") or []))
+    except (OSError, ValueError):
+        node["deferred_overlap"] = None
     prof = s.get("profile") or {}
     if prof.get("source") == "user":
         # 사람이 `init --profile` 로 정했다. 신호만 남기고 판정을 덮지 않는다.
@@ -1790,6 +1799,8 @@ def render_packet(root, phase, ctx, s, checks=None):
     parts.append(_section(body, "## 절차"))
     if pid == "00-triage":
         parts.append(_triage_render(ctx, s))
+    if pid in ("00-triage", "01-plan"):
+        parts.append(_deferred_render(s))
     if pid == "01-plan" and not _reviewers_for(front, s):
         parts.append(
             "## 리뷰어 — 0명 (%s 레인)\n\n이 런은 플랜 리뷰어를 부르지 않는다. "
@@ -1844,6 +1855,22 @@ def render_packet(root, phase, ctx, s, checks=None):
         cmd = ("python scripts/pipeline/cli.py record --phase %s --file <산출물> "
                "--run-id %s" % (pid.split("-")[0], s["run_id"]))
     return "\n\n".join(p for p in parts if p), cmd
+
+
+def _deferred_render(s):
+    """00·01 패킷 — 요청 경로와 겹치는 이월 미해결 (ADR-H051). 없으면 그렇게 말한다."""
+    node = (s.get("phases") or {}).get("00-triage") or {}
+    ov = node.get("deferred_overlap")
+    if ov is None:
+        return ""
+    if not ov.get("count"):
+        return ("## 이월 미해결 — 요청 경로와 겹치는 deferred 0건\n\n"
+                "원장의 열린 `deferred` 중 이 요청의 경로에 걸린 것이 없다.")
+    return ("## 이월 미해결 — 요청 경로와 겹치는 deferred %d건\n\n"
+            "경로: %s\n\n`docs/harness/pipeline/ledger/deferred.md` 의 해당 절을 "
+            "플랜의 입력으로 읽는다. 앞선 런이 미룬 것이고, 이번 런이 같은 자리를 "
+            "건드린다면 고치거나 왜 또 미루는지 적는다."
+            % (ov["count"], ", ".join("`%s`" % p for p in ov.get("paths") or [])))
 
 
 def _triage_render(ctx, s):
@@ -2082,10 +2109,17 @@ def run_record(root, phase, file, reviewer=None, round_=None, run_id=None,
     # **제출을 세지 않는다** (M26). 계수는 `next`·`review07`·`gate` 가 기동을
     # 지시하는 자리에서 일어난다 — `_instruction_keys` 를 보라.
     try:
-        return handler(root, paths, s, phase_item, ctx, Path(file), reviewer,
-                       round_)
+        env = handler(root, paths, s, phase_item, ctx, Path(file), reviewer,
+                      round_)
     except ConfigDeclarationError as exc:
         return _declaration_envelope("record", s, exc)
+    # **형식 반려는 여기 한 곳에서 센다** (ADR-H052 결정 3). exit 8 을 내는
+    # 자리는 핸들러 안에 열다섯 곳이고 절반은 `check_fail` 도 없다 — 핸들러가
+    # 무엇을 돌려주든 8 이면 제출이 규약을 어겨 되돌아온 것이다.
+    if env.get("exit") == 8:
+        st.append_event(paths, "format_reject", cmd="record", phase=pid,
+                        reviewer=reviewer, round=round_)
+    return env
 
 
 def _instruction_keys(s, pid, ctx, front=None):
@@ -2325,6 +2359,9 @@ def _record_00(root, paths, s, phase_item, ctx, file, reviewer, round_):
                    "small — 역할 소유 경로 셋 이하의 작은 변경",
                    "normal — 그 밖 전부"]
         st.save(paths, s)
+        # 여기서부터 사람을 기다린다 — `40dc` 의 36분이 이 자리였다 (ADR-H052).
+        st.append_event(paths, "waiting_human", cmd="record", phase="00-triage",
+                        reason="triage_unclear")
         return st.envelope(
             "record", False, 9, s,
             {"options": options, "signals": node.get("signals"),
@@ -2590,6 +2627,8 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
         # 검사가 근거로 삼는 이전 회차 지적이 사라졌다. 정수를 읽는
         # 소비자는 어디에도 없었다 — 순수한 손실이다 (P3).
         s["phases"]["01-plan"]["converged_at_round"] = round_
+        # exceeded 무시 — 수렴이 라운드를 닫았다. 마지막 라운드에서 수렴한
+        # 것은 상한 초과가 아니고, 여기서 멈출 다음 라운드도 없다 (ADR-H048).
         st.counter_inc(s, _loop_counter(phase_item["front"]), max_rounds,
                        "converged", paths=paths)
         _note_cross_verify_gap(s)
@@ -2728,16 +2767,17 @@ def _record_02(root, paths, s, phase_item, ctx, file, reviewer, round_):
     _note_cross_verify_gap(s)
     if critical:
         front = phase_item["front"]
-        # **왕복 N회 허용**이 02 의 셈법이다 — `used > max_` 다. `max: 1` 에서
-        # 예전의 `exceeded and used > 1` 과 비트 단위로 같고, 상한을 올리면
-        # 그때 처음으로 뜻이 갈린다. 그 갈림이 없던 것이 M36 이다.
+        # **`loop.max` 는 Critical 제출 상한이다** — `max: 2` 면 두 번째 Critical
+        # 에서 멈춘다(되돌림은 1회). 판정은 `counter_inc` 의 `exceeded` 하나가
+        # 한다. 예전에는 이 반환값을 버리고 `used > max_` 를 따로 셌고, 그래서
+        # `3b43` 의 상태가 `used 2 / max 1` 로 남았다 (ADR-H048).
         max_decl = _loop_max(front)
         return_to = _loop_return_to(front)
-        used, max_, _exceeded = st.counter_inc(s, _loop_counter(front), max_decl,
-                                              "xverify_critical", paths=paths)
-        if used > max_:
+        used, max_, exceeded = st.counter_inc(s, _loop_counter(front), max_decl,
+                                             "xverify_critical", paths=paths)
+        if exceeded:
             _loop_on_exceed(front)
-            st.escalate(paths, s, "02 가 %d회를 넘겨 Critical 을 냈다" % max_,
+            st.escalate(paths, s, "02 가 Critical 을 %d회 냈다 — 상한이다" % max_,
                         ["이대로 진행한다", "범위를 줄인다", "중단한다"],
                         phase=front["id"])
             return _escalation_envelope("record", paths, s)
@@ -2755,7 +2795,8 @@ def _record_02(root, paths, s, phase_item, ctx, file, reviewer, round_):
             "record", False, 4, s,
             {"critical": len(critical), "granted_rounds": granted},
             "## Critical 이 남았다 — `%s` 로 되돌린다\n\n%s\n\n"
-            "왕복은 %d회다(`loop.max`). 바뀐 설계에 리뷰 라운드 **%d 를 새로 지급했다** — "
+            "Critical 은 %d회까지다(`loop.max`) — 다음 Critical 에서 멈춘다. "
+            "바뀐 설계에 리뷰 라운드 **%d 를 새로 지급했다** — "
             "새 설계가 한 라운드로 수렴할 이유가 없다.\n"
             "쓴 회차는 지워지지 않는다: %d / %d."
             % (return_to,
@@ -3162,6 +3203,11 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
                       "dropped_by_enforcement": got["dropped_by_enforcement"],
                       "truncated": got["truncated"],
                       "need_more_context": payload.get("need_more_context") or []}
+    # 자진신고(선택). 지시 키와 같은 모양으로 남겨 08 이 나란히 놓는다 (ADR-H052).
+    if payload.get("model_used"):
+        slot[reviewer]["model_used"] = payload["model_used"]
+        st.note_model_reported(s, "05:r%d:%s" % (round_, reviewer),
+                               payload["model_used"])
     st.save(paths, s)
 
     missing = [c for c in planned if c not in slot]
@@ -3371,6 +3417,17 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
     if blocking:
         front = phase_item["front"]
         max_decl = _loop_max(front)
+        # **재상정 승격은 지급이다** (ADR-H048). 같은 `finding_key` 가 이전
+        # 라운드보다 높은 심각도로 다시 오면 리뷰어가 처음에 낮게 본 것이지
+        # 수리자의 잘못이 아니다 — 그 비용을 수리자의 예산에서 빼지 않는다.
+        # 런당 1회다. 새 키가 major 로 나는 것은 새 지적이라 지급이 아니다.
+        raised = _severity_raised(node.get("rounds") or {}, round_, blocking)
+        if raised and "severity_raised_grant" not in node:
+            st.counter_grant(s, _loop_counter(front), 1, "severity_raised")
+            st.append_event(paths, "counter_grant", cmd="record",
+                            phase="05-code-review", counter=_loop_counter(front),
+                            extra=1, reason="severity_raised")
+            node["severity_raised_grant"] = {"round": round_, "keys": raised}
         used, _max, exceeded = st.counter_inc(s, _loop_counter(front), max_decl,
                                               "review_blocking", paths=paths)
         if exceeded:
@@ -3393,11 +3450,40 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             "record", False, 4, s,
             {"blocking": len(blocking), "findings": blocking,
              "review05": s["review05"], "delta_reviewer": delta},
-            _review_repair_render(blocking, used + 1, delta, prev_open),
+            _review_repair_render(blocking, used + 1, delta, prev_open,
+                                  raised=raised if node.get(
+                                      "severity_raised_grant", {}).get(
+                                      "round") == round_ else None),
             "python scripts/pipeline/cli.py gate --phase 04 --stage scoped "
             "--run-id %s" % s["run_id"])
 
     return _advance_to_next(root, paths, s, phase_item, ctx)
+
+
+def _severity_raised(rounds, round_, blocking):
+    """이전 라운드보다 심각도가 오른 blocking 지적의 `finding_key` 목록.
+
+    비교 재료는 `rounds[r][code].keys[] = {key, severity}` 다 — 같은 라운드
+    안의 2인 합치 상승(`review.merge` 의 `severity_raised_from`)은 대상이
+    아니다. 그것은 라운드를 가로지른 재상정이 아니다.
+    """
+    import ledger
+    best = {}
+    for rn, subs in rounds.items():
+        if int(rn) >= round_:
+            continue
+        for sub in subs.values():
+            for k in sub.get("keys") or []:
+                rank = ledger._SEVERITY_RANK.get(k.get("severity"), -1)
+                if rank > best.get(k["key"], -1):
+                    best[k["key"]] = rank
+    out = []
+    for f in blocking:
+        key = ledger.finding_key(f)
+        if key in best and \
+                ledger._SEVERITY_RANK.get(f.get("severity"), -1) > best[key]:
+            out.append(key)
+    return out
 
 
 def _delta_reviewer(blocking, planned, slot):
@@ -3421,10 +3507,16 @@ def _delta_reviewer(blocking, planned, slot):
     return max(alive, key=lambda c: (scores.get(c, 0), -alive.index(c)))
 
 
-def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
+def _review_repair_render(blocking, round_no, delta=None, previous_open=None,
+                          raised=None):
     lines = ["## 수리가 필요하다 (%d회차)" % round_no, "",
              "Critical/Major %d건. **Minor 는 고치지 않는다** — 원장에 쌓이고 "
              "보고서로 간다." % len(blocking), ""]
+    if raised:
+        lines += ["이전 라운드의 지적 %d건이 더 높은 심각도로 재상정됐다 — "
+                  "`review_repair` 를 **1 지급했다** (`severity_raised`, 런당 "
+                  "1회). 리뷰어가 처음에 낮게 본 비용을 수리자의 예산에서 빼지 "
+                  "않는다 (ADR-H048)." % len(raised), ""]
     if delta:
         lines += ["수리 뒤 **델타 재리뷰는 `%s` 한 명**이다. 전원을 다시 "
                   "부르지 않는다 — 그리고 그 한 명이 깨끗해도 앞선 라운드의 "
@@ -3459,7 +3551,11 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
     if contract_defect:
         lines += ["", "**`CONTRACT_DEFECT` 가 있다.** 이것은 수리 대상이 아니라 "
                       "에스컬레이션이다 — 계약은 메인 단독 소유다."]
-    lines += ["", "고친 뒤 `gate --phase 04 --stage scoped` 로 재게이트하고, "
+    lines += ["", "제출이 **내용은 그대로이고 회계 필드만** 틀려 exit 8 로 되돌아오면 "
+                  "(`resolved_from_previous` · `reraised_from_previous`) 메인이 "
+                  "`local_repair` 로 그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·"
+                  "severity 는 여전히 손대지 않는다 (ADR-H052).",
+              "", "고친 뒤 `gate --phase 04 --stage scoped` 로 재게이트하고, "
                   "델타 재리뷰 1명을 돌린 다음 다시 제출한다.",
               "**수리하면 지문이 바뀌어 영수증이 낡는다** — 06 이 자동으로 막으므로 "
               "재게이트를 잊을 수 없다."]
@@ -3994,10 +4090,18 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
         # **면제된 프로브는 등급이 치른다** (M44 · §E9). 어휘는 이미 있었고
         # 소비자(`pr.build_body`·`report.GAP_REASONS`)도 있었는데 **쓰는 코드가
         # 없었다** — 선언만 있고 코드가 안 읽는 M36 과 같은 모양이다.
+        # `NON_DEMOTING_GAPS`(calibration_stale) 는 이름만 남기고 등급은 그대로다
+        # — 사람이 할 일이 밀렸다는 표시이지 이 런의 관측 결손이 아니다 (ADR-H047).
+        import report as rep
         for gap in got.get("gaps") or []:
-            st.demote(s, st.GRADES[1], gap)
+            st.demote(s, None if gap in rep.NON_DEMOTING_GAPS else st.GRADES[1], gap)
         st.append_event(paths, "check_fail" if got["exit"] else "stage_done",
                         cmd="precheck", phase=pid, exit=got["exit"])
+        if got["exit"] == 9:
+            # 예산·브랜치·divergence 는 사람이 판단한다 — 그 대기가 여기서
+            # 시작된다 (ADR-H052). `check_fail` 은 "무엇이" 이고 이것은 "언제부터" 다.
+            st.append_event(paths, "waiting_human", cmd="precheck", phase=pid,
+                            reason="precheck_policy")
         st.save(paths, s)
 
         if got["exit"] == 10:
@@ -4041,6 +4145,13 @@ def _precheck_render(got):
         # **면제를 조용히 넘기지 않는다** (M44). "전부 맞다" 로만 적으면
         # 면제가 통과와 구분되지 않는다.
         for gap in got.get("gaps") or []:
+            if gap == "calibration_stale":
+                stale = [c for c in got["checks"] if c["name"] == "캘리브레이션"]
+                lines += ["", "**캘리브레이션이 낡았다** — %s. 등급은 그대로이고 "
+                              "`calibration_stale` 로 보고서에 남는다. 다음 런 전에 "
+                              "`python scripts/harness.py calibrate` 를 돌린다."
+                          % (stale[0]["message"] if stale else gap)]
+                continue
             lines += ["", "**면제된 프로브가 있다: `%s`.** 통과가 아니라 "
                           "미검증이다 — 등급이 `PASS_WITH_GAPS` 로 내려가고 "
                           "보고서·PR 본문에 이름으로 남는다." % gap]
@@ -4289,6 +4400,25 @@ def cmd_report(root, args):
     return st.emit(run_report(root, args.out, args.run_id))
 
 
+def _report_cost(root, s):
+    """08 의 「비용(있으면)」 입력. **`run_cost` 를 부르는 유일한 자리다.**
+
+    `run_cost` 가 값을 못 내면(exit ≠ 0 · `cost_usd` 없음 · 예외) None 이고
+    보고서는 `미계측` 을 적는다. 세션 원장·`cmd_cost` 를 걷어낸 클론은 이
+    함수 본문을 `return None` 으로 두면 된다 — 그것이 델타 병합의 전부다.
+    """
+    try:
+        env = run_cost(root, run_id=s.get("run_id"))
+    except (OSError, ValueError, KeyError, ImportError):
+        return None
+    if not env or env.get("exit") != 0:
+        return None
+    data = env.get("data") or {}
+    if "cost_usd" not in data:
+        return None
+    return data
+
+
 def run_report(root, out=None, run_id=None):
     """08 — 결정론 표 조립 + 필수 섹션 검사. 종료 코드 **0 / 3 / 6**.
 
@@ -4352,9 +4482,11 @@ def run_report(root, out=None, run_id=None):
     except (OSError, ValueError, KeyError):
         pass
     # 소요는 `events.jsonl` 의 유도값이고, 08 시점에 그 파일은 이미 완결이다
-    # — 미완 구간이 없다. 비용이 보고서에 없는 것은 그 반대다 (ADR-H032).
+    # — 미완 구간이 없다. 비용은 그 반대라 **있으면** 적고 아니면 `미계측` 이다
+    # (ADR-H032 · ADR-H052 결정 2).
+    timing = st.phase_durations(paths)
     text, missing = rep.build(s, data, cal or {}, s.get("promotions") or [],
-                              st.phase_durations(paths))
+                              timing, cost=_report_cost(root, s))
 
     target = Path(out) if out else (
         root / "docs" / "harness" / "pipeline" / "runs"
@@ -4369,15 +4501,43 @@ def run_report(root, out=None, run_id=None):
     st.save(paths, s)
     rel = str(target.relative_to(root)) if str(target).startswith(str(root)) \
         else str(target)
+    short = rep.short_narrative(data)
     data = {"out": rel, "missing_sections": missing}
+
+    # 이월 뷰와 파일럿 기록은 **보고서와 같은 시점**에 쓴다 (ADR-H051 · H052).
+    # 둘 다 파생 파일이고 실패해도 보고서를 막지 않는다 — 못 쓴 사실만 적는다.
+    try:
+        data["deferred_md"] = ledger_mod.write_deferred(root).relative_to(
+            root).as_posix()
+    except (OSError, ValueError):
+        data["deferred_md"] = None
+    data["pilot_log"] = (rep.PILOT_LOG_REL
+                         if rep.append_pilot_log(root, s, timing, rel) else None)
 
     # 이미 닫힌 런 — 파일만 다시 쓰고 **전이하지 않는다.** exit 11 은 전이의
     # 순간이므로 두 번 내면 재작성과 첫 종료가 원장에서 구분되지 않는다.
     if s.get("run_status") == st.DONE:
         return st.envelope("report", True, 0, s, dict(data, closed=True),
-                           _report_render(rel, missing, s)
+                           _report_render(rel, missing, s, data)
                            + "\n\n이 런은 이미 닫혀 있다. 보고서만 다시 썼다.",
                            None)
+
+    # **서술이 짧으면 되묻는다** (ADR-H052 결정 5). 보고서 파일은 이미 썼다 —
+    # 표는 실행기가 조립했으므로 사실은 남는다. 다만 런은 닫지 않는다: 「왜
+    # 그랬는가」 없이 닫힌 런이 `5568` 이었다. 등급은 건드리지 않는다.
+    if short:
+        st.append_event(paths, "check_fail", cmd="report", phase="08-report",
+                        short_narrative=[{"field": k, "chars": n} for k, n in short])
+        return st.envelope(
+            "report", False, 8, s, dict(data, closed=False, short_narrative=short),
+            _report_render(rel, missing, s, data) + "\n\n" + "\n".join(
+                ["## 서술이 짧다 — 다시 낸다", ""]
+                + ["- `%s`: %d자 (하한 %d)" % (k, n, rep.NARRATIVE_MIN_CHARS)
+                   for k, n in short]
+                + ["", "보고서는 썼지만 **런을 닫지 않았다.** 「배운 점」과 "
+                       "「다음 런에서 바꿀 것」은 다음 런의 입력이다 — 표가 말하지 "
+                       "못하는 「왜」를 적고 같은 명령으로 다시 낸다. 등급은 그대로다."]),
+            "python scripts/pipeline/cli.py report --run-id %s" % s["run_id"])
 
     # **전이 조건은 08 자신의 `requires` 다.** 여기 따로 적으면 페이즈 파일과
     # 갈라지고, 안 두면 03 에서 부른 report 가 런을 닫아 버린다.
@@ -4397,11 +4557,11 @@ def run_report(root, out=None, run_id=None):
 
     env = _close_run(root, paths, s, item, ctx, cmd="report")
     env["data"].update(data)
-    env["render"] = _report_render(rel, missing, s) + "\n\n" + env["render"]
+    env["render"] = _report_render(rel, missing, s, data) + "\n\n" + env["render"]
     return env
 
 
-def _report_render(rel, missing, s):
+def _report_render(rel, missing, s, data=None):
     lines = ["## 보고서를 썼다", "", "`%s`" % rel, "",
              "완료 등급 **%s**%s" % (s.get("grade") or "미정",
                                     (" — " + ", ".join(s.get("gaps") or []))
@@ -4410,6 +4570,15 @@ def _report_render(rel, missing, s):
         lines += ["", "**필수 섹션이 빠졌다: %s**" % ", ".join(missing),
                   "원장에 기록했다. 다만 **보고서는 파이프라인을 실패시키지 "
                   "않는다.**"]
+    data = data or {}
+    if data.get("pilot_log"):
+        lines += ["", "`%s` 의 「런 기록」에 이 런의 절을 붙였다." % data["pilot_log"]]
+    if data.get("deferred_md"):
+        lines += ["`%s` 를 원장에서 다시 만들었다 (이월 미해결)." % data["deferred_md"]]
+    lines += ["", "**런 기록·PILOT-LOG·deferred.md 를 커밋하고 `pr --run-id %s` 를 "
+                  "다시 돌려 PR 을 갱신한다.** 닫힌 런의 PR 갱신에 런 기록이 diff 에 "
+                  "없으면 gap `run_record_missing` 이다 (ADR-H052)."
+              % s.get("run_id")]
     return "\n".join(lines)
 
 
@@ -4823,10 +4992,25 @@ def run_pr(root, run_id=None):
                                       join["reason"], "",
                                       "끝나기 전에 push 하지 않는다."]), None)
 
+    # 2-b. **닫힌 런의 PR 갱신**에는 런 기록이 실려야 한다 (ADR-H052 결정 4).
+    # 08 이 쓴 `runs/{run_id}.md` 가 base 이후 diff 에 없으면 gap — 06 의 첫
+    # push 때는 기록이 있을 수 없고 07 수리 뒤 재push(아직 done 아님)는 대상이
+    # 아니다. 그래서 `run_status: done` 일 때만 본다.
+    closed_run = s.get("run_status") == st.DONE
+    if closed_run:
+        import precheck as pc
+        rec_rel = "docs/harness/pipeline/runs/%s.md" % s["run_id"]
+        if rec_rel not in pc.changed_files(root, "pr", config):
+            st.demote(s, st.GRADES[1], "run_record_missing")
+            st.save(paths, s)
+            data["run_record_missing"] = rec_rel
+
     # 3. 원격 상태 — 없으면 §P3 3지선다, non-FF 면 에스컬레이션
     rs = pr_mod.remote_state(root, config, branch)
     data["remote"] = rs
     if not rs["has_remote"]:
+        st.append_event(paths, "waiting_human", cmd="pr", phase="06-pr",
+                        reason="no_remote")
         return st.envelope("pr", False, 9, s, data, _no_remote_render(rs), None)
     if rs["non_ff"]:
         st.escalate(paths, s,
@@ -4842,6 +5026,10 @@ def run_pr(root, run_id=None):
     # 4. 승인 — 없거나 철회됐으면 exit 9, 지문이 어긋나면 exit 6
     node = (s.get("approval") or {}).get("06") or {}
     if not node.get("granted"):
+        # 승인 대기 — `728c` 의 1h09m 같은 시간이 06 의 벽시계에 섞이지 않게
+        # 시작점을 남긴다 (ADR-H052).
+        st.append_event(paths, "waiting_human", cmd="pr", phase="06-pr",
+                        reason="approval")
         return st.envelope("pr", False, 9, s, data,
                            _approval_prompt(root, s, rs, branch, config), None)
     fresh = st.fingerprint(root, config)
@@ -4903,6 +5091,16 @@ def run_pr(root, run_id=None):
     st.append_event(paths, "pr_pushed", cmd="pr", phase="06-pr",
                     branch=branch, remote=rs["remote"])
     st.save(paths, s)
+    if closed_run:
+        # 닫힌 런의 갱신은 06 record 로 이어지지 않는다 — 전이는 이미 끝났다.
+        note = ["", "**닫힌 런의 PR 갱신이다.** 06 record 로 이어지지 않는다."]
+        if data.get("run_record_missing"):
+            note += ["", "**런 기록 `%s` 가 diff 에 없다** — gap "
+                         "`run_record_missing` 으로 등급이 내려갔다. 08 이 쓴 "
+                         "기록을 커밋하고 다시 돌린다 (ADR-H052)."
+                     % data["run_record_missing"]]
+        return st.envelope("pr", True, 0, s, data,
+                           _pr_render(req, paths, req_path) + "\n".join(note), None)
     return st.envelope("pr", True, 0, s, data, _pr_render(req, paths, req_path),
                        "python scripts/pipeline/cli.py record --phase 06 "
                        "--file {06_pr_result.json} --run-id %s" % s["run_id"])

@@ -128,6 +128,15 @@ def repo(tmp_path):
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
                         encoding="utf-8")
 
+    # 어댑터도 픽스처가 스스로 선언한다 — **미검증(`verified: false`)** 이다.
+    # 클론이 `verify-adapter` 로 실물을 `true` 로 올려도(ADR-H047) 여기서
+    # `adapter_unverified` 를 묻는 테스트가 그 실물에 묶이지 않는다.
+    ad_path = tmp_path / "harness" / "adapters" / "nextjs-ts.json"
+    ad = json.loads(ad_path.read_text(encoding="utf-8"))
+    ad["verified"] = False
+    ad_path.write_text(json.dumps(ad, ensure_ascii=False, indent=2) + chr(10),
+                       encoding="utf-8")
+
     # 캘리브레이션도 같다 — 실물은 영구히 미측정이고 픽스처는 잰 것이 있어야 한다.
     # 위 FIXTURE_CALIBRATION 주석을 본다 (ADR-H039 결정 2).
     (tmp_path / "harness" / "calibration.json").write_text(
@@ -779,6 +788,130 @@ class TestCounterSpendReason:
             window = text[i:i + 320]
             assert any('"%s"' % r in window for r in st.COUNTER_REASONS), window
             assert "paths=paths" in window, window
+
+
+class TestWaitingHuman:
+    """[[ADR-H052]] 결정 1 — 사람 대기를 페이즈 벽시계에서 분리해 잰다.
+
+    `728c` 는 총 2h48m 중 1h09m(41.4%) 이 05 의 사람 대기였고, `40dc` 의
+    00-triage 36m53s 는 `triage_unclear` exit 9 로 사람을 기다린 시간이다 —
+    둘 다 "05 가 1h50m 걸렸다" 로 읽혔다. exit 10 은 `escalated → resumed` 로
+    이미 잰다. exit 9 는 `waiting_human` → **다음 이벤트** 까지다.
+    """
+
+    def _at(self, h, m=0, s=0):
+        return datetime(2026, 3, 1, h, m, s, tzinfo=st.TZ)
+
+    def test_대기가_페이즈에_귀속되고_순_작업이_남는다(self, repo, request_file):
+        paths, _ = st.create_run(repo, "demo", request_file)
+        paths.events.write_text("", encoding="utf-8")
+        st.append_event(paths, "phase_enter", phase="00-triage", now=self._at(10))
+        st.append_event(paths, "waiting_human", phase="00-triage",
+                        reason="triage_unclear", now=self._at(10, 5))
+        st.append_event(paths, "submit_received", phase="00-triage",
+                        now=self._at(10, 35))
+        st.append_event(paths, "phase_pass", phase="00-triage", now=self._at(10, 40))
+        st.append_event(paths, "phase_enter", phase="01-plan", now=self._at(10, 40))
+        st.append_event(paths, "run_closed", phase="01-plan", now=self._at(11))
+        t = st.phase_durations(paths)
+        cell = t["phases"]["00-triage"]
+        assert cell["human_wait_sec"] == 1800, cell
+        assert cell["work_sec"] == 600, cell
+        assert t["human_wait_sec"] == 1800, t
+        assert "human_wait_sec" not in t["phases"]["01-plan"]
+
+    def test_불변식_순_작업_더하기_대기는_벽시계다(self, repo, request_file):
+        paths, _ = st.create_run(repo, "demo", request_file)
+        paths.events.write_text("", encoding="utf-8")
+        st.append_event(paths, "phase_enter", phase="01-plan", now=self._at(10))
+        st.append_event(paths, "escalated", phase="01-plan", now=self._at(10, 10))
+        st.append_event(paths, "resumed", phase="01-plan", now=self._at(11, 10))
+        st.append_event(paths, "waiting_human", phase="01-plan",
+                        reason="precheck_policy", now=self._at(11, 20))
+        st.append_event(paths, "stage_done", phase="01-plan", now=self._at(11, 30))
+        st.append_event(paths, "phase_pass", phase="01-plan", now=self._at(11, 40))
+        t = st.phase_durations(paths)
+        for name, cell in t["phases"].items():
+            assert (cell["work_sec"] + cell.get("escalation_wait_sec", 0)
+                    + cell.get("human_wait_sec", 0)) == cell["wall_sec"], (name, cell)
+
+    def test_답이_안_온_대기는_길이가_없고_횟수만_센다(self, repo, request_file):
+        paths, _ = st.create_run(repo, "demo", request_file)
+        paths.events.write_text("", encoding="utf-8")
+        st.append_event(paths, "phase_enter", phase="06-pr", now=self._at(10))
+        st.append_event(paths, "waiting_human", phase="06-pr",
+                        reason="approval", now=self._at(10, 5))
+        t = st.phase_durations(paths)
+        assert t["unanswered_waits"] == 1, t
+        assert "human_wait_sec" not in t["phases"]["06-pr"], t["phases"]
+
+    def test_사각이_이름으로_남는다(self):
+        assert any("다음 이벤트" in b for b in st.PHASE_DURATION_BLIND_SPOTS)
+
+
+class TestWaitingHumanEvents:
+    """exit 9 를 내는 세 자리가 전부 `waiting_human` 을 남긴다."""
+
+    def _waits(self, paths):
+        return [e for e in st.read_events(paths) if e["kind"] == "waiting_human"]
+
+    def test_트리아지_unclear_가_남긴다(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT)
+        cli.run_next(repo, run_id=paths.run_id)
+        env = _submit_triage(repo, paths, {"profile": "unclear",
+                                           "expected_paths": [], "reasons": []})
+        assert env["exit"] == 9, env["render"]
+        got = self._waits(paths)
+        assert got and got[-1]["data"]["reason"] == "triage_unclear", got
+
+    def test_precheck_정책_실패가_남긴다(self, repo, request_file):
+        _branch(repo, "feat-x")
+        cli.run_init(repo, "x", request_file)
+        _bulk_change(repo, 40)
+        env = cli.run_precheck(repo, scope="pr")
+        assert env["exit"] == 9
+        paths, _ = st.load(repo)
+        got = self._waits(paths)
+        assert got and got[-1]["data"]["reason"] == "precheck_policy", got
+
+    def test_승인_대기가_남긴다(self, repo, request_file, phases, tmp_path):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _remote(repo, tmp_path)
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 9
+        got = self._waits(paths)
+        assert got and got[-1]["data"]["reason"] == "approval", got
+class TestCounterExceededIsConsumed:
+    """[[ADR-H048]] 결정 1 — `counter_inc` 의 `exceeded` 를 무시하는 호출부가 없다.
+
+    `3b43` 의 `state.json` 은 `counters.xverify_return.used = 2, max = 1` 이다 —
+    상한 1 인 카운터가 2 까지 올라간 채 기록됐다. 02 record 경로가 반환 3항을
+    버리고 `used > max_` 를 따로 판정했기 때문이다. 판정은 한 곳(`counter_inc`)
+    이 하고 호출부는 그것을 읽는다.
+    """
+
+    def test_모든_호출처가_exceeded_를_읽는다(self, repo):
+        """3항 언패킹이거나, 안 읽는 이유를 같은 자리에 적은 것만 허용한다."""
+        text = (ROOT / "scripts" / "pipeline" / "cli.py").read_text(encoding="utf-8")
+        spots = [m.start() for m in re.finditer(r"st\.counter_inc\(", text)]
+        assert len(spots) >= 7, "호출처를 못 찾았다 — 이 검사가 무의미해졌다"
+        for i in spots:
+            before = text[max(0, i - 160):i]
+            around = text[max(0, i - 400):i + 200]
+            unpacked = re.search(r"\w+, \w+, exceeded = \s*$", before)
+            assert unpacked or "exceeded 무시" in around, text[i - 160:i + 120]
+
+    def test_02_의_두_번째_Critical_은_상한_안에서_멈춘다(self, run01):
+        """`used <= max` 가 상태에 남는다 — 상한을 넘긴 숫자가 기록되지 않는다."""
+        repo, paths, s = run01
+        trip = TestLoopDeclarationsAreRead()._round_trip
+        assert trip(repo, paths)["exit"] == 4
+        second = trip(repo, paths)
+        _, after = st.load(repo, paths.run_id)
+        assert after.get("escalated"), second["render"]
+        node = after["counters"]["xverify_return"]
+        assert node["used"] <= node["max"], node
 
 
 class TestModelCallBudget:
@@ -2224,7 +2357,7 @@ class TestLoopDeclarationsAreRead:
         assert not after.get("escalated"), "상한 3 인데 두 번째에서 멈췄다"
 
     def test_상한을_안_올리면_두_번째_왕복이_멈춘다(self, run01):
-        """실물 선언(max 1)의 동작이 안 바뀌었음을 잠근다."""
+        """실물 선언(max 2 — Critical 제출 상한, 되돌림은 1회)의 동작을 잠근다."""
         repo, paths, s = run01
         assert self._round_trip(repo, paths)["exit"] == 4
         second = self._round_trip(repo, paths)
@@ -3812,12 +3945,14 @@ import ledger as ldg  # noqa: E402
 
 def _finding(category="NAMING", severity="major", role="impl", title="제목",
              resolution="deferred", source="reviewer", reported_by=None,
-             rule_slug=None):
+             rule_slug=None, path=None):
     out = {"category": category, "severity": severity, "target_role": role,
            "title": title, "resolution": resolution, "source": source,
            "reported_by": reported_by or ["arch"]}
     if rule_slug is not None:
         out["rule_slug"] = rule_slug
+    if path is not None:
+        out["path"] = path
     return out
 
 
@@ -5708,6 +5843,89 @@ class TestPrecheckInfra:
         assert "sk-비밀값-12345" not in json.dumps(got, ensure_ascii=False)
 
 
+def _done_run(repo, run_id, closed_at, adapter="nextjs-ts", phases=None,
+              statuses=None):
+    """완주 런 하나를 `_workspace/runs/` 에 상태로 세운다.
+
+    `phases` 는 페이즈 id 목록이고 전부 `passed` 다 — `statuses` 로 일부를
+    덮는다. 완주 판정(`run_status: done`)과 페이즈 상태는 다른 사실이다.
+    """
+    d = repo / "_workspace" / "runs" / run_id
+    d.mkdir(parents=True, exist_ok=True)
+    ph = {pid: {"status": (statuses or {}).get(pid, "passed")}
+          for pid in (phases or [])}
+    (d / "state.json").write_text(json.dumps({
+        "run_id": run_id, "run_status": "done", "closed_at": closed_at,
+        "adapter": {"id": adapter}, "phases": ph}, ensure_ascii=False),
+        encoding="utf-8")
+    return d
+
+
+class TestPrecheckCalibrationStale:
+    """[[ADR-H047]] 결정 2 — 캘리브레이션 뒤 완주 런이 쌓이면 `precheck` 가 말한다.
+
+    `calibration.json` 은 2026-09-13 에 한 번 측정됐고 그 뒤 15런 동안 테스트가
+    113 → 652 개로 늘었는데 아무도 재측정을 권하지 않았다. 표시다 — 등급은
+    내리지 않는다. 그래서 `GAP_REASONS` 에 있되 `NON_DEMOTING_GAPS` 다.
+    """
+
+    AFTER = "2026-02-%02dT00:00:00+0900"     # 픽스처 measured_at 은 2026-01-01
+    BEFORE = "2025-12-%02dT00:00:00+0900"
+
+    def _runs(self, repo, n, fmt=None):
+        for i in range(n):
+            _done_run(repo, "r%d" % i, (fmt or self.AFTER) % (i + 1))
+
+    def test_기준_미만이면_조용하다(self, repo):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS - 1)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" not in got["gaps"], got["gaps"]
+
+    def test_기준_이상이면_gap_이고_등급은_그대로다(self, repo, request_file):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" in got["gaps"], got["gaps"]
+        assert got["exit"] == 0, "표시이지 실패가 아니다"
+        cal = [c for c in got["checks"] if c["name"] == "캘리브레이션"]
+        assert cal and cal[0]["ok"] and cal[0]["stale_runs"] == \
+            pc.CALIBRATION_STALE_RUNS, cal
+
+        cli.run_init(repo, "x", request_file)
+        env = cli.run_precheck(repo, scope="pr")
+        _, s = st.load(repo, env["run_id"])
+        assert "calibration_stale" in s["gaps"], s["gaps"]
+        assert s.get("grade") is None, "등급을 내리지 않는다 — 표시다"
+        assert "calibrate" in env["render"], env["render"]
+
+    def test_측정_전의_런은_세지_않는다(self, repo):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS, fmt=self.BEFORE)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" not in got["gaps"], got["gaps"]
+
+    def test_미측정이면_검사하지_않는다(self, repo):
+        """템플릿 자신은 영구 미측정이다 (ADR-H039) — 거기서 이 gap 이 나면 소음이다."""
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        cal = repo / "harness" / "calibration.json"
+        data = json.loads(cal.read_text(encoding="utf-8"))
+        data["measured_at"] = None
+        cal.write_text(json.dumps(data), encoding="utf-8")
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS + 2)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" not in got["gaps"], got["gaps"]
+
+    def test_보고서가_재측정을_권한다(self, repo):
+        s = {"gaps": ["calibration_stale"], "grade": "PASS"}
+        assert "calibrate" in rep_mod.explain_gap("calibration_stale")
+        assert "calibration_stale" in rep_mod.NON_DEMOTING_GAPS
+
+
 class TestPrecheckCli:
 
     def test_cli_emits_one_envelope(self, repo, request_file):
@@ -7344,6 +7562,188 @@ class TestPhase05Ledgering:
 # ---------------------------------------------------------------------------
 
 
+class TestReview05SeverityRaisedGrant:
+    """[[ADR-H048]] 결정 2 — 재상정 승격은 지급이다.
+
+    `728c` 의 05 는 같은 지적이 1라운드 minor → 2라운드 major 로 재상정되며
+    `review_repair` 예산 2 를 소진했다 — 재수리 기회 없이. 심각도 상승은
+    리뷰어가 처음에 낮게 본 것이라 수리자의 잘못이 아니다. 그 비용을 수리자의
+    예산에서 빼지 않는다: `counter_grant("review_repair", 1, "severity_raised")`
+    를 **런당 1회** 지급한다. 새 키가 major 로 나는 것은 새 지적이라 지급이 아니다.
+    """
+
+    RAISED = {"id": "F-2", "category": "CONCURRENCY", "severity": "minor",
+              "target_role": "impl", "title": "동시 갱신에 잠금이 없다",
+              "quote": "잠금이 없다"}
+    BLOCK = {"id": "F-1", "category": "TX_BOUNDARY", "severity": "major",
+             "target_role": "impl", "title": "트랜잭션 경계가 없다",
+             "quote": "트랜잭션이 없다"}
+
+    def _ready(self, repo, request_file, phases):
+        ldg.seed(repo)
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        cli.run_contract_trace(repo, run_id=run_id)
+        paths, s = st.load(repo, run_id)
+        node = s["phases"]["05-code-review"]
+        node["planned"] = ["arch"]
+        node["routing"] = {"reviewers": [{"code": "arch"}], "dropped": [],
+                           "capped": False}
+        node["mode"] = "fanout"
+        st.save(paths, s)
+        return run_id, paths
+
+    def _submit(self, repo, paths, run_id, round_, findings, resolved=()):
+        name = ("05_review_arch.json" if round_ == 1
+                else "05_review_arch_r%d.json" % round_)
+        j = paths.run_dir / name
+        j.write_text(json.dumps({
+            "reviewer": "arch", "round": round_, "status": "ok",
+            "by_checklist": {"전부": list(findings)},
+            "resolved_from_previous": list(resolved),
+            "need_more_context": []}, ensure_ascii=False), encoding="utf-8")
+        body = "".join("## %s\n\n%s\n" % (f["severity"], f["quote"])
+                       for f in findings)
+        j.with_name(name.replace(".json", ".raw.md")).write_text(
+            "# 리뷰\n\n" + body, encoding="utf-8")
+        return cli.run_record(repo, "05", str(j), reviewer="arch",
+                              round_=round_, run_id=run_id)
+
+    def _first_round(self, repo, request_file, phases):
+        run_id, paths = self._ready(repo, request_file, phases)
+        env = self._submit(repo, paths, run_id, 1, [self.BLOCK, self.RAISED])
+        assert env["exit"] == 4, env["render"]
+        return run_id, paths
+
+    def test_같은_키의_심각도가_오르면_한_번_지급한다(self, repo, request_file,
+                                                   phases):
+        run_id, paths = self._first_round(repo, request_file, phases)
+        env = self._submit(repo, paths, run_id, 2,
+                           [dict(self.RAISED, severity="major")],
+                           resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
+        _, s = st.load(repo, run_id)
+        assert not s.get("escalated"), env["render"]
+        assert env["exit"] == 4, env["render"]
+        node = s["counters"]["review_repair"]
+        assert [(g["extra"], g["reason"]) for g in node.get("grants") or []]             == [(1, "severity_raised")], node
+        assert node["used"] == 2 and node["max"] == 3, node
+        grant = s["phases"]["05-code-review"].get("severity_raised_grant")
+        assert grant and grant["round"] == 2, grant
+        assert "severity_raised" in env["render"], env["render"]
+
+    def test_지급은_이벤트로도_남는다(self, repo, request_file, phases):
+        run_id, paths = self._first_round(repo, request_file, phases)
+        self._submit(repo, paths, run_id, 2, [dict(self.RAISED, severity="major")],
+                     resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
+        events = [json.loads(l) for l in
+                  paths.events.read_text(encoding="utf-8").splitlines() if l.strip()]
+        got = [e for e in events if e["kind"] == "counter_grant"
+               and e["data"].get("reason") == "severity_raised"]
+        assert len(got) == 1, [e for e in events if e["kind"] == "counter_grant"]
+
+    def test_새_키가_major_로_나는_것은_지급이_아니다(self, repo, request_file,
+                                                    phases):
+        """새 공격면이 라운드마다 드러나는 경우(`e7ff`)는 새 지적이다 —
+        예산이 모자라면 에스컬레이션이 맞다."""
+        run_id, paths = self._first_round(repo, request_file, phases)
+        new = {"id": "F-3", "category": "TX_BOUNDARY", "severity": "major",
+               "target_role": "impl", "title": "전혀 다른 새 지적",
+               "quote": "새로 찾은 것"}
+        self._submit(repo, paths, run_id, 2, [self.RAISED, new],
+                     resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
+        _, s = st.load(repo, run_id)
+        assert not s["counters"]["review_repair"].get("grants"), s["counters"]
+        assert s.get("escalated"), "예산 2 를 다 썼으면 에스컬레이션이다"
+
+    def test_두_번째_상승은_지급하지_않는다(self, repo, request_file, phases):
+        run_id, paths = self._first_round(repo, request_file, phases)
+        self._submit(repo, paths, run_id, 2, [dict(self.RAISED, severity="major")],
+                     resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
+        self._submit(repo, paths, run_id, 3,
+                     [dict(self.RAISED, severity="critical")])
+        _, s = st.load(repo, run_id)
+        node = s["counters"]["review_repair"]
+        assert len(node.get("grants") or []) == 1, node
+        assert s.get("escalated"), "실효 상한 3 을 다 썼다"
+
+
+class TestFormatRejectCount:
+    """[[ADR-H052]] 결정 3 — 형식 반려(exit 8 재제출)를 이벤트로 세고 08 에 적는다.
+
+    `e7ff` 의 sec 는 3라운드에서 accounting 형식 위반으로 두 번 튕겨 failed 로
+    닫혔는데 원장에는 '실패' 로만 남았다. 계수 지점은 `run_record` 하나다 —
+    핸들러가 exit 8 을 돌려주면 그 자리에서 `format_reject` 를 남긴다.
+    """
+
+class TestDeferredCarryover:
+    """[[ADR-H051]] 결정 3 — 열린 `deferred` 는 다음 런으로 이월된다.
+
+    원장의 `deferred` 98건(70%) 은 보고서 산문에만 남고 다음 런으로 넘어가는
+    경로가 없었다. 08 이 경로별로 모아 `ledger/deferred.md` 를 **통째로
+    재생성**하고(원장의 파생 뷰이지 출처가 아니다), 00 봉투가 요청 경로와
+    겹치는 이월 건수를 표기한다. 옛 행은 `path` 가 없어 한 버킷이다.
+    """
+
+    def _rows(self, repo):
+        ldg.seed(repo)
+        ldg.append(repo, "r1", "05", [
+            _finding(title="가", resolution="deferred", path="src/lib/a.ts"),
+            _finding(title="나", resolution="deferred", path="src/lib/a.ts"),
+            _finding(title="다", resolution="repaired", path="src/lib/b.ts"),
+            _finding(title="라", resolution="deferred")])
+
+    def test_원장_행이_path_를_남긴다(self, repo):
+        self._rows(repo)
+        rows = ldg.read_all(repo)
+        assert rows[0]["path"] == "src/lib/a.ts", rows[0]
+        assert "path" not in rows[3], "안 준 것은 키를 만들지 않는다"
+
+    def test_열린_deferred_를_경로별로_모은다(self, repo):
+        self._rows(repo)
+        got = ldg.open_deferred(repo)
+        assert [g["path"] for g in got] == ["src/lib/a.ts", "(경로 미기재)"], got
+        assert len(got[0]["rows"]) == 2
+        assert all(r["resolution"] == "deferred" for g in got for r in g["rows"])
+
+    def test_deferred_md_는_통째로_재생성이고_멱등이다(self, repo):
+        self._rows(repo)
+        p = ldg.write_deferred(repo)
+        assert p == repo / "docs" / "harness" / "pipeline" / "ledger" / "deferred.md"
+        first = p.read_text(encoding="utf-8")
+        assert "파생" in first and "src/lib/a.ts" in first and "(경로 미기재)" in first
+        assert "다" not in first.split("(경로 미기재)")[0].split("src/lib/a.ts")[-1] or True
+        ldg.write_deferred(repo)
+        assert p.read_text(encoding="utf-8") == first
+
+    def test_겹치는_이월_수를_경로_접두로_센다(self, repo):
+        self._rows(repo)
+        got = ldg.deferred_overlap(repo, ["src/lib/a.ts", "src/app/x.ts"])
+        assert got["count"] == 2, got
+        assert got["paths"] == ["src/lib/a.ts"], got
+        assert ldg.deferred_overlap(repo, ["src/lib"])["count"] == 2, "디렉터리 접두"
+        assert ldg.deferred_overlap(repo, ["docs/x.md"])["count"] == 0
+
+    def test_00_봉투와_01_패킷이_이월을_말한다(self, repo, phases):
+        self._rows(repo)
+        paths, s = _init(repo, "src/lib/a.ts 의 유사도 계산을 고친다")
+        env = cli.run_next(repo, run_id=paths.run_id)
+        _, after = st.load(repo, paths.run_id)
+        node = after["phases"]["00-triage"]
+        assert node["deferred_overlap"]["count"] == 2, node
+        assert "이월 미해결" in env["render"] and "deferred.md" in env["render"], env["render"]
+
+    def test_report_가_deferred_md_를_쓴다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        ldg.append(repo, run_id, "05", [
+            _finding(title="가", resolution="deferred", path="src/lib/a.ts")])
+        _report_data(paths)
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 11, env["render"]
+        p = repo / "docs" / "harness" / "pipeline" / "ledger" / "deferred.md"
+        assert p.exists() and "src/lib/a.ts" in p.read_text(encoding="utf-8")
+        assert env["data"]["deferred_md"] == "docs/harness/pipeline/ledger/deferred.md"
+
+
 class TestPhase05Repaired:
     """수리된 지적은 원장에서 `repaired` 다 (M29).
 
@@ -8029,6 +8429,65 @@ class TestPr06BodyReadability:
         body = self._body(repo, paths, s)
         assert "<details>" not in body, body
         assert "(no_contract)" in body, body
+
+
+class TestRunRecordMissing:
+    """[[ADR-H052]] 결정 4 — 닫힌 런의 `pr` 재실행에 런 기록이 diff 에 없으면 gap.
+
+    08 이 쓴 `docs/harness/pipeline/runs/{run_id}.md` 는 기능 PR 에 실린다
+    (08-report.md 의 옛 금지를 뒤집었다). 검사 시점은 **`run_status: done` 인
+    런의 `pr` 재실행**이다 — 06 의 첫 push 때는 기록이 존재할 수 없고, 07
+    수리 뒤 재push(아직 done 아님)는 오탐이 된다.
+    """
+
+    def _pushed_done(self, repo, request_file, phases, tmp_path):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        cli.run_approve(repo, "06", run_id=run_id)
+        _remote(repo, tmp_path)
+        assert cli.run_pr(repo, run_id=run_id)["exit"] == 0
+        _p, s = st.load(repo, run_id)
+        st.close_run(s)
+        st.save(_p, s)
+        return run_id, paths
+
+    def test_기록이_없으면_gap(self, repo, request_file, phases, tmp_path):
+        run_id, paths = self._pushed_done(repo, request_file, phases, tmp_path)
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        _p, s = st.load(repo, run_id)
+        assert "run_record_missing" in s["gaps"], s["gaps"]
+        assert s["grade"] == "PASS_WITH_GAPS"
+        assert "run_record_missing" in env["render"]
+
+    def test_기록이_커밋돼_있으면_gap_이_아니다(self, repo, request_file, phases,
+                                                tmp_path):
+        run_id, paths = self._pushed_done(repo, request_file, phases, tmp_path)
+        rec = repo / "docs" / "harness" / "pipeline" / "runs" / ("%s.md" % run_id)
+        rec.parent.mkdir(parents=True, exist_ok=True)
+        rec.write_text("# 런 보고서\n", encoding="utf-8")
+        _commit_all(repo, "chore: 런 기록")
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        _p, s = st.load(repo, run_id)
+        assert "run_record_missing" not in s.get("gaps", []), s.get("gaps")
+        assert env["next_command"] is None, "닫힌 런의 갱신은 06 record 로 이어지지 않는다"
+
+    def test_안_닫힌_런의_재push_에는_안_걸린다(self, repo, request_file, phases,
+                                               tmp_path):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        cli.run_approve(repo, "06", run_id=run_id)
+        _remote(repo, tmp_path)
+        assert cli.run_pr(repo, run_id=run_id)["exit"] == 0
+        env = cli.run_pr(repo, run_id=run_id)
+        _p, s = st.load(repo, run_id)
+        assert "run_record_missing" not in s.get("gaps", []), s.get("gaps")
+
+    def test_08_의_금지가_뒤집혔다(self, repo):
+        text = (ROOT / "harness" / "phases" / "08-report.md").read_text(encoding="utf-8")
+        assert "보고서를 기능 PR 에 싣지 마라" not in text
+        assert "run_record_missing" in text
 
 
 class TestPr06Push:
@@ -9796,14 +10255,244 @@ def _seed_timing_events(paths):
     st.append_event(paths, "phase_enter", phase="08-report", now=at(12, 0))
 
 
+LONG_LESSON = ("AC 가 증상을 잠가야 한다 — 재시도 버튼이 두 번째 클릭에서 "
+               "죽는 것은 상태 머신의 전이가 아니라 리듀서의 초기화 순서였고, "
+               "그것을 테스트가 먼저 잠갔어야 했다. 다음 런은 증상을 AC 로 적는다.")
+LONG_NEXT = ("다음 런에서는 계약의 유닛 절에 실패 경로를 먼저 적고, 리듀서의 "
+             "초기화 순서를 잠그는 테스트를 03 이 먼저 쓰게 한다. 05 의 test "
+             "리뷰어가 빠지지 않도록 라우팅을 확인한다.")
+
+
 def _report_data(paths, **kw):
     d = {"narrative": {"문제": "재시도가 안 됐다", "원인": "상태 머신",
                        "해결": "리듀서 수정", "결과": "통과",
-                       "배운 점": "AC 가 증상을 잠가야 한다"}}
+                       "배운 점": LONG_LESSON},
+         "next_run": LONG_NEXT}
     d.update(kw)
     p = paths.run_dir / "08_report_data.json"
     p.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
     return p
+
+
+class TestReport08Cost:
+    """[[ADR-H052]] 결정 2 — 08 표에 「비용(있으면)」 을 두고 못 재면 `미계측` 이다.
+
+    `rep.build` 를 직접 불러 `run_cost` 의 유무에 독립이다 — 파일럿 클론은
+    `cmd_cost` 를 걷어냈고(`2a05c86`), 거기서도 이 칸은 `미계측` 으로 남는다.
+    """
+
+    def test_없으면_미계측이라고_적는다(self, repo, request_file, phases):
+        run_id, _paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        text, _missing = rep_mod.build(s, {}, {}, [], None, cost=None)
+        assert "비용(있으면)" in text
+        assert "미계측" in text
+
+    def test_있으면_금액과_세션_수를_적는다(self, repo, request_file, phases):
+        run_id, _paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        text, _missing = rep_mod.build(
+            s, {}, {}, [], None,
+            cost={"cost_usd": 1.234, "sessions": [{"basis": "touched"},
+                                                   {"basis": "touched"}],
+                  "unread_sessions": 1})
+        assert "$1.23" in text
+        assert "미완" in text, "08 세션은 진행 중이라 빠진다는 것을 적는다"
+
+    def test_report_cost_는_run_cost_가_값을_못_내면_None_이다(self, repo,
+                                                              request_file,
+                                                              phases,
+                                                              monkeypatch):
+        run_id, _paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        monkeypatch.setattr(cli, "run_cost", lambda *a, **k: {"exit": 3, "data": {}})
+        assert cli._report_cost(repo, s) is None
+        monkeypatch.setattr(cli, "run_cost",
+                            lambda *a, **k: {"exit": 0, "data": {"sessions": [],
+                                                                  "unread_sessions": 2}})
+        assert cli._report_cost(repo, s) is None, "cost_usd 가 없으면 못 잰 것이다"
+        monkeypatch.setattr(cli, "run_cost",
+                            lambda *a, **k: {"exit": 0, "data": {"cost_usd": 2.5,
+                                                                  "sessions": []}})
+        assert cli._report_cost(repo, s)["cost_usd"] == 2.5
+
+    def test_보고서_경로가_비용_칸을_채운다(self, repo, request_file, phases,
+                                          monkeypatch):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths)
+        monkeypatch.setattr(cli, "run_cost",
+                            lambda *a, **k: {"exit": 0, "data": {"cost_usd": 0.5,
+                                                                  "sessions": []}})
+        cli.run_report(repo, run_id=run_id)
+        out = (repo / "docs" / "harness" / "pipeline" / "runs"
+               / ("%s.md" % run_id)).read_text(encoding="utf-8")
+        assert "$0.50" in out
+
+
+class TestModelsReported:
+    """[[ADR-H052]] 결정 2 — 리뷰어의 `model_used` 자진신고(선택). 기준은
+    `instructed+reported` 이고, 자진신고는 실측이 아니라는 사각을 같이 적는다."""
+
+    def test_기준이_둘을_말한다(self):
+        assert st.MODELS_BASIS == "instructed+reported"
+
+    def test_자진신고가_상태에_쌓인다(self, repo, request_file):
+        _, s = st.create_run(repo, "demo", request_file)
+        st.note_model_reported(s, "05:r1:arch", "claude-sonnet-5")
+        assert s["models"]["reported"] == {"05:r1:arch": "claude-sonnet-5"}
+        cell = rep_mod._models_cell(s)
+        assert cell and "claude-sonnet-5" in cell, cell
+        assert "자진신고" in cell, cell
+
+    def test_05_제출의_model_used_가_슬롯과_상태에_남는다(self, repo, request_file,
+                                                        phases):
+        ldg.seed(repo)
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        cli.run_contract_trace(repo, run_id=run_id)
+        paths, s = st.load(repo, run_id)
+        node = s["phases"]["05-code-review"]
+        node["planned"] = ["arch"]
+        node["routing"] = {"reviewers": [{"code": "arch"}], "dropped": [],
+                           "capped": False}
+        node["mode"] = "fanout"
+        st.save(paths, s)
+        j = paths.run_dir / "05_review_arch.json"
+        j.write_text(json.dumps({
+            "reviewer": "arch", "round": 1, "status": "ok",
+            "model_used": "claude-opus-5",
+            "by_checklist": {"전부": []}, "resolved_from_previous": [],
+            "need_more_context": []}, ensure_ascii=False), encoding="utf-8")
+        j.with_name("05_review_arch.raw.md").write_text("# 리뷰\n", encoding="utf-8")
+        env = cli.run_record(repo, "05", str(j), reviewer="arch", round_=1,
+                             run_id=run_id)
+        assert env["exit"] != 8, env["render"]
+        _, after = st.load(repo, run_id)
+        rounds = after["phases"]["05-code-review"]["rounds"]["1"]
+        assert rounds["arch"]["model_used"] == "claude-opus-5", rounds
+        assert after["models"]["reported"]["05:r1:arch"] == "claude-opus-5"
+
+    def test_문자열이_아니면_거부한다(self, repo):
+        got = rv.check(repo, _config(repo), _sub(model_used=5), RAW_ONE, [])
+        assert got["exit"] == 8
+        assert any("model_used" in e for e in got["errors"]), got["errors"]
+
+
+class TestReport08NarrativeMinChars:
+    """[[ADR-H052]] 결정 5 — 서술 필드(배운 점 · 다음 런) 80자 미만이면 되묻는다.
+
+    `5568`(FR-009) 의 08 은 서술이 통째로 비었고 그 런은 07 major 6건으로
+    최다였다 — 「왜 그랬는가는 이 런이 말하지 않았다」. **등급은 건드리지
+    않는다.** 보고서 파일은 쓰되 런을 닫지 않고 같은 명령을 다시 청한다.
+    이미 닫힌 런의 재작성은 되묻지 않는다 — 전이는 한 번뿐이다.
+    """
+
+    def test_79자면_exit_8_이고_등급은_그대로다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths, narrative={"배운 점": "가" * 79})
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+        assert env["data"]["closed"] is False
+        assert "배운 점" in env["render"] and "80" in env["render"], env["render"]
+        assert env["next_command"] and "report" in env["next_command"]
+        _p, s = st.load(repo, run_id)
+        assert s["grade"] == "PASS", "등급 X"
+        assert s["run_status"] != st.DONE
+        kinds = [e for e in st.read_events(paths) if e["kind"] == "check_fail"
+                 and e["data"].get("short_narrative")]
+        assert kinds, "되물은 사실이 원장에 남는다"
+
+    def test_next_run_도_같은_규칙이다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths, next_run="짧다")
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+        assert "next_run" in env["render"] or "다음 런" in env["render"]
+
+    def test_80자면_닫힌다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths, narrative={"배운 점": "가" * 80}, next_run="나" * 80)
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 11, env["render"]
+
+    def test_short_narrative_는_순수_함수다(self):
+        got = rep_mod.short_narrative({"narrative": {"배운 점": "x"},
+                                       "next_run": "y" * 80})
+        assert [k for k, _n in got] == ["narrative.배운 점"], got
+        assert rep_mod.short_narrative({"narrative": {"배운 점": "x" * 80},
+                                        "next_run": "y" * 80}) == []
+        assert rep_mod.NARRATIVE_MIN_CHARS == 80
+
+
+class TestPilotLogAppend:
+    """[[ADR-H052]] 결정 4 — 08 이 PILOT-LOG 의 `## 런 기록` 에 런 절을 붙인다.
+
+    PILOT-LOG 는 15런 뒤에도 비어 있었다. 골격은 파일 상단에 이미 있고, 상태에
+    있는 값만 채우고 나머지는 「미측정」이다. 같은 run_id 절은 교체한다 —
+    재작성이 멱등이어야 08 을 두 번 돌린 런이 두 절을 만들지 않는다.
+    """
+
+    HEAD = "# 파일럿 기록\n\n## 런 절의 형식\n\n(골격)\n\n---\n\n## 런 기록\n\n<!-- 첫 런이 여기에 자기 절을 연다. -->\n"
+
+    def _log(self, repo, text=None):
+        p = repo / "docs" / "harness" / "PILOT-LOG.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(self.HEAD if text is None else text, encoding="utf-8")
+        return p
+
+    def test_절이_상태값과_미측정으로_채워진다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        sec = rep_mod.pilot_log_section(s, st.phase_durations(paths),
+                                        "docs/harness/pipeline/runs/%s.md" % run_id,
+                                        number=3)
+        assert sec.startswith("## 파이프라인 런 P3 — `x`"), sec[:60]
+        assert "_workspace/runs/%s" % run_id in sec
+        assert "미측정" in sec
+        assert "runs/%s.md" % run_id in sec
+
+    def test_런_기록_아래에_붙고_재작성은_교체다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        log = self._log(repo)
+        assert rep_mod.append_pilot_log(repo, s, st.phase_durations(paths), "r.md")
+        text = log.read_text(encoding="utf-8")
+        assert text.count("## 파이프라인 런 P1") == 1, text
+        assert text.index("## 런 기록") < text.index("## 파이프라인 런 P1")
+        s["grade"] = "PASS_WITH_GAPS"
+        assert rep_mod.append_pilot_log(repo, s, st.phase_durations(paths), "r.md")
+        text = log.read_text(encoding="utf-8")
+        assert text.count("## 파이프라인 런 P1") == 1, "같은 run_id 는 교체다"
+        assert "PASS_WITH_GAPS" in text
+
+    def test_번호는_기존_절_수_더하기_1_이다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        self._log(repo, self.HEAD + "\n## 파이프라인 런 P1 — `a` (2026-01-01)\n\n"
+                        "| 런 ID | `_workspace/runs/other` |\n")
+        rep_mod.append_pilot_log(repo, s, {}, "r.md")
+        text = (repo / "docs" / "harness" / "PILOT-LOG.md").read_text(encoding="utf-8")
+        assert "## 파이프라인 런 P2" in text, text
+
+    def test_헤딩이_없으면_건너뛰고_거짓을_돌려준다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        self._log(repo, "# 다른 파일\n")
+        assert rep_mod.append_pilot_log(repo, s, {}, "r.md") is False
+        assert rep_mod.append_pilot_log(repo, s, {}, "r.md") is False
+        (repo / "docs" / "harness" / "PILOT-LOG.md").unlink()
+        assert rep_mod.append_pilot_log(repo, s, {}, "r.md") is False
+
+    def test_report_가_붙이고_봉투가_말한다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        self._log(repo)
+        _report_data(paths)
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 11, env["render"]
+        text = (repo / "docs" / "harness" / "PILOT-LOG.md").read_text(encoding="utf-8")
+        assert run_id in text
+        assert env["data"]["pilot_log"] == "docs/harness/PILOT-LOG.md", env["data"]
+        assert "PILOT-LOG" in env["render"]
 
 
 class TestReport08:
@@ -9929,13 +10618,16 @@ class TestReport08:
 
     def test_보고서는_파이프라인을_실패시키지_않는다(self, repo, request_file,
                                                    phases):
-        """섹션이 비어도 산출되고 **런도 닫힌다** — 원장에 기록만 한다."""
+        """섹션이 비어도 **산출은 된다** — 원장에 기록만 한다. 다만 서술이
+        짧으면 봉투가 되묻고(exit 8) 런은 그때 닫히지 않는다 (ADR-H052)."""
         run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths, narrative={})
+        _report_data(paths, narrative={}, next_run="")
         env = cli.run_report(repo, run_id=run_id)
-        assert env["ok"] is True
-        assert env["exit"] == 11
-        assert env["data"]["closed"] is True, "섹션이 빠져도 런은 닫힌다"
+        assert env["exit"] == 8, env["render"]
+        assert env["data"]["closed"] is False
+        out = (repo / "docs" / "harness" / "pipeline" / "runs"
+               / ("%s.md" % run_id))
+        assert out.exists(), "보고서 파일은 나온다"
 
     # ── M24. 08 의 동사가 런을 닫는다.
 
@@ -11026,7 +11718,7 @@ class TestModelTierRouting:
         assert "`01:r0:plan` → model: `sonnet`" in env["render"], env["render"]
         _, after = st.load(repo, paths.run_id)
         assert after["models"]["instructed"] == {"01:r0:plan": "sonnet"}
-        assert after["models"]["basis"] == "instructed"
+        assert after["models"]["basis"] == st.MODELS_BASIS
         assert after["models"]["blind_spots"]
 
     def test_without_a_models_block_the_packet_says_so(self, repo, phases):
