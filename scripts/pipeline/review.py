@@ -250,6 +250,13 @@ def check(root, config, payload, raw_text, previous_open, excluded=None,
         errors.append("리뷰어 %r 이 config.reviewers 에 없다 — 라우팅이 부르지 "
                       "않은 리뷰어의 제출은 받지 않는다" % who)
 
+    # ②-a `model_used` 는 선택이고 문자열이다 (ADR-H052). 자진신고라 값은
+    #     검사하지 않는다 — 형만 본다. 형이 틀린 것은 신고가 아니라 오타다.
+    model_used = payload.get("model_used")
+    if model_used is not None and not isinstance(model_used, str):
+        errors.append("model_used 는 문자열이다 (받은 값: %r) — 실제로 쓴 모델 "
+                      "id 를 적거나 필드를 빼라" % type(model_used).__name__)
+
     findings = flatten(payload)
 
     # ②-b **어휘 밖 category 는 여기서 잡는다** (M46). 이 검사는 원래
