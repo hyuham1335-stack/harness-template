@@ -250,6 +250,30 @@ def _ledger_axis_lines(data):
     return out
 
 
+def _prose_candidate_lines(data):
+    """원장 승격이 아닌 두 갈래 (ADR-H056). 없으면 아무것도 안 찍는다."""
+    led = data.get("ledger") or {}
+    prose = led.get("prose_candidates") or []
+    trace = led.get("trace_repeats") or []
+    out = []
+    if prose:
+        out += ["", "**지시문 검토 후보 %d건** (08 검토 입력 — 목적지가 prose 라 "
+                    "원장 승격하지 않는다, ADR-H056):" % len(prose), ""]
+        out += ["- `%s`%s — %s회 / %s런"
+                % (c.get("category"),
+                   " / `%s`" % c["rule_slug"] if c.get("rule_slug") else "",
+                   c.get("count"), c.get("distinct_runs"))
+                for c in prose]
+    if trace:
+        out += ["", "**검사 반복 검출 %d건** — `contract-trace` 가 이미 막는 "
+                    "규칙이라 후보가 아니다: %s"
+                % (len(trace), " · ".join(
+                    "`%s` %s회/%s런" % (c.get("rule_slug") or c.get("category"),
+                                        c.get("count"), c.get("distinct_runs"))
+                    for c in trace))]
+    return out
+
+
 def _reporter_lines(data):
     """리뷰어별 해소 표 (ADR-H050). 리뷰어 품질의 첫 실측이고 승격과 무관하다."""
     rows = (data.get("ledger") or {}).get("by_reporter") or []
@@ -552,6 +576,7 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
         lines += ["- `%s` — **%s** · %s" % (p.get("rule_id"), p.get("status"),
                                             p.get("reason") or "사유 없음")
                   for p in other]
+    lines += _prose_candidate_lines(data)
     lines += _ledger_axis_lines(data)
     lines += _reporter_lines(data)
     lines += _verdict_deadline_lines(data)

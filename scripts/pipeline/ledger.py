@@ -360,9 +360,8 @@ def _validate_slugs(code, c):
 def check_destination(root, code, enforceable):
     """산문 승격이 허용되는가. 허용되면 None, 아니면 ValueError.
 
-    **기계로 막을 수 있는 규칙의 산문 승격은 거부한다** (exit 8). 이것이
-    `instruction_slot_budget` 과 맞물려, 그 예산이 진짜 기계가 못 잡는 규칙에만
-    쓰이게 만든다.
+    **기계로 막을 수 있는 규칙의 산문 승격은 거부한다** (exit 8). 산문
+    규칙은 원장 승격이 아니라 08 지시문 검토로 간다 (ADR-H056).
     """
     cat = categories(root).get(code)
     if cat is None:
@@ -522,6 +521,54 @@ def supersede(root, run_id, phase, keys, **updates):
     return len(rows)
 
 
+def retire(root, run_id, rule_key, reason):
+    """규칙(`rule_key`)의 관측을 **이 시점에서 끊는다** (ADR-H056). 반환: 쓴 줄 수.
+
+    영구 무시가 아니라 **컷오프**다 — "근본 원인을 여기서 고쳤다". 이전
+    관측은 승격 집계와 이월에서 빠지고, 이후 관측은 새 표본으로 0 부터
+    센다. 영구 제외는 카테고리 `status: retired` 의 일이다.
+
+    관측 행을 고치지 않는다(append-only) — 읽는 쪽이 컷오프를 적용한다.
+    같은 런이 같은 규칙을 두 번 은퇴시키면 한 줄이다(재실행 멱등).
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValueError("은퇴에는 사유가 있다 — 왜 끊는지 한 줄이 필요하다")
+    for r in read_all(root):
+        got = r.get("retire") or {}
+        if got.get("run_id") == run_id and got.get("rule_key") == rule_key:
+            return 0
+    row = {"retire": {"rule_key": rule_key, "ts": st.stamp(),
+                      "reason": reason, "run_id": run_id}}
+    path = Path(root) / FINDINGS_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return 1
+
+
+def retirements(root):
+    """{rule_key: 가장 늦은 은퇴 ts}."""
+    out = {}
+    for r in read_all(root):
+        got = r.get("retire")
+        if not got or not got.get("rule_key"):
+            continue
+        key, ts = got["rule_key"], got.get("ts") or ""
+        if ts > out.get(key, ""):
+            out[key] = ts
+    return out
+
+
+def is_retired(row, retired):
+    """관측이 자기 규칙의 은퇴 컷오프 이전(같은 초 포함)에 났는가."""
+    key = row.get("rule_key") or row.get("finding_key")
+    cut = retired.get(key) if key else None
+    if not cut:
+        return False
+    return (row.get("first_seen") or row.get("ts") or "") <= cut
+
+
 def read_all(root):
     """원장 전부. 손상된 줄은 **건너뛰지 않고 드러낸다** — 조용히 줄면 집계가 틀린다."""
     path = Path(root) / FINDINGS_REL
@@ -562,7 +609,9 @@ def observations(root):
     """
     folded = {}
     order = []
-    rows = [r for r in read_all(root) if not r.get("_corrupt")]
+    # 은퇴 줄(`retire`)은 관측이 아니다 — 컷오프는 읽는 쪽이 적용한다.
+    rows = [r for r in read_all(root)
+            if not r.get("_corrupt") and "retire" not in r]
     rows.sort(key=lambda r: r.get("ts") or "")
     for row in rows:
         ident = (row.get("run_id"), row.get("phase"), row.get("finding_key"))
@@ -586,8 +635,9 @@ def observations(root):
 def open_deferred(root):
     """열린 `deferred` 를 경로별로. [{"path", "rows"}] — `(경로 미기재)` 는 맨 뒤."""
     groups, order = {}, []
+    retired = retirements(root)
     for row in observations(root):
-        if row.get("resolution") != "deferred":
+        if row.get("resolution") != "deferred" or is_retired(row, retired):
             continue
         p = row.get("path") or NO_PATH
         if p not in groups:
@@ -700,8 +750,11 @@ def in_baseline(root, baseline_runs):
 def stage_promotions(root):
     """임계를 넘은 **규칙**(`rule_key`)을 후보로 올린다. **05 는 여기까지다.**
 
-    반환: {"candidates": [...], "held": [...], "distinct_runs": n,
-           "thresholds": {...}}
+    반환: {"candidates": [...], "held": [...], "prose_candidates": [...],
+           "trace_repeats": [...], "distinct_runs": n, "thresholds": {...}}
+
+    `candidates` 는 목적지가 기계 강제(`lint`·`check`)인 것만이다 — prose 는
+    `prose_candidates`, `contract-trace` 만의 반복은 `trace_repeats` (ADR-H056).
 
     `held` 는 **누적은 넘었는데 `distinct_runs` 에서 막힌 것**이다. 조용히
     빠뜨리면 "임계가 높다"와 "런이 모자라다"가 같은 침묵이 된다.
@@ -714,6 +767,7 @@ def stage_promotions(root):
     여섯 건은 여전히 6관측이고 그래서 `count` 가 6 이 된다.
     """
     cats = categories(root)
+    retired = retirements(root)
     buckets = {}
     for row in observations(root):
         if row.get("resolution") in EXCLUDED_FROM_COUNT:
@@ -721,6 +775,9 @@ def stage_promotions(root):
         code = row.get("category")
         cat = cats.get(code) or {}
         if cat.get("status") in NEVER_PROMOTE:
+            continue
+        # 은퇴 컷오프 이전 관측은 버킷에 안 든다 — 재발은 0 부터 센다 (ADR-H056).
+        if is_retired(row, retired):
             continue
         # **옛 줄에는 `rule_key` 가 없다.** 낙하가 곧 소급 무오염이다 —
         # 슬러그가 한 줄도 없던 원장은 변경 전과 정확히 같은 버킷을 만든다.
@@ -738,8 +795,9 @@ def stage_promotions(root):
             "title_norm": row.get("title_norm"),
             "enforceable": cat.get("enforceable"),
             "rule": cat.get("rule"),
-            "count": 0, "runs": set(), "severity": "minor"})
+            "count": 0, "runs": set(), "sources": set(), "severity": "minor"})
         b["count"] += 1
+        b["sources"].add(row.get("source"))
         if fk:
             b["finding_keys"].add(fk)
         if row.get("run_id"):
@@ -747,13 +805,21 @@ def stage_promotions(root):
         if _SEVERITY_RANK.get(row.get("severity"), -1) > _SEVERITY_RANK[b["severity"]]:
             b["severity"] = row["severity"]
 
-    candidates, held = [], []
+    # **목적지로 세 갈래다** (ADR-H056). 원장 승격(`candidates`)은 기계 강제
+    # (`lint`·`check`)만이다 — prose 후보는 07 판정자가 13/13 skip 했고,
+    # 버리지 않고 08 지시문 검토의 입력(`prose_candidates`)으로 따로 싣는다.
+    # `contract-trace` 만 낸 버킷은 게이트가 이미 막는 규칙의 기계 출력이라
+    # 어느 쪽 후보도 아니다(`trace_repeats`) — 산문으로 흡수할 것이 없다.
+    candidates, prose, held, trace = [], [], [], []
     for b in buckets.values():
         need_count, need_runs = THRESHOLDS.get(b["severity"], (99, 99))
         runs = len(b["runs"])
+        sources = b.pop("sources")
         item = dict(b, runs=sorted(b["runs"]), distinct_runs=runs,
                     finding_keys=sorted(b["finding_keys"]),
                     needs={"count": need_count, "distinct_runs": need_runs})
+        if b["rule_key"] in retired:
+            item["retired_at"] = retired[b["rule_key"]]
         if b["count"] < need_count:
             continue
         if runs < need_runs:
@@ -762,12 +828,22 @@ def stage_promotions(root):
             item["held_because"] = ("누적 %d 로 임계를 넘었지만 distinct_runs 가 "
                                     "%d 라 %d 에 못 미친다"
                                     % (b["count"], runs, need_runs))
+        if sources == {"contract-trace"}:
+            trace.append(item)
+        elif "held_because" in item:
             held.append(item)
-            continue
-        candidates.append(item)
+        elif b["enforceable"] in MACHINE_ENFORCED:
+            candidates.append(item)
+        else:
+            prose.append(item)
 
-    candidates.sort(key=lambda c: (-_SEVERITY_RANK[c["severity"]], c["category"]))
+    def order(c):
+        return (-_SEVERITY_RANK[c["severity"]], c["category"])
+    candidates.sort(key=order)
+    prose.sort(key=order)
+    trace.sort(key=order)
     return {"candidates": candidates, "held": held,
+            "prose_candidates": prose, "trace_repeats": trace,
             "by_category": _by_category(root, cats),
             "distinct_runs": distinct_runs(root),
             "verdict_deadline": verdict_deadline(root),

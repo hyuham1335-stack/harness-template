@@ -4478,6 +4478,8 @@ def run_report(root, out=None, run_id=None):
         got = ledger_mod.stage_promotions(root)
         data["ledger"] = {"by_category": got["by_category"],
                           "verdict_deadline": got["verdict_deadline"],
+                          "prose_candidates": got["prose_candidates"],
+                          "trace_repeats": got["trace_repeats"],
                           "by_reporter": ledger_mod.by_reporter(root)}
     except (OSError, ValueError, KeyError):
         pass
@@ -4738,6 +4740,7 @@ def run_promote(root, scan=False, stage=False, apply=False, flush=False,
         # **시한이 지난 뒤의 미룸은 등급이 치른다** (ADR-H051). 시한은 표시로만
         # 있었고(ADR-H033) 파일럿 40dc 는 「12 / 9 — 판정할 때다」 를 찍은 채
         # 후보 셋을 전부 skip 했다. 여기는 런당 한 번, 승격이 종결되는 자리다.
+        # prose 후보는 staged 되지 않으므로(ADR-H056) 여기 들 수 없다.
         overdue = bool(ledger_mod.verdict_deadline(root).get("due")) and any(
             p.get("status") == "skipped" for p in promos)
         if overdue:
@@ -4904,6 +4907,41 @@ def _rule_label(b):
     return " / `%s`" % slug if slug else ""
 
 
+def _recur_label(b):
+    """은퇴 이후 다시 쌓인 버킷이면 그렇게 말한다 — 재발은 0 부터 센 값이다."""
+    at = b.get("retired_at")
+    return (" · 재발(은퇴 %s 이후 %d회)" % (at, b["count"])) if at else ""
+
+
+def _promote_side_lines(got):
+    """원장 승격이 아닌 두 갈래 (ADR-H056). 없으면 빈 목록."""
+    lines = []
+    prose = got.get("prose_candidates") or []
+    if prose:
+        lines += ["", "## 지시문 검토 후보 %d 건 — 08 로 간다" % len(prose), "",
+                  "목적지가 prose 라 여기서 판정하지 않는다. 08 지시문 검토의 "
+                  "입력이다 (ADR-H056)."]
+        lines += ["- %s%s (%s) — %d회 / %d런 · 신원 `%s`%s"
+                  % (c["category"], _rule_label(c), c["severity"], c["count"],
+                     c["distinct_runs"], c.get("rule_key") or c.get("finding_key"),
+                     _recur_label(c))
+                  for c in prose]
+    trace = got.get("trace_repeats") or []
+    if trace:
+        lines += ["", "## 검사 반복 검출 %d 건" % len(trace), "",
+                  "`contract-trace` 가 이미 막는 규칙의 반복이라 승격 후보가 "
+                  "아니다."]
+        lines += ["- %s%s — %d회 / %d런%s"
+                  % (c["category"], _rule_label(c), c["count"],
+                     c["distinct_runs"], _recur_label(c))
+                  for c in trace]
+    if prose or trace:
+        lines += ["", "근본 원인을 하네스에서 고친 규칙은 `action: retire` + "
+                      "`retired_reason` 으로 관측을 끊는다 — 이후 관측은 0 부터 "
+                      "센다."]
+    return lines
+
+
 def _promote_scan_render(got):
     if not got["candidates"]:
         lines = ["승격 후보가 없다 — **모델을 부르지 않고 종결한다.**", ""]
@@ -4918,24 +4956,27 @@ def _promote_scan_render(got):
                          "없다는 뜻이지 지적이 없었다는 뜻이 아니다."
                          % got["distinct_runs"])
         lines += _verdict_deadline_lines(got.get("verdict_deadline"))
+        lines += _promote_side_lines(got)
         return "\n".join(lines)
     lines = ["## 승격 후보 %d 건" % len(got["candidates"]), ""]
     for c in got["candidates"]:
-        lines.append("- **%s**%s (%s) — %d회 / %d런 · 신원 `%s` · 목적지 `%s`"
+        lines.append("- **%s**%s (%s) — %d회 / %d런 · 신원 `%s` · 목적지 `%s`%s"
                      % (c["category"], _rule_label(c), c["severity"],
                         c["count"], c["distinct_runs"],
                         c.get("rule_key") or c.get("finding_key"),
-                        c.get("enforceable")))
+                        c.get("enforceable"), _recur_label(c)))
         keys = c.get("finding_keys") or []
         if len(keys) > 1:
             lines.append("  - 접은 인스턴스 %d 건: %s"
                          % (len(keys), " · ".join("`%s`" % k for k in keys[:6])
                             + (" …" if len(keys) > 6 else "")))
-    lines += ["", "각각에 `create` / `amend` / `skip` 판정을 내고 근거를 적는다.",
+    lines += ["", "각각에 `create` / `amend` / `skip` / `retire` 판정을 내고 "
+                  "근거를 적는다.",
               "**판정은 위 `신원` 을 `rule_key` 로 그대로 돌려준다** — 이름을 "
               "부른 것과 다른 지적이 승격되면 그 사실이 어디에도 안 드러난다.",
               "**`duplicate` 면 `create` 가 금지되고, `contradicts` 면 자동 "
               "쓰기가 차단된다.**"]
+    lines += _promote_side_lines(got)
     return "\n".join(lines)
 
 

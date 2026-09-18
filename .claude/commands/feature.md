@@ -250,7 +250,9 @@ python scripts/pipeline/cli.py promote --scan --run-id <id>
 
 `promote --scan` 이 후보 0 이면 **모델을 부르지 않고 끝난다** — 초기 런의 최빈
 경로다. 후보가 있으면 판정을 내고 `--apply` 한다. **`duplicate` 에서 `create` 는
-금지고, `contradicts` 는 에스컬레이션이다.**
+금지고, `contradicts` 는 에스컬레이션이다.** 후보는 `lint`·`check` 목적지뿐이고,
+「지시문 검토 후보」(prose)는 08 로 간다 — 근본 원인을 고친 규칙은 `retire` 로
+끊는다 (ADR-H056).
 
 승격은 **별도 브랜치**로 간다. 기능 PR 에 규칙 변경을 섞지 마라.
 

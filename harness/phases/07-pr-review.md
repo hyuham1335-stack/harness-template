@@ -120,9 +120,15 @@ python scripts/pipeline/cli.py promote --scan --run-id {run_id}
 경로다 — 원장이 비어 있고 임계값(critical 2회 · major 3회 · minor 5회, 전부
 `distinct_runs` 조건과 함께)에 닿을 표본이 아직 없다.
 
-후보가 있으면 판정(`create` / `amend` / `skip`)을 **기록으로 남긴다.**
-`duplicate` 면 `create` 가 금지되고, `contradicts` 면 자동 쓰기가 차단되며
-에스컬레이션이다. **"일단 붙이기"가 선택지에 없다.**
+후보가 있으면 판정(`create` / `amend` / `skip` / `retire`)을 **기록으로
+남긴다.** `duplicate` 면 `create` 가 금지되고, `contradicts` 면 자동 쓰기가
+차단되며 에스컬레이션이다. **"일단 붙이기"가 선택지에 없다.**
+
+**후보는 기계 강제(`lint`·`check`) 목적지뿐이다** (ADR-H056). 스캔이 함께 찍는
+「지시문 검토 후보」(prose)는 여기서 판정하지 않는다 — 08 지시문 검토로 간다.
+「검사 반복 검출」은 `contract-trace` 가 이미 막는 규칙이라 후보가 아니다.
+근본 원인을 하네스에서 고친 규칙은 어느 쪽이든 `action: retire` + `rule_key` +
+`retired_reason` 으로 관측을 끊는다 — 이후 관측은 0 부터 다시 센다.
 
 **`skip` 에는 `rationale` 이 필수다** — 비면 exit 8 (ADR-H051). 그리고
 승격 판정 시한(원장이 본 런 ≥ 9, ADR-H033)이 지난 뒤에도 후보를 `skip` 으로
