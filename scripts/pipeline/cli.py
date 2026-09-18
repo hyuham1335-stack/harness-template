@@ -5594,9 +5594,10 @@ def _trace_render(got, rel):
     lines.append("검사 %d종 수행 · 지적 %d건"
                  % (len(got["checks_run"]), len(got["findings"])))
     if got.get("skipped"):
-        lines.append("**건너뛴 검사**: %s — 통과가 아니라 미수행이다. "
-                     "어댑터에 `entrypoint_resolver` 가 없다."
-                     % ", ".join("`%s`" % s for s in got["skipped"]))
+        reasons = got.get("skip_reasons") or {}
+        lines.append("**건너뛴 검사** — 통과가 아니라 미수행이다: %s"
+                     % " · ".join("`%s` (%s)" % (s, reasons.get(s, "사유 미기재"))
+                                  for s in got["skipped"]))
     warn_only = [f for f in got["findings"] if f.get("resolution") == "warn_only"]
     if warn_only:
         lines.append("`warn_only` %d건 — baseline 기간이라 지적으로 올리지 않는다. "

@@ -740,9 +740,22 @@ def verdict_deadline(root):
             "due": seen >= PROMOTION_VERDICT_AT_RUNS}
 
 
-def in_baseline(root, baseline_runs):
-    """baseline 기간 안인가 — 안이면 오탐이 잦은 검사를 `warn_only` 로 낮춘다."""
-    return distinct_runs(root) < (baseline_runs or 0)
+def trace_runs(root, slug):
+    """`contract-trace` 의 검사 `slug` 가 지적을 낸 런의 수."""
+    return len({r.get("run_id") for r in read_all(root)
+                if not r.get("_corrupt") and r.get("run_id")
+                and r.get("source") == "contract-trace"
+                and r.get("rule_slug") == slug})
+
+
+def in_baseline_for(root, slug, baseline_runs):
+    """검사 `slug` 가 baseline 기간 안인가 — 안이면 그 지적을 `warn_only` 로 낮춘다.
+
+    **검사별로 잰다** (ADR-H058). 원장 전체 `distinct_runs` 하나로 재면 새 검사가
+    첫 런부터 baseline 을 벗어나 재지 않은 오탐률로 `deferred` 가 쌓인다. 그 검사가
+    낸 런만 세므로 `distinct_runs` 의 한계(0건 런은 안 센다)를 검사 단위로 물려받는다.
+    """
+    return trace_runs(root, slug) < (baseline_runs or 0)
 
 
 # ------------------------------------------------------------------- 승격 계산

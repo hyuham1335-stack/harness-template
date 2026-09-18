@@ -178,6 +178,17 @@
           "items": {
             "type": "string"
           }
+        },
+        "authz_denied_pattern": {
+          "description": "contract-trace authz_untested: [역할] 태그 진입점의 테스트 본문에서 찾는 거부 단언 정규식. 없으면 그 검사만 건너뛴다.",
+          "type": "string"
+        },
+        "import_aliases": {
+          "description": "contract-trace untested_entrypoint: 테스트의 import 지정자 접두 → 리포 상대 경로 접두.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     },

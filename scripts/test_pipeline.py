@@ -1289,6 +1289,17 @@ class TestContractUnits:
         assert p["units"] == []
         assert p["dropped"] and p["dropped"][0]["reason"]
 
+    def test_entrypoint_role_tag_is_parsed_outside_backticks(self, repo):
+        """`[id]` 는 경로 파라미터라 태그가 아니다 — 태그는 백틱 밖에서만 뽑는다."""
+        doc = "## 진입점\n\n- `GET /api/x/[id]` [admin] → 200\n- `POST /api/y` → 201\n"
+        p = self._parse(repo, doc)
+        assert [e["tags"] for e in p["entrypoints"]] == [["admin"], []]
+
+    def test_path_segment_is_not_a_tag_without_backticks(self, repo):
+        p = self._parse(repo, "## 진입점\n\n- GET /api/x/[id] [admin] → 200\n")
+        assert p["entrypoints"][0]["path"] == "/api/x/[id]"
+        assert p["entrypoints"][0]["tags"] == ["admin"]
+
     def test_a_unit_needs_both_a_container_and_a_symbol(self, repo):
         """심볼명만 보면 흔한 이름이 다른 파일에서 거짓 통과한다."""
         p = self._parse(repo, "## 유닛\n\n- `matchTitle`\n")
@@ -4218,21 +4229,34 @@ class TestLedgerIdentity:
 
 
 class TestLedgerBaseline:
-    """untested_contract_item 의 baseline 기간 판정 (§E6)."""
+    """contract-trace 검사별 baseline 기간 판정 (§E6 · ADR-H058)."""
+
+    SLUG = "untested_contract_item"
+
+    def _trace_row(self, slug=SLUG):
+        return _finding(category="TEST_MISSING_FAILURE_PATH",
+                        source="contract-trace", rule_slug=slug)
 
     def test_empty_ledger_is_in_baseline(self, repo):
         ldg.seed(repo)
         assert ldg.distinct_runs(repo) == 0
-        assert ldg.in_baseline(repo, 3) is True
+        assert ldg.in_baseline_for(repo, self.SLUG, 3) is True
 
     def test_baseline_closes_after_three_distinct_runs(self, repo):
         ldg.seed(repo)
         for rid in ("r1", "r2"):
-            ldg.append(repo, rid, "05", [_finding()])
-        assert ldg.in_baseline(repo, 3) is True
-        ldg.append(repo, "r3", "05", [_finding()])
+            ldg.append(repo, rid, "05", [self._trace_row()])
+        assert ldg.in_baseline_for(repo, self.SLUG, 3) is True
+        ldg.append(repo, "r3", "05", [self._trace_row()])
+        assert ldg.in_baseline_for(repo, self.SLUG, 3) is False
+
+    def test_other_slugs_and_reviewer_rows_are_not_counted(self, repo):
+        ldg.seed(repo)
+        for rid in ("r1", "r2", "r3"):
+            ldg.append(repo, rid, "05", [_finding(),
+                                         self._trace_row("untested_entrypoint")])
         assert ldg.distinct_runs(repo) == 3
-        assert ldg.in_baseline(repo, 3) is False
+        assert ldg.in_baseline_for(repo, self.SLUG, 3) is True
 
     def test_same_run_many_findings_is_still_one_run(self, repo):
         ldg.seed(repo)
@@ -5156,7 +5180,10 @@ class TestContractTraceErrorsAndEntrypoints:
         assert [f for f in got["findings"] if f["code"] == "missing_entrypoint"] == []
         # 오류 어휘 검사는 그대로 돌아야 한다.
         assert any(f["code"] == "missing_error_symbol" for f in got["findings"])
-        assert len(got["checks_run"]) == 4
+        # 진입점 해석에 기대는 셋만 빠지고 나머지 다섯은 돈다.
+        assert set(got["skipped"]) == {"missing_entrypoint", "untested_entrypoint",
+                                       "authz_untested"}
+        assert len(got["checks_run"]) == 5
 
 
 class TestContractTraceAdapterConventions:
@@ -5451,14 +5478,38 @@ class TestContractTraceBaseline:
         assert f["resolution"] == "warn_only"
 
     def test_untested_becomes_a_real_finding_after_baseline(self, repo):
+        """baseline 은 **그 검사가 낸 런**으로 센다 (ADR-H058)."""
         ldg.seed(repo)
         for rid in ("r1", "r2", "r3"):
-            ldg.append(repo, rid, "05", [_finding()])
+            ldg.append(repo, rid, "05", [_finding(
+                category="TEST_MISSING_FAILURE_PATH", source="contract-trace",
+                rule_slug="untested_contract_item")])
         got = _trace(repo, self._contract_untested(repo))
         f = next(f for f in got["findings"] if f["code"] == "untested_contract_item")
         assert f["resolution"] != "warn_only"
         assert f["severity"] == "major"
         assert f["target_role"] == "test"
+
+    def test_reviewer_runs_do_not_close_a_checks_baseline(self, repo):
+        """원장 전체 런 수로 재면 새 검사가 첫 런부터 deferred 로 들어간다 (R10)."""
+        ldg.seed(repo)
+        for rid in ("r1", "r2", "r3"):
+            ldg.append(repo, rid, "05", [_finding()])
+        got = _trace(repo, self._contract_untested(repo))
+        f = next(f for f in got["findings"] if f["code"] == "untested_contract_item")
+        assert f["resolution"] == "warn_only"
+
+    def test_another_checks_runs_do_not_close_this_checks_baseline(self, repo):
+        ldg.seed(repo)
+        for rid in ("r1", "r2", "r3"):
+            ldg.append(repo, rid, "05", [_finding(
+                category="TEST_MISSING_FAILURE_PATH", source="contract-trace",
+                rule_slug="untested_contract_item")])
+        got = _trace(repo, self._contract_untested(repo))
+        f = next(f for f in got["findings"] if f["code"] == "untested_error_symbol")
+        assert f["resolution"] == "warn_only"
+        assert got["baseline"]["in_baseline"]["untested_contract_item"] is False
+        assert got["baseline"]["in_baseline"]["untested_error_symbol"] is True
 
     def test_symbol_referenced_by_test_is_clean(self, repo):
         """심볼 문자열 **또는** 진입점 경로 — 둘 다 실패할 때만 지적한다."""
@@ -5603,6 +5654,151 @@ export const 계약에없는상수 = 3
             + self.EXTRA_TS, encoding="utf-8")
         got = _trace(repo, _write_contract(repo, self.CONTRACT), changed=changed)
         assert self._ooc(got) == ["계약에없는상수"], got["findings"]
+
+
+def _route(repo, name, test_body=None):
+    """`src/app/api/<name>/route.ts` 와 (주면) 그 옆의 `route.test.ts`."""
+    d = repo / "src" / "app" / "api" / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "route.ts").write_text("export async function POST() {}\n",
+                                encoding="utf-8")
+    if test_body is not None:
+        (d / "route.test.ts").write_text(test_body, encoding="utf-8")
+    return d
+
+
+def _codes(got, code):
+    return [f for f in got["findings"] if f["code"] == code]
+
+
+class TestContractTraceUntestedEntrypoint:
+    """진입점마다 **그 진입점의** 테스트 파일이 있는가 (ADR-H058).
+
+    스코프 선택의 `_tests_for_source` 를 쓰지 않는다 — 앱라우터에서 진입점
+    파일이 전부 `route.ts` 라 스템 일치가 리포의 모든 `route.test.ts` 를 잡고,
+    존재 검사에서 그 과선택은 거짓 통과다 (N1).
+    """
+
+    def test_route_test_next_to_route_passes(self, repo):
+        _route(repo, "analyze", "it('ok', () => {})\n")
+        got = _trace(repo, _write_contract(repo), changed=[])
+        assert _codes(got, "untested_entrypoint") == [], got["findings"]
+
+    def test_no_test_is_major_for_the_test_role(self, repo):
+        _route(repo, "analyze")
+        got = _trace(repo, _write_contract(repo), changed=[])
+        miss = _codes(got, "untested_entrypoint")
+        assert len(miss) == 1
+        assert miss[0]["severity"] == "major"
+        assert miss[0]["target_role"] == "test"
+        assert miss[0]["category"] == "TEST_MISSING_FAILURE_PATH"
+
+    def test_another_routes_test_does_not_count(self, repo):
+        """스템이 같은 `route.test.ts` 라도 다른 라우트 것이면 통과가 아니다."""
+        _route(repo, "analyze")
+        _route(repo, "other", "it('ok', () => {})\n")
+        got = _trace(repo, _write_contract(repo), changed=[])
+        assert len(_codes(got, "untested_entrypoint")) == 1, got["findings"]
+
+    def test_alias_import_from_elsewhere_counts(self, repo):
+        _route(repo, "analyze")
+        (repo / "src" / "lib" / "analyze-flow.test.ts").write_text(
+            'import { POST } from "@/app/api/analyze/route";\n', encoding="utf-8")
+        got = _trace(repo, _write_contract(repo), changed=[])
+        assert _codes(got, "untested_entrypoint") == [], got["findings"]
+
+    def test_relative_import_from_elsewhere_counts(self, repo):
+        _route(repo, "analyze")
+        (repo / "src" / "lib" / "analyze-flow.test.ts").write_text(
+            "const m = await import(\n  '../app/api/analyze/route'\n)\n",
+            encoding="utf-8")
+        got = _trace(repo, _write_contract(repo), changed=[])
+        assert _codes(got, "untested_entrypoint") == [], got["findings"]
+
+    def test_unresolved_entrypoint_is_recorded_not_flagged(self, repo):
+        """진입점이 없으면 `missing_entrypoint` 의 몫이다 — 여기서 겹쳐 지적하지 않는다."""
+        got = _trace(repo, _write_contract(repo), changed=[])
+        assert _codes(got, "untested_entrypoint") == []
+        assert got["entrypoints_unresolved"] == ["POST /api/analyze"]
+
+    def test_no_resolver_skips_it(self, repo):
+        config, adapter, _cal = _load(repo)
+        adapter = dict(adapter)
+        adapter.pop("entrypoint_resolver", None)
+        got = tr.run(repo, config, adapter, _write_contract(repo), changed=[])
+        assert "untested_entrypoint" in got["skipped"]
+        assert got["skip_reasons"]["untested_entrypoint"]
+
+
+class TestContractTraceUntestedErrorSymbol:
+
+    def test_error_constant_absent_from_tests_is_major(self, repo):
+        got = _trace(repo, _write_contract(repo), changed=[])
+        miss = _codes(got, "untested_error_symbol")
+        assert len(miss) == 1 and miss[0]["severity"] == "major"
+        assert miss[0]["symbol"] == "MATCH_FAILED"
+        assert miss[0]["target_role"] == "test"
+
+    def test_error_constant_in_a_test_is_clean(self, repo):
+        (repo / "src" / "lib" / "match.test.ts").write_text(
+            "expect(code).toBe('MATCH_FAILED')\n", encoding="utf-8")
+        got = _trace(repo, _write_contract(repo), changed=[])
+        assert _codes(got, "untested_error_symbol") == []
+
+    def test_a_longer_name_is_not_a_match(self, repo):
+        (repo / "src" / "lib" / "match.test.ts").write_text(
+            "expect(code).toBe('MATCH_FAILED_TWICE')\n", encoding="utf-8")
+        got = _trace(repo, _write_contract(repo), changed=[])
+        assert len(_codes(got, "untested_error_symbol")) == 1
+
+
+class TestContractTraceAuthzUntested:
+    """`[역할]` 태그 진입점은 **그 진입점의** 테스트에 거부 단언이 있어야 한다."""
+
+    TAGGED = CONTRACT.replace("- `POST /api/analyze` → 200",
+                              "- `POST /api/analyze` [admin] → 200")
+
+    def test_denial_in_the_routes_own_test_passes(self, repo):
+        _route(repo, "analyze", "expect(res.status).toBe(403)\n")
+        got = _trace(repo, _write_contract(repo, self.TAGGED), changed=[])
+        assert _codes(got, "authz_untested") == [], got["findings"]
+
+    def test_no_denial_is_major(self, repo):
+        _route(repo, "analyze", "expect(res.status).toBe(200)\n")
+        got = _trace(repo, _write_contract(repo, self.TAGGED), changed=[])
+        miss = _codes(got, "authz_untested")
+        assert len(miss) == 1 and miss[0]["severity"] == "major"
+        assert miss[0]["category"] == "AUTHZ_MISSING_RULE"
+
+    def test_denial_in_another_routes_test_does_not_count(self, repo):
+        _route(repo, "analyze", "expect(res.status).toBe(200)\n")
+        _route(repo, "other", "expect(res.status).toBe(403)\n")
+        got = _trace(repo, _write_contract(repo, self.TAGGED), changed=[])
+        assert len(_codes(got, "authz_untested")) == 1, got["findings"]
+
+    def test_untagged_entrypoint_is_not_checked(self, repo):
+        _route(repo, "analyze", "expect(res.status).toBe(200)\n")
+        got = _trace(repo, _write_contract(repo), changed=[])
+        assert _codes(got, "authz_untested") == []
+
+    def test_adapter_without_pattern_skips_with_a_reason(self, repo):
+        _route(repo, "analyze", "expect(res.status).toBe(200)\n")
+        config, adapter, _cal = _load(repo)
+        adapter = json.loads(json.dumps(adapter))
+        adapter["attribution"].pop("authz_denied_pattern", None)
+        got = tr.run(repo, config, adapter, _write_contract(repo, self.TAGGED),
+                     changed=[])
+        assert "authz_untested" in got["skipped"]
+        assert "authz_denied_pattern" in got["skip_reasons"]["authz_untested"]
+        assert _codes(got, "authz_untested") == []
+
+    def test_real_adapter_declares_pattern_and_aliases(self):
+        a = harness._read_json(ROOT / "harness/adapters/nextjs-ts.json")
+        assert re.search(a["attribution"]["authz_denied_pattern"], "toBe(403)")
+        assert a["attribution"]["import_aliases"] == {"@/": "src/"}
+        errors = harness.validate(
+            a, harness._read_json(ROOT / "harness/adapters/adapter.schema.json"))
+        assert errors == [], errors
 
 
 class TestContractTraceNoContract:

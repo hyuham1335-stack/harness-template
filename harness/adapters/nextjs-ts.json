@@ -57,6 +57,9 @@
     "app_frame_prefixes": ["src/app/", "src/components/", "src/lib/", "src/services/", "src/types/"],
     "test_file_globs": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.golden.test.ts"],
     "symbol_not_found_patterns": ["has no exported member", "Cannot find name", "Module not found", "Cannot find module"],
+    "authz_denied_pattern": "\\b403\\b|FORBIDDEN",
+    "import_aliases": {"@/": "src/"},
+    "_authz_note": "contract-trace 의 authz_untested·untested_entrypoint 가 읽는다 (ADR-H058). 거부 단언의 모양과 경로 별칭은 스택 관례라 여기 선언한다.",
     "_unconsumed": "소비자(04-gate 귀속)가 3단계에서 생겼다. compile_error_regex 는 실측으로 한 번 고쳤다 — 원래 형태가 `path(line,col)` 뒤의 `:` 를 소비하지 못해 실제 출력에 한 건도 매칭되지 않았다(2026-09-03, 소비자가 생기자마자 드러났다). 나머지(app_frame_prefixes·test_file_globs·symbol_not_found_patterns)는 픽스처로만 검증됐고, 픽스처는 내가 만든 출력이지 진짜 러너 출력이 아니다. 실물 완주 전까지 verified 를 올리지 않는다."
   },
 

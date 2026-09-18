@@ -223,7 +223,7 @@
           }
         },
         "baseline_runs": {
-          "description": "오탐이 잦은 검사(untested_contract_item · out_of_contract)를 warn_only 로 두는 기간. 원장이 본 런 수로 센다.",
+          "description": "오탐이 잦은 검사(contract-trace 의 BASELINE_CHECKS)를 warn_only 로 두는 기간. 검사별로, 그 검사가 지적을 낸 런 수로 센다 (ADR-H058).",
           "type": "integer", "minimum": 0
         }
       }

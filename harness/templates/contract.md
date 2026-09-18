@@ -45,9 +45,11 @@
 ## 진입점
 
 어댑터의 `entrypoint_resolver`가 실재를 확인한다. 진입점 개념이 없는 스택이면 "없음".
+인가가 걸린 진입점은 백틱 밖 끝에 `[역할]` 태그를 단다 — 그 진입점의 테스트에 거부 경로가 있는지 검사된다.
 
 - `POST /api/analyze` → 200
 - `GET /api/mood/questions` → 200
+- `DELETE /api/mood/questions/{id}` [admin] → 204
 
 ## 오류 어휘
 
