@@ -30,6 +30,11 @@ LEDGER_DIR_REL = "docs/harness/pipeline/ledger"
 TAXONOMY_REL = LEDGER_DIR_REL + "/taxonomy.json"
 FINDINGS_REL = LEDGER_DIR_REL + "/findings.jsonl"
 CHANGELOG_REL = LEDGER_DIR_REL + "/rules_changelog.md"
+# 열린 `deferred` 의 경로별 뷰. **원장의 파생이지 출처가 아니다** — 08 이 매 런
+# 통째로 다시 만든다 (ADR-H051 결정 3). 머리말의 "집계 파일을 두지 않는다" 와
+# 긴장하는 자리라 손으로 고치지 않고 늘 재생성한다.
+DEFERRED_REL = LEDGER_DIR_REL + "/deferred.md"
+NO_PATH = "(경로 미기재)"
 
 # 승격 목적지의 어휘. `none` 은 승격하지 않는 것(에스컬레이션 전용)이다.
 ENFORCEABLE = ("lint", "check", "prose", "none")
@@ -462,6 +467,10 @@ def append(root, run_id, phase, findings):
         # `finding_key` 로 낙하한다.
         if slug is not None:
             row["rule_slug"] = slug
+        # **경로는 받았을 때만 적는다** (ADR-H051 결정 3). 이월 표가 경로별로
+        # 모이는 근거이고, 옛 행은 이 키가 없어 `(경로 미기재)` 버킷이다.
+        if f.get("path"):
+            row["path"] = str(f["path"]).replace("\\", "/")
         row["rule_key"] = rule_key(dict(f, rule_slug=slug))
         rows.append(row)
 
@@ -572,6 +581,63 @@ def observations(root):
         folded[ident] = dict(row, severity=keep_sev, first_seen=first,
                              last_seen=row.get("ts"), superseded=n)
     return [folded[i] for i in order]
+
+
+def open_deferred(root):
+    """열린 `deferred` 를 경로별로. [{"path", "rows"}] — `(경로 미기재)` 는 맨 뒤."""
+    groups, order = {}, []
+    for row in observations(root):
+        if row.get("resolution") != "deferred":
+            continue
+        p = row.get("path") or NO_PATH
+        if p not in groups:
+            groups[p] = []
+            order.append(p)
+        groups[p].append(row)
+    order = [p for p in order if p != NO_PATH] + ([NO_PATH] if NO_PATH in groups else [])
+    return [{"path": p, "rows": groups[p]} for p in order]
+
+
+def write_deferred(root):
+    """`deferred.md` 를 **통째로** 다시 쓴다. 반환: 경로."""
+    groups = open_deferred(root)
+    total = sum(len(g["rows"]) for g in groups)
+    lines = ["# 이월 미해결 (deferred)", "",
+             "> 원장(`findings.jsonl`)의 **파생 뷰**이지 출처가 아니다. 08 이 매 런 "
+             "통째로 다시 만든다 — 손으로 고치지 않는다 (ADR-H051). 옛 행은 `path` 가 "
+             "없어 `%s` 한 버킷이다. 00 봉투가 요청 경로와 겹치는 건수를 표기한다."
+             % NO_PATH, "",
+             "열린 `deferred` **%d건** · 경로 %d개" % (total, len(groups)), ""]
+    for g in groups:
+        lines += ["## `%s` — %d건" % (g["path"], len(g["rows"])), "",
+                  "| run_id | severity | category | 제목 | 리뷰어 |",
+                  "|---|---|---|---|---|"]
+        lines += ["| `%s` | %s | %s | %s | %s |"
+                  % (r.get("run_id"), r.get("severity"), r.get("category"),
+                     r.get("title_norm"), ", ".join(r.get("reported_by") or []))
+                  for r in g["rows"]]
+        lines.append("")
+    path = Path(root) / DEFERRED_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+    return path
+
+
+def _prefix_match(a, b):
+    a, b = a.strip("/"), b.strip("/")
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def deferred_overlap(root, request_paths):
+    """요청 경로와 접두로 겹치는 열린 `deferred`. {"count", "paths"}."""
+    hits, count = [], 0
+    for g in open_deferred(root):
+        if g["path"] == NO_PATH:
+            continue
+        if any(_prefix_match(g["path"], q) for q in request_paths or []):
+            hits.append(g["path"])
+            count += len(g["rows"])
+    return {"count": count, "paths": hits}
 
 
 def distinct_runs(root):

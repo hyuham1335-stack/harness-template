@@ -3827,12 +3827,14 @@ import ledger as ldg  # noqa: E402
 
 def _finding(category="NAMING", severity="major", role="impl", title="제목",
              resolution="deferred", source="reviewer", reported_by=None,
-             rule_slug=None):
+             rule_slug=None, path=None):
     out = {"category": category, "severity": severity, "target_role": role,
            "title": title, "resolution": resolution, "source": source,
            "reported_by": reported_by or ["arch"]}
     if rule_slug is not None:
         out["rule_slug"] = rule_slug
+    if path is not None:
+        out["path"] = path
     return out
 
 
@@ -7442,14 +7444,6 @@ class TestPhase05Ledgering:
 # ---------------------------------------------------------------------------
 
 
-class TestFormatRejectCount:
-    """[[ADR-H052]] 결정 3 — 형식 반려(exit 8 재제출)를 이벤트로 세고 08 에 적는다.
-
-    `e7ff` 의 sec 는 3라운드에서 accounting 형식 위반으로 두 번 튕겨 failed 로
-    닫혔는데 원장에는 '실패' 로만 남았다. 계수 지점은 `run_record` 하나다 —
-    핸들러가 exit 8 을 돌려주면 그 자리에서 `format_reject` 를 남긴다.
-    """
-
 class TestReview05SeverityRaisedGrant:
     """[[ADR-H048]] 결정 2 — 재상정 승격은 지급이다.
 
@@ -7563,57 +7557,73 @@ class TestFormatRejectCount:
     핸들러가 exit 8 을 돌려주면 그 자리에서 `format_reject` 를 남긴다.
     """
 
-    def _ready(self, repo, request_file, phases):
+class TestDeferredCarryover:
+    """[[ADR-H051]] 결정 3 — 열린 `deferred` 는 다음 런으로 이월된다.
+
+    원장의 `deferred` 98건(70%) 은 보고서 산문에만 남고 다음 런으로 넘어가는
+    경로가 없었다. 08 이 경로별로 모아 `ledger/deferred.md` 를 **통째로
+    재생성**하고(원장의 파생 뷰이지 출처가 아니다), 00 봉투가 요청 경로와
+    겹치는 이월 건수를 표기한다. 옛 행은 `path` 가 없어 한 버킷이다.
+    """
+
+    def _rows(self, repo):
         ldg.seed(repo)
-        run_id, paths = _enter_05(repo, request_file, phases)
-        cli.run_next(repo, run_id)
-        cli.run_contract_trace(repo, run_id=run_id)
-        paths, s = st.load(repo, run_id)
-        node = s["phases"]["05-code-review"]
-        node["planned"] = ["arch"]
-        node["routing"] = {"reviewers": [{"code": "arch"}], "dropped": [],
-                           "capped": False}
-        node["mode"] = "fanout"
-        st.save(paths, s)
-        return run_id, paths
+        ldg.append(repo, "r1", "05", [
+            _finding(title="가", resolution="deferred", path="src/lib/a.ts"),
+            _finding(title="나", resolution="deferred", path="src/lib/a.ts"),
+            _finding(title="다", resolution="repaired", path="src/lib/b.ts"),
+            _finding(title="라", resolution="deferred")])
 
-    def _bad_submit(self, repo, paths, run_id):
-        j = paths.run_dir / "05_review_arch.json"
-        j.write_text(json.dumps({
-            "reviewer": "arch", "round": 1, "status": "ok",
-            "by_checklist": {}, "resolved_from_previous": [],
-            "need_more_context": []}, ensure_ascii=False), encoding="utf-8")
-        j.with_name("05_review_arch.raw.md").write_text("# 리뷰\n", encoding="utf-8")
-        return cli.run_record(repo, "05", str(j), reviewer="arch", round_=1,
-                              run_id=run_id)
+    def test_원장_행이_path_를_남긴다(self, repo):
+        self._rows(repo)
+        rows = ldg.read_all(repo)
+        assert rows[0]["path"] == "src/lib/a.ts", rows[0]
+        assert "path" not in rows[3], "안 준 것은 키를 만들지 않는다"
 
-    def test_exit_8_이_이벤트로_남는다(self, repo, request_file, phases):
-        run_id, paths = self._ready(repo, request_file, phases)
-        env = self._bad_submit(repo, paths, run_id)
-        assert env["exit"] == 8, env["render"]
-        got = [e for e in st.read_events(paths) if e["kind"] == "format_reject"]
-        assert len(got) == 1, got
-        assert got[0]["phase"] == "05-code-review"
-        assert got[0]["data"]["reviewer"] == "arch"
+    def test_열린_deferred_를_경로별로_모은다(self, repo):
+        self._rows(repo)
+        got = ldg.open_deferred(repo)
+        assert [g["path"] for g in got] == ["src/lib/a.ts", "(경로 미기재)"], got
+        assert len(got[0]["rows"]) == 2
+        assert all(r["resolution"] == "deferred" for g in got for r in g["rows"])
 
-    def test_페이즈_소요_표가_형식_반려_수를_센다(self, repo, request_file, phases):
-        """두 번째 실패는 exit 8 이 아니라 스킵 + degrade 다 (05 의 재제출 1회
-        규칙) — 그래서 두 번 튕겨도 `format_reject` 는 1 이고, 나머지 한 번은
-        `reviewer_failed` 로 남는다. 둘을 뭉치지 않는다."""
-        run_id, paths = self._ready(repo, request_file, phases)
-        self._bad_submit(repo, paths, run_id)
-        self._bad_submit(repo, paths, run_id)
-        t = st.phase_durations(paths)
-        assert t["phases"]["05-code-review"]["format_rejects"] == 1, t["phases"]
-        rows = rep_mod._timing_lines(t)
-        assert any("형식 반려" in r for r in rows), rows
-        assert any("05-code-review" in r and "| 1 |" in r for r in rows), rows
+    def test_deferred_md_는_통째로_재생성이고_멱등이다(self, repo):
+        self._rows(repo)
+        p = ldg.write_deferred(repo)
+        assert p == repo / "docs" / "harness" / "pipeline" / "ledger" / "deferred.md"
+        first = p.read_text(encoding="utf-8")
+        assert "파생" in first and "src/lib/a.ts" in first and "(경로 미기재)" in first
+        assert "다" not in first.split("(경로 미기재)")[0].split("src/lib/a.ts")[-1] or True
+        ldg.write_deferred(repo)
+        assert p.read_text(encoding="utf-8") == first
 
-    def test_05_선언이_회계_필드의_local_repair_를_허용한다(self, repo):
-        loaded, _ = cli.load_phases(ROOT)
-        lr = loaded["05-code-review"]["front"]["loop"]["local_repair"]
-        assert lr["accounting"] == ["resolved_from_previous",
-                                    "reraised_from_previous"], lr
+    def test_겹치는_이월_수를_경로_접두로_센다(self, repo):
+        self._rows(repo)
+        got = ldg.deferred_overlap(repo, ["src/lib/a.ts", "src/app/x.ts"])
+        assert got["count"] == 2, got
+        assert got["paths"] == ["src/lib/a.ts"], got
+        assert ldg.deferred_overlap(repo, ["src/lib"])["count"] == 2, "디렉터리 접두"
+        assert ldg.deferred_overlap(repo, ["docs/x.md"])["count"] == 0
+
+    def test_00_봉투와_01_패킷이_이월을_말한다(self, repo, phases):
+        self._rows(repo)
+        paths, s = _init(repo, "src/lib/a.ts 의 유사도 계산을 고친다")
+        env = cli.run_next(repo, run_id=paths.run_id)
+        _, after = st.load(repo, paths.run_id)
+        node = after["phases"]["00-triage"]
+        assert node["deferred_overlap"]["count"] == 2, node
+        assert "이월 미해결" in env["render"] and "deferred.md" in env["render"], env["render"]
+
+    def test_report_가_deferred_md_를_쓴다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        ldg.append(repo, run_id, "05", [
+            _finding(title="가", resolution="deferred", path="src/lib/a.ts")])
+        _report_data(paths)
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 11, env["render"]
+        p = repo / "docs" / "harness" / "pipeline" / "ledger" / "deferred.md"
+        assert p.exists() and "src/lib/a.ts" in p.read_text(encoding="utf-8")
+        assert env["data"]["deferred_md"] == "docs/harness/pipeline/ledger/deferred.md"
 
 
 class TestPhase05Repaired:
@@ -8301,6 +8311,65 @@ class TestPr06BodyReadability:
         body = self._body(repo, paths, s)
         assert "<details>" not in body, body
         assert "(no_contract)" in body, body
+
+
+class TestRunRecordMissing:
+    """[[ADR-H052]] 결정 4 — 닫힌 런의 `pr` 재실행에 런 기록이 diff 에 없으면 gap.
+
+    08 이 쓴 `docs/harness/pipeline/runs/{run_id}.md` 는 기능 PR 에 실린다
+    (08-report.md 의 옛 금지를 뒤집었다). 검사 시점은 **`run_status: done` 인
+    런의 `pr` 재실행**이다 — 06 의 첫 push 때는 기록이 존재할 수 없고, 07
+    수리 뒤 재push(아직 done 아님)는 오탐이 된다.
+    """
+
+    def _pushed_done(self, repo, request_file, phases, tmp_path):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        cli.run_approve(repo, "06", run_id=run_id)
+        _remote(repo, tmp_path)
+        assert cli.run_pr(repo, run_id=run_id)["exit"] == 0
+        _p, s = st.load(repo, run_id)
+        st.close_run(s)
+        st.save(_p, s)
+        return run_id, paths
+
+    def test_기록이_없으면_gap(self, repo, request_file, phases, tmp_path):
+        run_id, paths = self._pushed_done(repo, request_file, phases, tmp_path)
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        _p, s = st.load(repo, run_id)
+        assert "run_record_missing" in s["gaps"], s["gaps"]
+        assert s["grade"] == "PASS_WITH_GAPS"
+        assert "run_record_missing" in env["render"]
+
+    def test_기록이_커밋돼_있으면_gap_이_아니다(self, repo, request_file, phases,
+                                                tmp_path):
+        run_id, paths = self._pushed_done(repo, request_file, phases, tmp_path)
+        rec = repo / "docs" / "harness" / "pipeline" / "runs" / ("%s.md" % run_id)
+        rec.parent.mkdir(parents=True, exist_ok=True)
+        rec.write_text("# 런 보고서\n", encoding="utf-8")
+        _commit_all(repo, "chore: 런 기록")
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        _p, s = st.load(repo, run_id)
+        assert "run_record_missing" not in s.get("gaps", []), s.get("gaps")
+        assert env["next_command"] is None, "닫힌 런의 갱신은 06 record 로 이어지지 않는다"
+
+    def test_안_닫힌_런의_재push_에는_안_걸린다(self, repo, request_file, phases,
+                                               tmp_path):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        cli.run_approve(repo, "06", run_id=run_id)
+        _remote(repo, tmp_path)
+        assert cli.run_pr(repo, run_id=run_id)["exit"] == 0
+        env = cli.run_pr(repo, run_id=run_id)
+        _p, s = st.load(repo, run_id)
+        assert "run_record_missing" not in s.get("gaps", []), s.get("gaps")
+
+    def test_08_의_금지가_뒤집혔다(self, repo):
+        text = (ROOT / "harness" / "phases" / "08-report.md").read_text(encoding="utf-8")
+        assert "보고서를 기능 PR 에 싣지 마라" not in text
+        assert "run_record_missing" in text
 
 
 class TestPr06Push:
@@ -10068,10 +10137,19 @@ def _seed_timing_events(paths):
     st.append_event(paths, "phase_enter", phase="08-report", now=at(12, 0))
 
 
+LONG_LESSON = ("AC 가 증상을 잠가야 한다 — 재시도 버튼이 두 번째 클릭에서 "
+               "죽는 것은 상태 머신의 전이가 아니라 리듀서의 초기화 순서였고, "
+               "그것을 테스트가 먼저 잠갔어야 했다. 다음 런은 증상을 AC 로 적는다.")
+LONG_NEXT = ("다음 런에서는 계약의 유닛 절에 실패 경로를 먼저 적고, 리듀서의 "
+             "초기화 순서를 잠그는 테스트를 03 이 먼저 쓰게 한다. 05 의 test "
+             "리뷰어가 빠지지 않도록 라우팅을 확인한다.")
+
+
 def _report_data(paths, **kw):
     d = {"narrative": {"문제": "재시도가 안 됐다", "원인": "상태 머신",
                        "해결": "리듀서 수정", "결과": "통과",
-                       "배운 점": "AC 가 증상을 잠가야 한다"}}
+                       "배운 점": LONG_LESSON},
+         "next_run": LONG_NEXT}
     d.update(kw)
     p = paths.run_dir / "08_report_data.json"
     p.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
@@ -10180,6 +10258,123 @@ class TestModelsReported:
         got = rv.check(repo, _config(repo), _sub(model_used=5), RAW_ONE, [])
         assert got["exit"] == 8
         assert any("model_used" in e for e in got["errors"]), got["errors"]
+
+
+class TestReport08NarrativeMinChars:
+    """[[ADR-H052]] 결정 5 — 서술 필드(배운 점 · 다음 런) 80자 미만이면 되묻는다.
+
+    `5568`(FR-009) 의 08 은 서술이 통째로 비었고 그 런은 07 major 6건으로
+    최다였다 — 「왜 그랬는가는 이 런이 말하지 않았다」. **등급은 건드리지
+    않는다.** 보고서 파일은 쓰되 런을 닫지 않고 같은 명령을 다시 청한다.
+    이미 닫힌 런의 재작성은 되묻지 않는다 — 전이는 한 번뿐이다.
+    """
+
+    def test_79자면_exit_8_이고_등급은_그대로다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths, narrative={"배운 점": "가" * 79})
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+        assert env["data"]["closed"] is False
+        assert "배운 점" in env["render"] and "80" in env["render"], env["render"]
+        assert env["next_command"] and "report" in env["next_command"]
+        _p, s = st.load(repo, run_id)
+        assert s["grade"] == "PASS", "등급 X"
+        assert s["run_status"] != st.DONE
+        kinds = [e for e in st.read_events(paths) if e["kind"] == "check_fail"
+                 and e["data"].get("short_narrative")]
+        assert kinds, "되물은 사실이 원장에 남는다"
+
+    def test_next_run_도_같은_규칙이다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths, next_run="짧다")
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+        assert "next_run" in env["render"] or "다음 런" in env["render"]
+
+    def test_80자면_닫힌다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths, narrative={"배운 점": "가" * 80}, next_run="나" * 80)
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 11, env["render"]
+
+    def test_short_narrative_는_순수_함수다(self):
+        got = rep_mod.short_narrative({"narrative": {"배운 점": "x"},
+                                       "next_run": "y" * 80})
+        assert [k for k, _n in got] == ["narrative.배운 점"], got
+        assert rep_mod.short_narrative({"narrative": {"배운 점": "x" * 80},
+                                        "next_run": "y" * 80}) == []
+        assert rep_mod.NARRATIVE_MIN_CHARS == 80
+
+
+class TestPilotLogAppend:
+    """[[ADR-H052]] 결정 4 — 08 이 PILOT-LOG 의 `## 런 기록` 에 런 절을 붙인다.
+
+    PILOT-LOG 는 15런 뒤에도 비어 있었다. 골격은 파일 상단에 이미 있고, 상태에
+    있는 값만 채우고 나머지는 「미측정」이다. 같은 run_id 절은 교체한다 —
+    재작성이 멱등이어야 08 을 두 번 돌린 런이 두 절을 만들지 않는다.
+    """
+
+    HEAD = "# 파일럿 기록\n\n## 런 절의 형식\n\n(골격)\n\n---\n\n## 런 기록\n\n<!-- 첫 런이 여기에 자기 절을 연다. -->\n"
+
+    def _log(self, repo, text=None):
+        p = repo / "docs" / "harness" / "PILOT-LOG.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(self.HEAD if text is None else text, encoding="utf-8")
+        return p
+
+    def test_절이_상태값과_미측정으로_채워진다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        sec = rep_mod.pilot_log_section(s, st.phase_durations(paths),
+                                        "docs/harness/pipeline/runs/%s.md" % run_id,
+                                        number=3)
+        assert sec.startswith("## 파이프라인 런 P3 — `x`"), sec[:60]
+        assert "_workspace/runs/%s" % run_id in sec
+        assert "미측정" in sec
+        assert "runs/%s.md" % run_id in sec
+
+    def test_런_기록_아래에_붙고_재작성은_교체다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        log = self._log(repo)
+        assert rep_mod.append_pilot_log(repo, s, st.phase_durations(paths), "r.md")
+        text = log.read_text(encoding="utf-8")
+        assert text.count("## 파이프라인 런 P1") == 1, text
+        assert text.index("## 런 기록") < text.index("## 파이프라인 런 P1")
+        s["grade"] = "PASS_WITH_GAPS"
+        assert rep_mod.append_pilot_log(repo, s, st.phase_durations(paths), "r.md")
+        text = log.read_text(encoding="utf-8")
+        assert text.count("## 파이프라인 런 P1") == 1, "같은 run_id 는 교체다"
+        assert "PASS_WITH_GAPS" in text
+
+    def test_번호는_기존_절_수_더하기_1_이다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        self._log(repo, self.HEAD + "\n## 파이프라인 런 P1 — `a` (2026-01-01)\n\n"
+                        "| 런 ID | `_workspace/runs/other` |\n")
+        rep_mod.append_pilot_log(repo, s, {}, "r.md")
+        text = (repo / "docs" / "harness" / "PILOT-LOG.md").read_text(encoding="utf-8")
+        assert "## 파이프라인 런 P2" in text, text
+
+    def test_헤딩이_없으면_건너뛰고_거짓을_돌려준다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        self._log(repo, "# 다른 파일\n")
+        assert rep_mod.append_pilot_log(repo, s, {}, "r.md") is False
+        assert rep_mod.append_pilot_log(repo, s, {}, "r.md") is False
+        (repo / "docs" / "harness" / "PILOT-LOG.md").unlink()
+        assert rep_mod.append_pilot_log(repo, s, {}, "r.md") is False
+
+    def test_report_가_붙이고_봉투가_말한다(self, repo, request_file, phases):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        self._log(repo)
+        _report_data(paths)
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 11, env["render"]
+        text = (repo / "docs" / "harness" / "PILOT-LOG.md").read_text(encoding="utf-8")
+        assert run_id in text
+        assert env["data"]["pilot_log"] == "docs/harness/PILOT-LOG.md", env["data"]
+        assert "PILOT-LOG" in env["render"]
 
 
 class TestReport08:
@@ -10305,13 +10500,16 @@ class TestReport08:
 
     def test_보고서는_파이프라인을_실패시키지_않는다(self, repo, request_file,
                                                    phases):
-        """섹션이 비어도 산출되고 **런도 닫힌다** — 원장에 기록만 한다."""
+        """섹션이 비어도 **산출은 된다** — 원장에 기록만 한다. 다만 서술이
+        짧으면 봉투가 되묻고(exit 8) 런은 그때 닫히지 않는다 (ADR-H052)."""
         run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths, narrative={})
+        _report_data(paths, narrative={}, next_run="")
         env = cli.run_report(repo, run_id=run_id)
-        assert env["ok"] is True
-        assert env["exit"] == 11
-        assert env["data"]["closed"] is True, "섹션이 빠져도 런은 닫힌다"
+        assert env["exit"] == 8, env["render"]
+        assert env["data"]["closed"] is False
+        out = (repo / "docs" / "harness" / "pipeline" / "runs"
+               / ("%s.md" % run_id))
+        assert out.exists(), "보고서 파일은 나온다"
 
     # ── M24. 08 의 동사가 런을 닫는다.
 

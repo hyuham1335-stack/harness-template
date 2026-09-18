@@ -1235,6 +1235,15 @@ def _plan_00_triage(root, paths, s, phase_item, ctx):
     text = paths.request.read_text(encoding="utf-8")
     sig = triage.signals(text, config)
     node["signals"] = sig
+    # 원장의 열린 `deferred` 중 요청 경로와 겹치는 것 — 이월은 여기서 다음
+    # 런에 닿는다 (ADR-H051 결정 3). 원장이 없거나 깨졌으면 0 이 아니라 미계측.
+    import ledger
+    try:
+        node["deferred_overlap"] = ledger.deferred_overlap(
+            root, (sig.get("paths_role_owned") or []) + (sig.get("paths_docs") or [])
+            + (sig.get("paths_unresolved") or []))
+    except (OSError, ValueError):
+        node["deferred_overlap"] = None
     prof = s.get("profile") or {}
     if prof.get("source") == "user":
         # 사람이 `init --profile` 로 정했다. 신호만 남기고 판정을 덮지 않는다.
@@ -1790,6 +1799,8 @@ def render_packet(root, phase, ctx, s, checks=None):
     parts.append(_section(body, "## 절차"))
     if pid == "00-triage":
         parts.append(_triage_render(ctx, s))
+    if pid in ("00-triage", "01-plan"):
+        parts.append(_deferred_render(s))
     if pid == "01-plan" and not _reviewers_for(front, s):
         parts.append(
             "## 리뷰어 — 0명 (%s 레인)\n\n이 런은 플랜 리뷰어를 부르지 않는다. "
@@ -1844,6 +1855,22 @@ def render_packet(root, phase, ctx, s, checks=None):
         cmd = ("python scripts/pipeline/cli.py record --phase %s --file <산출물> "
                "--run-id %s" % (pid.split("-")[0], s["run_id"]))
     return "\n\n".join(p for p in parts if p), cmd
+
+
+def _deferred_render(s):
+    """00·01 패킷 — 요청 경로와 겹치는 이월 미해결 (ADR-H051). 없으면 그렇게 말한다."""
+    node = (s.get("phases") or {}).get("00-triage") or {}
+    ov = node.get("deferred_overlap")
+    if ov is None:
+        return ""
+    if not ov.get("count"):
+        return ("## 이월 미해결 — 요청 경로와 겹치는 deferred 0건\n\n"
+                "원장의 열린 `deferred` 중 이 요청의 경로에 걸린 것이 없다.")
+    return ("## 이월 미해결 — 요청 경로와 겹치는 deferred %d건\n\n"
+            "경로: %s\n\n`docs/harness/pipeline/ledger/deferred.md` 의 해당 절을 "
+            "플랜의 입력으로 읽는다. 앞선 런이 미룬 것이고, 이번 런이 같은 자리를 "
+            "건드린다면 고치거나 왜 또 미루는지 적는다."
+            % (ov["count"], ", ".join("`%s`" % p for p in ov.get("paths") or [])))
 
 
 def _triage_render(ctx, s):
@@ -4388,9 +4415,9 @@ def run_report(root, out=None, run_id=None):
     # 소요는 `events.jsonl` 의 유도값이고, 08 시점에 그 파일은 이미 완결이다
     # — 미완 구간이 없다. 비용은 그 반대라 **있으면** 적고 아니면 `미계측` 이다
     # (ADR-H032 · ADR-H052 결정 2).
+    timing = st.phase_durations(paths)
     text, missing = rep.build(s, data, cal or {}, s.get("promotions") or [],
-                              st.phase_durations(paths),
-                              cost=_report_cost(root, s))
+                              timing, cost=_report_cost(root, s))
 
     target = Path(out) if out else (
         root / "docs" / "harness" / "pipeline" / "runs"
@@ -4405,15 +4432,43 @@ def run_report(root, out=None, run_id=None):
     st.save(paths, s)
     rel = str(target.relative_to(root)) if str(target).startswith(str(root)) \
         else str(target)
+    short = rep.short_narrative(data)
     data = {"out": rel, "missing_sections": missing}
+
+    # 이월 뷰와 파일럿 기록은 **보고서와 같은 시점**에 쓴다 (ADR-H051 · H052).
+    # 둘 다 파생 파일이고 실패해도 보고서를 막지 않는다 — 못 쓴 사실만 적는다.
+    try:
+        data["deferred_md"] = ledger_mod.write_deferred(root).relative_to(
+            root).as_posix()
+    except (OSError, ValueError):
+        data["deferred_md"] = None
+    data["pilot_log"] = (rep.PILOT_LOG_REL
+                         if rep.append_pilot_log(root, s, timing, rel) else None)
 
     # 이미 닫힌 런 — 파일만 다시 쓰고 **전이하지 않는다.** exit 11 은 전이의
     # 순간이므로 두 번 내면 재작성과 첫 종료가 원장에서 구분되지 않는다.
     if s.get("run_status") == st.DONE:
         return st.envelope("report", True, 0, s, dict(data, closed=True),
-                           _report_render(rel, missing, s)
+                           _report_render(rel, missing, s, data)
                            + "\n\n이 런은 이미 닫혀 있다. 보고서만 다시 썼다.",
                            None)
+
+    # **서술이 짧으면 되묻는다** (ADR-H052 결정 5). 보고서 파일은 이미 썼다 —
+    # 표는 실행기가 조립했으므로 사실은 남는다. 다만 런은 닫지 않는다: 「왜
+    # 그랬는가」 없이 닫힌 런이 `5568` 이었다. 등급은 건드리지 않는다.
+    if short:
+        st.append_event(paths, "check_fail", cmd="report", phase="08-report",
+                        short_narrative=[{"field": k, "chars": n} for k, n in short])
+        return st.envelope(
+            "report", False, 8, s, dict(data, closed=False, short_narrative=short),
+            _report_render(rel, missing, s, data) + "\n\n" + "\n".join(
+                ["## 서술이 짧다 — 다시 낸다", ""]
+                + ["- `%s`: %d자 (하한 %d)" % (k, n, rep.NARRATIVE_MIN_CHARS)
+                   for k, n in short]
+                + ["", "보고서는 썼지만 **런을 닫지 않았다.** 「배운 점」과 "
+                       "「다음 런에서 바꿀 것」은 다음 런의 입력이다 — 표가 말하지 "
+                       "못하는 「왜」를 적고 같은 명령으로 다시 낸다. 등급은 그대로다."]),
+            "python scripts/pipeline/cli.py report --run-id %s" % s["run_id"])
 
     # **전이 조건은 08 자신의 `requires` 다.** 여기 따로 적으면 페이즈 파일과
     # 갈라지고, 안 두면 03 에서 부른 report 가 런을 닫아 버린다.
@@ -4433,11 +4488,11 @@ def run_report(root, out=None, run_id=None):
 
     env = _close_run(root, paths, s, item, ctx, cmd="report")
     env["data"].update(data)
-    env["render"] = _report_render(rel, missing, s) + "\n\n" + env["render"]
+    env["render"] = _report_render(rel, missing, s, data) + "\n\n" + env["render"]
     return env
 
 
-def _report_render(rel, missing, s):
+def _report_render(rel, missing, s, data=None):
     lines = ["## 보고서를 썼다", "", "`%s`" % rel, "",
              "완료 등급 **%s**%s" % (s.get("grade") or "미정",
                                     (" — " + ", ".join(s.get("gaps") or []))
@@ -4446,6 +4501,15 @@ def _report_render(rel, missing, s):
         lines += ["", "**필수 섹션이 빠졌다: %s**" % ", ".join(missing),
                   "원장에 기록했다. 다만 **보고서는 파이프라인을 실패시키지 "
                   "않는다.**"]
+    data = data or {}
+    if data.get("pilot_log"):
+        lines += ["", "`%s` 의 「런 기록」에 이 런의 절을 붙였다." % data["pilot_log"]]
+    if data.get("deferred_md"):
+        lines += ["`%s` 를 원장에서 다시 만들었다 (이월 미해결)." % data["deferred_md"]]
+    lines += ["", "**런 기록·PILOT-LOG·deferred.md 를 커밋하고 `pr --run-id %s` 를 "
+                  "다시 돌려 PR 을 갱신한다.** 닫힌 런의 PR 갱신에 런 기록이 diff 에 "
+                  "없으면 gap `run_record_missing` 이다 (ADR-H052)."
+              % s.get("run_id")]
     return "\n".join(lines)
 
 
@@ -4859,6 +4923,19 @@ def run_pr(root, run_id=None):
                                       join["reason"], "",
                                       "끝나기 전에 push 하지 않는다."]), None)
 
+    # 2-b. **닫힌 런의 PR 갱신**에는 런 기록이 실려야 한다 (ADR-H052 결정 4).
+    # 08 이 쓴 `runs/{run_id}.md` 가 base 이후 diff 에 없으면 gap — 06 의 첫
+    # push 때는 기록이 있을 수 없고 07 수리 뒤 재push(아직 done 아님)는 대상이
+    # 아니다. 그래서 `run_status: done` 일 때만 본다.
+    closed_run = s.get("run_status") == st.DONE
+    if closed_run:
+        import precheck as pc
+        rec_rel = "docs/harness/pipeline/runs/%s.md" % s["run_id"]
+        if rec_rel not in pc.changed_files(root, "pr", config):
+            st.demote(s, st.GRADES[1], "run_record_missing")
+            st.save(paths, s)
+            data["run_record_missing"] = rec_rel
+
     # 3. 원격 상태 — 없으면 §P3 3지선다, non-FF 면 에스컬레이션
     rs = pr_mod.remote_state(root, config, branch)
     data["remote"] = rs
@@ -4945,6 +5022,16 @@ def run_pr(root, run_id=None):
     st.append_event(paths, "pr_pushed", cmd="pr", phase="06-pr",
                     branch=branch, remote=rs["remote"])
     st.save(paths, s)
+    if closed_run:
+        # 닫힌 런의 갱신은 06 record 로 이어지지 않는다 — 전이는 이미 끝났다.
+        note = ["", "**닫힌 런의 PR 갱신이다.** 06 record 로 이어지지 않는다."]
+        if data.get("run_record_missing"):
+            note += ["", "**런 기록 `%s` 가 diff 에 없다** — gap "
+                         "`run_record_missing` 으로 등급이 내려갔다. 08 이 쓴 "
+                         "기록을 커밋하고 다시 돌린다 (ADR-H052)."
+                     % data["run_record_missing"]]
+        return st.envelope("pr", True, 0, s, data,
+                           _pr_render(req, paths, req_path) + "\n".join(note), None)
     return st.envelope("pr", True, 0, s, data, _pr_render(req, paths, req_path),
                        "python scripts/pipeline/cli.py record --phase 06 "
                        "--file {06_pr_result.json} --run-id %s" % s["run_id"])
