@@ -19,7 +19,8 @@ description: 세션 원장에 쌓인 사실을 docs/PIPELINE-LOG.md §5 에 한 
 cat docs/pipeline-ledger.jsonl
 ```
 
-- `"promoted": false` 인 줄이 후보다.
+- `"promoted": false` 인 줄이 후보다. 세션 시작 때 `미승격 세션 N개` 가 떴다면
+  그 N 이 이 절의 후보 수다 (`session_log.py --pending`).
 - 뒤에 `{"promote": …}` 줄이 있으면 그 줄이 가리키는 세션은 **이미 승격된 것**이다.
 - **원장이 비어 있거나 구멍이 있으면 `git log` 로 직접 읽는다.** 크래시나 창
   닫기로 훅이 안 돌았을 수 있고, 그때 아무것도 못 하면 이 커맨드는 쓸모가 없다.

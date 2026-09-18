@@ -383,14 +383,57 @@ def append(root, record):
     return path
 
 
+def pending(root):
+    """`/log` 가 아직 옮기지 않은 세션 수. 규칙은 `/log` 0절과 같다 —
+    `promoted: false` 인 줄 중 어느 `promote` 줄의 `sessions` 에도 없는 것.
+
+    `error` 줄은 옮길 사실이 없어 세지 않는다. 원장이 없거나 못 읽으면 0 —
+    이 함수는 알림용이라 "못 셌다" 를 따로 말하지 않는다.
+    """
+    path = Path(root) / LEDGER_REL
+    if not path.exists():
+        return 0
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0
+    rows, promoted = [], set()
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if "promote" in rec:
+            promoted.update((rec["promote"] or {}).get("sessions") or [])
+        elif "error" not in rec and not rec.get("promoted", False):
+            rows.append(rec)
+    return sum(1 for r in rows if r.get("session_id") not in promoted)
+
+
 # --------------------------------------------------------------------- 진입점
 
 def main(argv=None, stdin=None, root=None):
     runtime.force_utf8_output()
     parser = argparse.ArgumentParser(description="세션 종료 사실을 원장에 남긴다")
-    parser.add_argument("--from-hook", action="store_true",
-                        help="stdin 으로 훅 JSON 을 받는다")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--from-hook", action="store_true",
+                      help="stdin 으로 훅 JSON 을 받는다")
+    mode.add_argument("--pending", action="store_true",
+                      help="미승격 세션 수를 한 줄 알린다 (0 이면 침묵). 원장에 쓰지 않는다")
     args = parser.parse_args(argv)
+
+    if args.pending:
+        # SessionStart 훅. 0 이면 아무것도 찍지 않는다 — 정보 없는 줄이
+        # 세션마다 컨텍스트에 쌓이는 것을 막는다 (ADR-H007 과 같은 결).
+        n = pending(Path(root) if root else find_root({}))
+        if n:
+            sys.stdout.write("미승격 세션 %d개 — /log\n" % n)
+        return 0
 
     stream = sys.stdin if stdin is None else stdin
     hook_input = {}

@@ -3935,6 +3935,39 @@ class TestSessionLedger:
         sl.collect(repo, HOOK_IN)
         assert time.time() - started < 2.0
 
+    # --- `--pending` — 세션 시작 훅이 미승격 건수를 알린다 --------------------
+
+    def test_pending_excludes_sessions_named_in_promote_lines(self, repo):
+        """`/log` 0절과 같은 규칙 — promote 줄이 가리키는 세션은 이미 승격된 것."""
+        sl.append(repo, {"ts": "t1", "session_id": "A", "promoted": False})
+        sl.append(repo, {"ts": "t2", "session_id": "B", "promoted": False})
+        sl.append(repo, {"promote": {"ts": "t3", "sessions": ["A"], "entry": "M1"}})
+        assert sl.pending(repo) == 1
+
+    def test_pending_ignores_error_lines(self, repo):
+        """`error` 줄에는 옮길 사실이 없다."""
+        sl.append(repo, {"ts": "t1", "error": "수집 실패"})
+        sl.append(repo, {"ts": "t2", "session_id": "A", "promoted": False})
+        assert sl.pending(repo) == 1
+
+    def test_pending_is_zero_without_ledger(self, repo, capsys):
+        assert sl.pending(repo) == 0
+        assert sl.main(["--pending"], root=repo) == 0
+        assert capsys.readouterr().out == ""
+
+    def test_pending_mode_prints_one_line_and_writes_nothing(self, repo, capsys):
+        """0 이면 침묵, 1 이상이면 한 줄. 어느 쪽도 원장에 쓰지 않는다."""
+        sl.append(repo, {"ts": "t1", "session_id": "A", "promoted": False})
+        sl.append(repo, {"ts": "t2", "session_id": "B", "promoted": False})
+        assert sl.main(["--pending"], root=repo) == 0
+        out = capsys.readouterr().out
+        assert out == "미승격 세션 2개 — /log\n"
+        assert len(_ledger_lines(repo)) == 2
+
+    def test_pending_and_from_hook_are_exclusive(self, repo):
+        with pytest.raises(SystemExit):
+            sl.main(["--pending", "--from-hook"], root=repo)
+
 
 # ---------------------------------------------------------------------------
 # J. 규칙 원장 — findings.jsonl · taxonomy.json · staged 승격

@@ -1809,6 +1809,10 @@ FAIL 페이즈 파일
 
 **`docs/pipeline-ledger.jsonl` 은 안 만들었다** — `SessionEnd` 훅이 첫 세션에
 만든다. 매달린 참조가 아니라 아직 안 생긴 산출물이고, 둘을 같은 칸에 넣지 않는다.
+2026-09-18: 기능 커밋에 딸려 tracked 됐던 12줄을 인덱스에서 뺐다. 템플릿 로컬은
+`.git/info/exclude` 로 무시한다 — `.gitignore` 가 아닌 이유는 클론은 자기 원장을
+커밋해야 하기 때문이다. 같은 날 `SessionStart` 훅이 미승격 건수를 알린다
+(`session_log.py --pending`) — 0 이면 침묵한다.
 
 ---
 
