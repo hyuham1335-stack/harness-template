@@ -78,6 +78,13 @@ def _build_fixture(root: Path):
     cfg["adapter"] = "nextjs-ts"
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
                         encoding="utf-8")
+    # 어댑터는 픽스처에서 **미검증**이다 — 클론이 `verify-adapter` 로 실물을
+    # 올려도(ADR-H047) 여기 테스트가 그 값에 묶이지 않는다.
+    ad_path = root / "harness/adapters/nextjs-ts.json"
+    ad = json.loads(ad_path.read_text(encoding="utf-8"))
+    ad["verified"] = False
+    ad_path.write_text(json.dumps(ad, ensure_ascii=False, indent=2) + chr(10),
+                       encoding="utf-8")
     _write(root / "package.json", json.dumps(FIXTURE_PACKAGE_JSON, indent=2) + "\n")
     _write(root / "CLAUDE.md", "# fixture\n")
     for rel in FIXTURE_SOURCES:

@@ -128,6 +128,15 @@ def repo(tmp_path):
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
                         encoding="utf-8")
 
+    # 어댑터도 픽스처가 스스로 선언한다 — **미검증(`verified: false`)** 이다.
+    # 클론이 `verify-adapter` 로 실물을 `true` 로 올려도(ADR-H047) 여기서
+    # `adapter_unverified` 를 묻는 테스트가 그 실물에 묶이지 않는다.
+    ad_path = tmp_path / "harness" / "adapters" / "nextjs-ts.json"
+    ad = json.loads(ad_path.read_text(encoding="utf-8"))
+    ad["verified"] = False
+    ad_path.write_text(json.dumps(ad, ensure_ascii=False, indent=2) + chr(10),
+                       encoding="utf-8")
+
     # 캘리브레이션도 같다 — 실물은 영구히 미측정이고 픽스처는 잰 것이 있어야 한다.
     # 위 FIXTURE_CALIBRATION 주석을 본다 (ADR-H039 결정 2).
     (tmp_path / "harness" / "calibration.json").write_text(
