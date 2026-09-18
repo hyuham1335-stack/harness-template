@@ -2490,11 +2490,117 @@ class TestRecord03ContractUnitsZero:
                             lambda *a, **k: {"id": "compile", "state": "ran",
                                              "exit": 0, "sec": 0.1})
         run_id, paths, claims = self._enter_03(repo, request_file, CONTRACT_MD)
+        claims.write_text(json.dumps(_claims(rules_read=_rules_read(repo))),
+                          encoding="utf-8")
         env = cli.run_record(repo, "03", str(claims), run_id=run_id)
-        assert env["exit"] != 8 or "유닛" not in env["render"], env["render"]
+        assert env["exit"] != 8, env["render"]
 
 
-class TestInitAndNext:
+class TestRecord03RulesRead:
+    """[[ADR-H055]] — 워커의 규칙 읽기를 게이트가 묻는다.
+
+    `CLAUDE.md` 는 자동 주입되지 않고(ADR-H037) 03 의 「읽을 곳」이 가리키기만
+    한다. 파일럿 15런에서 역할 에이전트가 규칙 파일을 열었는지는 어디에도
+    기록이 없다. 제출의 `rules_read: [{path, sha256}]` 를 현재 해시와 대조한다 —
+    누락·불일치는 exit 8. **해시 일치는 "읽었다" 의 증명이 아니다.** 그러나
+    "열어 보지도 않고 지켰다고 보고" 는 막힌다.
+    """
+
+    def _enter(self, repo, request_file, monkeypatch):
+        monkeypatch.setattr(adapters, "run_stage",
+                            lambda *a, **k: {"id": "compile", "state": "ran",
+                                             "exit": 0, "sec": 0.1})
+        (repo / "docs").mkdir(exist_ok=True)
+        (repo / "docs" / "ARCHITECTURE.md").write_text("# 구조\n", encoding="utf-8")
+        (repo / "docs" / "harness").mkdir(exist_ok=True)
+        (repo / "docs" / "harness" / "DECISIONS.md").write_text("# 하위 — 대상 아님\n",
+                                                                encoding="utf-8")
+        return TestRecord03ContractUnitsZero()._enter_03(repo, request_file,
+                                                        CONTRACT_MD)
+
+    def _submit(self, repo, run_id, claims, payload):
+        claims.write_text(json.dumps(payload), encoding="utf-8")
+        return cli.run_record(repo, "03", str(claims), run_id=run_id)
+
+    def test_기대_목록은_지시_파일과_rules_dir_직속_md_다(self, repo):
+        (repo / "docs").mkdir(exist_ok=True)
+        (repo / "docs" / "PRD.md").write_text("# PRD\n", encoding="utf-8")
+        (repo / "docs" / "harness").mkdir(exist_ok=True)
+        (repo / "docs" / "harness" / "DECISIONS.md").write_text("x", encoding="utf-8")
+        config = harness._read_json(repo / harness.CONFIG_REL)
+        got = cli._rules_read_expected(repo, config)
+        assert set(got) == {"CLAUDE.md", "docs/PRD.md"}, got
+        assert got["CLAUDE.md"] == st._sha256_file(repo / "CLAUDE.md")
+
+    def test_없으면_exit_8_이고_경로만_알려준다(self, repo, request_file, phases, monkeypatch):
+        run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
+        env = self._submit(repo, run_id, claims, _claims())
+        assert env["exit"] == 8, env["render"]
+        assert "rules_read" in env["render"]
+        assert "CLAUDE.md" in env["render"] and "docs/ARCHITECTURE.md" in env["render"]
+        assert "docs/harness/DECISIONS.md" not in env["render"], "직속만이다"
+        sha = st._sha256_file(repo / "CLAUDE.md")
+        assert sha not in env["render"], "봉투가 답을 주면 안 열고도 맞춘다"
+        _p, s = st.load(repo, run_id)
+        assert st.phase_status(s, "03-implement") != "passed"
+        assert env["next_command"] and "record --phase 03" in env["next_command"]
+
+    def test_해시가_다르면_exit_8(self, repo, request_file, phases, monkeypatch):
+        run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
+        rr = _rules_read(repo)
+        rr[0]["sha256"] = "0" * 64
+        env = self._submit(repo, run_id, claims, _claims(rules_read=rr))
+        assert env["exit"] == 8, env["render"]
+        assert "불일치" in env["render"], env["render"]
+
+    def test_한_역할만_빠져도_exit_8(self, repo, request_file, phases, monkeypatch):
+        run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
+        payload = _claims(rules_read=_rules_read(repo))
+        payload["roles"][1].pop("rules_read")
+        env = self._submit(repo, run_id, claims, payload)
+        assert env["exit"] == 8, env["render"]
+        assert "test" in env["render"]
+
+    def test_일치하면_지난다(self, repo, request_file, phases, monkeypatch):
+        run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
+        env = self._submit(repo, run_id, claims, _claims(rules_read=_rules_read(repo)))
+        assert env["exit"] != 8, env["render"]
+        _p, s = st.load(repo, run_id)
+        assert st.phase_status(s, "03-implement") == "passed"
+
+    def test_런_중에_규칙이_바뀌면_재제출이다(self, repo, request_file, phases, monkeypatch):
+        """바뀐 규칙을 안 본 제출이다 — 그것이 의도다 (ADR-H055)."""
+        run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
+        rr = _rules_read(repo)
+        (repo / "CLAUDE.md").write_text("# 가드레일\n\n- 새 규칙\n", encoding="utf-8")
+        env = self._submit(repo, run_id, claims, _claims(rules_read=rr))
+        assert env["exit"] == 8, env["render"]
+        assert "CLAUDE.md" in env["render"]
+
+    def test_docs_레인의_역할_0명은_대상이_아니다(self, repo, request_file, phases,
+                                                monkeypatch):
+        run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
+        env = self._submit(repo, run_id, claims, {"schema": 1, "roles": []})
+        assert "rules_read" not in env["render"], env["render"]
+
+    def test_거부가_원장에_남는다(self, repo, request_file, phases, monkeypatch):
+        run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
+        self._submit(repo, run_id, claims, _claims())
+        got = [e for e in st.read_events(paths)
+               if e["kind"] == "check_fail" and e["data"].get("rules_read")]
+        assert got, "무엇이 빠졌는지가 원장에 있어야 한다"
+
+    def test_03_본문과_에이전트_정의가_같은_것을_말한다(self, repo):
+        p03 = (ROOT / "harness" / "phases" / "03-implement.md").read_text(encoding="utf-8")
+        assert "rules_read_sha" in p03 and "rules_read" in p03
+        assert "증명이 아니" in p03, "한계를 적는다 (결정 2)"
+        for name in ("impl-writer", "test-writer"):
+            text = (ROOT / ".claude" / "agents" / (name + ".md")).read_text(encoding="utf-8")
+            assert "rules_read" in text and "sha256" in text, name
+            assert "증명이 아니" in text, name
+
+
+
 
     def test_init_creates_a_run_and_next_renders_the_first_packet(self, repo, phases):
         req = repo / "_workspace" / "requests" / "x.md"
@@ -2540,12 +2646,24 @@ class TestInitAndNext:
 # F. clean_ownership — 소유 경계 · orphan
 # ---------------------------------------------------------------------------
 
-def _claims(impl=None, test=None):
-    return {"schema": 1, "roles": [
+def _claims(impl=None, test=None, rules_read=None):
+    """`rules_read` 는 [{path, sha256}] — 없으면 안 싣는다 (ADR-H055 이전 모양)."""
+    roles = [
         {"role": "impl", "agent": "impl-writer", "status": "ok",
          "claimed_files": impl or [], "contract_symbols_implemented": []},
         {"role": "test", "agent": "test-writer", "status": "ok",
-         "claimed_files": test or [], "contract_symbols_covered": []}]}
+         "claimed_files": test or [], "contract_symbols_covered": []}]
+    if rules_read is not None:
+        for r in roles:
+            r["rules_read"] = list(rules_read)
+    return {"schema": 1, "roles": roles}
+
+
+def _rules_read(repo):
+    """실물 규칙 파일의 현재 해시 — 워커가 냈어야 할 그대로."""
+    config = harness._read_json(repo / harness.CONFIG_REL)
+    return [{"path": p, "sha256": h}
+            for p, h in sorted(cli._rules_read_expected(repo, config).items())]
 
 
 @pytest.fixture

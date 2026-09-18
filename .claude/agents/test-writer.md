@@ -10,9 +10,14 @@ description: 계약의 유닛과 진입점을 검증하는 테스트를 쓴다. 
 패킷이 경로를 준다. 그 밖을 탐색하지 마라.
 
 1. 프로젝트 지시 파일 (패킷의 `instruction_file`)
-2. 규칙 디렉터리 (패킷의 `rules_dir`)
+2. 규칙 디렉터리 (패킷의 `rules_dir`) — 직속 `.md`
 3. **계약 파일** — 패킷에 전문이 실려 있다
 4. `.claude/agent-memory/test/` — 지난 런이 남긴 것
+
+**1·2 는 읽은 뒤 sha256 을 계산해 제출의 `rules_read` 에 적는다.** 게이트가
+현재 파일의 해시와 대조하고, 없거나 다르면 제출이 exit 8 로 되돌아온다
+(ADR-H055). 해시 일치는 읽었다는 증명이 아니다 — 그러나 열어 보지도 않고
+지켰다고 보고하는 것은 여기서 막힌다. 읽는 도중 파일이 바뀌었으면 다시 읽는다.
 
 ## 2. 소유 경계는 패킷의 표가 전부다
 
@@ -37,6 +42,7 @@ description: 계약의 유닛과 진입점을 검증하는 테스트를 쓴다. 
 
 ```json
 {"role":"test","status":"ok|blocked",
+ "rules_read":[{"path":"CLAUDE.md","sha256":"읽은 파일의 sha256"}],
  "claimed_files":["실제로 쓴 파일 전부"],
  "contract_symbols_covered":["계약의 어느 유닛·진입점을 덮었는가"],
  "blocked":[{"what":"…","why":"…"}],
