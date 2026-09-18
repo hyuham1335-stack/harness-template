@@ -37,6 +37,10 @@
 
 `docs/harness/`는 하네스 템플릿 자체의 문서다 (`ROADMAP.md` — 승격 로드맵, `DECISIONS.md` — `ADR-H` 결정 기록, `PILOT-LOG.md` — 런별 실측 기록). 프로젝트 작업 중에는 **읽기만 하고 고치지 않는다.**
 
+하네스 구조(`harness/phases/` 8페이즈 · `scripts/pipeline/` 실행기 · `.claude/agents/` 역할 · `.claude/skills/*-reviewer/` 리뷰어)와 진입점 `/feature` · `/log` 는 `README.md` 의 표가 단일 출처다. 여기 중복해서 적지 않는다.
+
+`docs/pipeline-ledger.jsonl` 은 세션 훅이 append 하는 원장이라 클론에서는 작업 트리에 늘 수정 상태로 보인다. 되돌리거나 stash 하지 말 것 — `/log` 가 읽는다.
+
 ## 스택 · 배포
 
 <!-- 채우는 법: 애플리케이션 스택 · 배포 대상 · 데이터 저장소 셋을 각각 한 줄로,
@@ -90,3 +94,6 @@ python scripts/pipeline/cli.py lint-phases    # 페이즈 파일 정합
 python scripts/harness.py calibrate           # 스테이지 1회 실측 → calibration.json
 python -m pytest scripts/                     # 하네스 자신의 테스트
 ```
+
+- `cli.py` 는 `--help` 가 없다. stdout 은 언제나 JSON 봉투 하나, 사람용 렌더는 stderr 다
+- 전체 pytest 는 6분쯤 걸린다. 개발 중에는 `python -m pytest scripts/test_pipeline.py -k <이름>` 으로 좁힌다
