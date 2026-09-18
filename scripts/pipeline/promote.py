@@ -160,6 +160,13 @@ def check_verdicts(root, verdicts, promotions=None):
             errors.append("%s: 알 수 없는 action %r (%s)"
                           % (rid, a, " · ".join(ACTIONS)))
             continue
+        if a == "skip" and not (v.get("rationale") or "").strip():
+            # **미룸에는 사유가 있다** (ADR-H051). 파일럿 changelog 13행이 전부
+            # skipped 인데 왜 미뤘는지 한 줄도 없었다 — 다음 런의 판정자가
+            # 같은 후보를 놓고 같은 고민을 처음부터 다시 한다.
+            errors.append("%s: action 이 skip 인데 rationale 이 비었다 — 왜 "
+                          "미루는지 한 줄이 필요하다. 다음 런의 판정자가 그것을 "
+                          "읽는다." % rid)
         if j == "duplicate" and a == "create":
             errors.append("%s: judgement 가 duplicate 인데 action 이 create 다 — "
                           "같은 규칙이 두 벌 생긴다. skip 또는 amend 만 허용된다."

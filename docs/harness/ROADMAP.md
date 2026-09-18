@@ -158,9 +158,9 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 | 8페이즈 01~08 실물 완주 | **검증됨** — 한 파일럿에서 파이프라인 런 8회 |
 | `doctor` 의 거부 8종 | **검증됨** — 일부러 깨뜨린 config 를 전부 거부한다 |
 | 스택 교체 시 코어 무변경 | **검증됨** — 어댑터를 갈아도 코어는 0줄이다 ([ADR-H038](DECISIONS.md)) |
-| **어댑터 `verified`** | **`false` 다.** 동봉 어댑터가 셋 다 `false` 이고, 그것이 정직한 값이다 |
-| **`calibration.json`** | **전부 미측정.** 첫 `calibrate` 가 채운다 |
-| **`findings.jsonl` · 승격 임계** | **표본 0.** `THRESHOLDS` 여섯 숫자는 아직 캘리브레이션되지 않았다 |
+| **어댑터 `verified`** | **`false` 다.** 동봉 어댑터가 셋 다 `false` 이고, 그것이 정직한 값이다. 2차 파일럿이 `nextjs-ts` 로 15런을 완주했지만 그 값은 파일럿 리포의 것이다 — 완주 런 수로 올리는 `verify-adapter` 는 [ADR-H047](DECISIONS.md) 이 결정했고 미구현이다 |
+| **`calibration.json`** | **템플릿은 영구 미측정** ([ADR-H039](DECISIONS.md)). 클론이 첫 `calibrate` 로 채우고, 그 뒤로는 `promote --flush` 가 런마다 `tests_ran_floor` 를 올린다 ([ADR-H047](DECISIONS.md)) — 2차 파일럿은 1회 측정값(14)이 652개 시점까지 고정돼 급감 감지가 꺼져 있었다 |
+| **`findings.jsonl` · 승격 임계** | **템플릿 표본 0.** 2차 파일럿 표본(15런 · 140행 · 판정 13회 전부 skip)은 [ADR-H051](DECISIONS.md) · [ADR-H054](DECISIONS.md) 에 근거로만 남겼다. `THRESHOLDS` 여섯 숫자는 아직 바꾸지 않는다 — 시한 뒤 skip 은 이제 gap 이다 |
 
 **어댑터 `verified: true` 를 기다리지 않기로 했다.** 승격 조건은 *"`attribution` 의
 실패 경로가 실물 러너 출력에서 돈다"* 인데, 파일럿에서 일곱 런 연속 자연 실패가 오지
@@ -188,7 +188,12 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
    `normal_min_chars` · `model_call_when_undecided` 와 `config.models` 의 슬롯별
    등급은 실측 없이 고른 초기값이다 ([ADR-H044](DECISIONS.md)). 첫 세 런의
    `00_triage.json` 과 `triage_miss` 이벤트가 검사한다 — miss 가 docs 예측에서만
-   나면 docs 규칙이 헐거운 것이고, 모델 호출이 매 런 나면 규칙이 너무 좁은 것이다
+   나면 docs 규칙이 헐거운 것이고, 모델 호출이 매 런 나면 규칙이 너무 좁은 것이다.
+   **2차 파일럿 15런의 값은 [ADR-H054](DECISIONS.md) 에 있다** — `small` 2런, `triage_miss` 0
+6. **파이프라인 우회를 어떻게 재는가.** 2차 파일럿은 마지막 Must 머지 뒤 1h25m 동안 PR 일곱
+   건을 파이프라인 없이 머지했다 — 1기능 평균 1h42m 인 파이프라인이 작은 수정에 비싸서다. 08 은
+   파이프라인 밖을 셀 수 없다. `fix` 레인 초안은 [ADR-H053](DECISIONS.md) 에 있고, 우회 자체는
+   클론 리포의 `git log --merges` 대비 `_workspace/runs/` 수로 대조하는 것이 지금 유일한 방법이다
 
 ---
 

@@ -215,8 +215,7 @@ def _gap_display(gap):
     이 절은 08 처럼 "어휘에 없다" 고 적지 않는다 — 완료 등급 옆 한 줄은
     빠르게 훑는 자리라 라벨이 없으면 코드만 남기는 쪽이 더 읽기 좋다.
     """
-    head = str(gap).split(":")[0]
-    label = report_mod.GAP_REASONS.get(head)
+    label = report_mod.gap_reason(gap)
     return "%s (%s)" % (gap, label) if label else gap
 
 

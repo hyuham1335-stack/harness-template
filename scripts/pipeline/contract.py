@@ -255,8 +255,31 @@ def _source_for_container(container, files):
     return suffix[0] if len(suffix) == 1 else (suffix[0] if suffix else None)
 
 
+_BRACE_PARAM = re.compile(r"\{(\w+)\}")
+
+
+def _param_variants(captured, styles):
+    """계약이 `{id}` 로 적은 경로 파라미터를 어댑터가 선언한 괄호 쌍(`[]` 등)으로
+    바꾼 후보들. 원문이 먼저다 — 계약이 이미 실제 폴더명을 썼으면 그대로 맞는다.
+
+    파일럿 ad59(FR-007) 는 계약에 API_SPEC 표기 `{id}` 를 그대로 써 resolver 가
+    `src/app/api/contents/{id}/…/route.ts` 를 찾다 `missing_entrypoint` critical
+    을 냈다 (ADR-H049). 변환 규칙은 스택 관례라 어댑터의 `param_styles` 가
+    선언하고 여기는 읽기만 한다 (ADR-H031).
+    """
+    out = [captured]
+    for style in styles or []:
+        if not isinstance(style, str) or len(style) != 2:
+            continue
+        alt = _BRACE_PARAM.sub(lambda m: style[0] + m.group(1) + style[1], captured)
+        if alt not in out:
+            out.append(alt)
+    return out
+
+
 def _source_for_entrypoint(adapter, ep, files):
     resolver = adapter.get("entrypoint_resolver") or {}
+    styles = resolver.get("param_styles") or []
     for entry in resolver.get("map") or []:
         route, target = entry.get("route"), entry.get("file")
         if not route or not target:
@@ -265,10 +288,24 @@ def _source_for_entrypoint(adapter, ep, files):
         m = rx.match(ep.get("path") or "")
         if not m:
             continue
-        candidate = target.replace("{p}", m.group("p"))
-        if candidate in files:
-            return candidate
+        for captured in _param_variants(m.group("p"), styles):
+            candidate = target.replace("{p}", captured)
+            if candidate in files:
+                return candidate
     return None
+
+
+def is_entrypoint_file(adapter, rel):
+    """이 파일이 어댑터 진입점 관례(`entrypoint_resolver.map[].file`)에 맞는가."""
+    resolver = adapter.get("entrypoint_resolver") or {}
+    for entry in resolver.get("map") or []:
+        target = entry.get("file")
+        if not target:
+            continue
+        rx = re.compile("^" + re.escape(target).replace(r"\{p\}", ".+") + "$")
+        if rx.match(rel or ""):
+            return True
+    return False
 
 
 # scoped 가 사실상 full 이 되는 지점. 넘으면 퇴화로 표기한다.

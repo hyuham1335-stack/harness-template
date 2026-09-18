@@ -139,7 +139,7 @@ python scripts/pipeline/cli.py contract-trace --run-id <id>
 |---|---|---|
 | 9 | 예산·브랜치·base | **사람에게 묻는다.** 자동으로 쪼개거나 리베이스하지 마라 |
 | 10 | 인프라 프로브 실패 | 멈춘다. 카운터는 소모되지 않았다 |
-| 8 (trace) | Critical 이 남았다 | 고치고 `gate --phase 04 --stage scoped` 후 다시 친다 |
+| 8 (trace) | Critical 이 남았다 | 고치고 `gate --phase 05 --stage loop` 후 다시 친다 (compile 포함 — scoped 단독은 타입 에러를 흘린다, ADR-H046) |
 
 그다음 **봉투가 준 리뷰어 목록을 그대로** 한 메시지 안에서 병렬 호출한다.
 

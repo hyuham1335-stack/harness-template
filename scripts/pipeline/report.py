@@ -45,6 +45,21 @@ GAP_REASONS = {
         "어댑터에 `baseline_cmd` 가 없어 lint 승격이 무엇을 막는지 재지 못했다",
     "triage_miss": ("00 의 레인 예측이 빗나가 앞 페이즈가 그 양보(콜론 뒤)를 "
                     "적용한 채 지나갔다 — 03·05 의 실물이 상향으로 재판정했다"),
+    # 아래 다섯은 gate.py 가 처음부터 만들던 사유인데 어휘에 없었다 — 파일럿
+    # 40dc 의 보고서가 `stage_no_selector:scoped` 를 "어휘에 없는 사유다" 로
+    # 적었다 (ADR-H050). 코어가 만드는 사유는 전부 여기 있어야 하고, 그것을
+    # `TestGapVocabulary` 가 코드를 스캔해 강제한다.
+    "stage_no_selector": ("계약에서 테스트 선택자를 하나도 못 뽑아 scoped 를 "
+                          "건너뛰었다 — 계약의 `## 유닛` 이 비었거나 형식이 "
+                          "다르다. 전체 회귀로 낙하시키지 않았다"),
+    "scoped_degenerate": ("scoped 선택자가 사실상 전체 회귀다 — 절감이 없는데 "
+                          "\"scoped 통과\" 로 적히는 것을 막는다"),
+    "uncalibrated_run": "캘리브레이션 파일이 없다 — 타임아웃·테스트 수 하한을 모른다",
+    "test_report_missing": ("테스트 리포트를 한 건도 찾지 못했다 — 리포터 "
+                            "경로 설정 오류일 수 있어 인프라로 다룬다"),
+    "tests_ran_zero": "테스트가 0개 돌았다 — 빈 스위트의 초록불은 통과가 아니다",
+    "promotion_overdue": ("승격 판정 시한(ADR-H033)이 지났는데 이 런이 후보를 "
+                          "skip 으로 닫았다 — 미룸이 등급을 치른다 (ADR-H051)"),
 }
 
 
@@ -76,6 +91,25 @@ def _ledger_axis_lines(data):
     return out
 
 
+def _reporter_lines(data):
+    """리뷰어별 해소 표 (ADR-H050). 리뷰어 품질의 첫 실측이고 승격과 무관하다."""
+    rows = (data.get("ledger") or {}).get("by_reporter") or []
+    if not rows:
+        return []
+    out = ["", "**리뷰어별 해소** (원장 누적 — `false_positive` 는 메인이 틀렸다고 "
+               "확인한 지적이고 승격 집계에서 빠진다):", "",
+           "| 리뷰어 | 관측 | repaired | deferred | false_positive | warn_only |",
+           "|---|---|---|---|---|---|"]
+    out += ["| `%s` | %s | %s | %s | %s | %s |"
+            % (b.get("reporter"), b.get("total"), b.get("repaired", 0),
+               b.get("deferred", 0), b.get("false_positive", 0),
+               b.get("warn_only", 0))
+            for b in rows[:8]]
+    out += ["", "`deferred` 가 크면 미룬 것이고 `false_positive` 가 크면 그 "
+                "리뷰어의 체크리스트를 고칠 때다 — 둘은 다른 처방이다."]
+    return out
+
+
 def _verdict_deadline_lines(data):
     """승격 임계·축을 **언제** 판정하는지 (ADR-H033).
 
@@ -98,10 +132,20 @@ def _verdict_deadline_lines(data):
             "때 고르는 것이 아니다."]
 
 
+def gap_reason(gap):
+    """어휘 조회의 단일 출처 — **전체 키가 먼저, 머리가 그다음**이다.
+
+    `cross_verify:fallback` 처럼 콜론까지가 키인 항목이 있는데 머리만 찾으면
+    "어휘에 없는 사유" 가 된다. 08 보고서와 06 PR 본문이 같은 함수를 쓴다.
+    없으면 None.
+    """
+    gap = str(gap)
+    return GAP_REASONS.get(gap) or GAP_REASONS.get(gap.split(":")[0])
+
+
 def explain_gap(gap):
     """gap 하나를 사람이 읽는 한 줄로. 모르는 것은 **모른다고 적는다.**"""
-    head = str(gap).split(":")[0]
-    known = GAP_REASONS.get(head)
+    known = gap_reason(gap)
     if known:
         return "`%s` — %s" % (gap, known)
     return "`%s` — 어휘에 없는 사유다 (보고서가 설명하지 못한다)" % gap
@@ -303,6 +347,7 @@ def build(state, data, calibration, promotions, timing=None):
                                             p.get("reason") or "사유 없음")
                   for p in other]
     lines += _ledger_axis_lines(data)
+    lines += _reporter_lines(data)
     lines += _verdict_deadline_lines(data)
     lines.append("")
 

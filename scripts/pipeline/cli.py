@@ -1183,7 +1183,25 @@ def run_next(root, run_id=None):
             decided.setdefault("data", {})["prescan"] = _prescan(root, loaded, ctx, s)
             return decided
     if pid == "05-code-review":
-        _plan_05_review(root, paths, s, ctx)
+        node05 = _plan_05_review(root, paths, s, ctx)
+        refused = node05.get("routing_refused")
+        if refused:
+            node05.pop("routing_refused", None)
+            files = refused["pr_scope_changed"]
+            return st.envelope(
+                "next", False, 3, s,
+                {"pr_scope_changed": files},
+                "## 05 라우팅 대상이 워킹트리에 없다\n\n"
+                "리뷰어 라우팅은 **미커밋 diff** 를 본다(ADR-H028). 지금 워킹트리는 "
+                "깨끗한데 base 이후 커밋에는 변경이 %d개 파일 있다 — 05 통과 **전에** "
+                "커밋했다.\n\n커밋 자리는 `record --phase 05` 통과 직후 · "
+                "`precheck --phase 06` 이전 한 곳뿐이다. 아직 push 전이면 "
+                "`git reset --mixed HEAD~1` 로 커밋만 되돌리고(브랜치는 유지된다) "
+                "`next` 를 다시 친다. `review05` 는 쓰지 않았다 — 되돌리면 gap 없이 "
+                "정상 라우팅된다 (ADR-H046).\n\n"
+                "커밋된 변경:\n%s"
+                % (len(files), "\n".join("- `%s`" % f for f in files[:20])),
+                "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
     # **지시를 낸 자리에서 센다** (M26). `next` 는 같은 페이즈에서 여러 번
     # 불릴 수 있으므로 키로 멱등을 만든다.
     _t, _m, exhausted = _instruct(
@@ -1463,11 +1481,31 @@ def _plan_05_review(root, paths, s, ctx):
     node["inline"] = review_mod.inline_budget(ctx["config"],
                                               _diff_text(root, changed))
     if not node["planned"]:
+        # **커밋만 있고 워킹트리가 깨끗하면 라우팅 실패가 아니라 절차 오류다**
+        # (ADR-H046). 파일럿 40dc 가 05 통과 전에 커밋해 여기서 0명이 되고
+        # `review05:failed` 가 append-only 로 박혔다 — 되돌려 4/4 리뷰를
+        # 정상 수행했는데도 gap 은 남았다. 라우팅 scope 는 그대로 worktree 다
+        # (ADR-H028); 다만 `pr` scope 에 변경이 있으면 failed 를 쓰지 않고
+        # 호출자(`run_next`)가 exit 3 을 낸다.
+        # **커밋에만 있는 변경** = pr scope − worktree scope. 워킹트리의 미커밋
+        # 파일(리뷰어 glob 밖이라 라우팅 0 이 된 것)은 여기서 상쇄된다.
+        committed = sorted(set(pc.changed_files(root, "pr", ctx["config"]))
+                           - set(changed))
+        if committed:
+            node["routing_refused"] = {"pr_scope_changed": committed}
+            return node
         # **여기서 확정하지 않으면 아무도 확정하지 않는다.** 리뷰어가 0명이면
         # 제출도 0건이고 `_judge_05` 가 아예 안 불린다 — 05 가 조용히 지나간다.
         # 봉투는 이 사실을 이미 산문으로 말하고 있었고, 그것을 쓰는 코드가
         # 없다는 것이 G-4 의 절반이었다.
         _write_review05(s, node, planned=[], ok=0, merged=[], slot={})
+    node.pop("routing_refused", None)
+    # **지시 시점의 지문을 라운드에 남긴다** (ADR-H046). `record` 가 이것과
+    # 현재 지문을 대조해 "리뷰 뒤에 코드를 고치고 나서 record" 하는 순서를
+    # 막는다 — 그 순서는 `review_repair` 를 헛되이 태워 이미 해소된 지적으로
+    # 에스컬레이션을 냈다 (파일럿 세션 a3decd93).
+    r = ((s.get("counters") or {}).get("review_repair") or {}).get("used", 0) + 1
+    node.setdefault("dispatched_fp", {})[str(r)] = st.fingerprint(root, ctx["config"])
     return node
 
 
@@ -1569,6 +1607,10 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
         "reviewers_failed": sorted({c for r in seen for c in r["failed"]}),
         "mode": node.get("mode") or "fanout",
         "major": sum(1 for f in merged if f.get("severity") in verdict.BLOCKING),
+        # **0 은 신호다** (ADR-H050). 07 이 "05 가 ok 이고 Major 가 없다" 만 보고
+        # 생략하면 리뷰어 넷이 전부 0건을 낸 런(파일럿 9729 · 3305)이 자동
+        # 게이트 말고는 아무 눈도 안 받는다. 그래서 총계를 따로 남긴다.
+        "findings_total": len(merged),
         "need_more_context": _dedup_ordered(
             n for v in subs for n in (v.get("need_more_context") or [])),
         "dropped_by_enforcement": sum(v.get("dropped_by_enforcement") or 0
@@ -2771,6 +2813,29 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
         return st.envelope("record", False, 8, s, {}, "JSON 을 읽지 못했다: %s" % exc, None)
 
     _refresh_profile(root, paths, s, ctx)
+    zero = _contract_units_zero(root, s, ctx)
+    if zero is not None:
+        # **계약 파일이 있는데 유닛이 0 이면 형식 문제다** (ADR-H049). `requires`
+        # 는 크기와 절 제목만 본다 — 파일럿 40dc 의 계약이 `## 유닛` 을 `### `
+        # 헤딩으로 적어 units=0 으로 게이트를 지났고, 그 결과 계약에 서술된
+        # 심볼이 전부 `out_of_contract` 로 잡히고 scoped 는 `no_selector` 로
+        # 스킵됐다. 여기서 막으면 그 둘이 뒤에서 안 난다.
+        st.set_phase_status(s, "03-implement", "failed")
+        st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
+                        contract_units=0)
+        st.save(paths, s)
+        return st.envelope(
+            "record", False, 8, s, {"contract": zero},
+            "## 계약의 유닛이 0 이다\n\n계약 파일은 있는데 `%s` 절에서 파서가 "
+            "유닛을 하나도 못 읽었다. 유닛은 **최상위 `- ` 불릿 하나에 하나**이고 "
+            "형식은 `harness/templates/contract.md` 의 예시 그대로다 — "
+            "`- \\`컨테이너 · 심볼(...)\\``. `### ` 헤딩·들여쓴 불릿·산문은 유닛이 "
+            "아니다. 진입점 경로는 실제 디렉터리명으로 적는다(어댑터가 "
+            "`param_styles` 를 선언하면 `{id}` 도 받는다).\n\n버려진 줄 %d개:\n%s"
+            % (zero["section"], len(zero["dropped"]),
+               "\n".join("- `%s` — %s" % (d.get("raw"), d.get("reason"))
+                         for d in zero["dropped"][:10]) or "- (없음 — 불릿이 한 줄도 없다)"),
+            _same_command(s, "03"))
     if not _roles_for(phase_item["front"], ctx, s):
         # 역할 0명은 이 페이즈가 적용한 양보다 — miss 검사보다 **먼저** 적어야
         # 빗나갔을 때 gap 이름에 들어간다.
@@ -2825,6 +2890,24 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
     st.set_phase_status(s, "03-implement", "passed",
                         claims=file.name)
     return _advance_to_next(root, paths, s, phase_item, ctx)
+
+
+def _contract_units_zero(root, s, ctx):
+    """계약 파일이 있고 `no_contract` 가 아닌데 유닛이 0 이면 그 사실. 아니면 None."""
+    import contract as contract_mod
+
+    if ((s.get("contract") or {}).get("mode")) == "no_contract":
+        return None
+    rel = resolve("${run.contract_file}", ctx)
+    full = Path(root) / rel
+    if not full.exists():
+        return None
+    parsed = contract_mod.parse(full.read_text(encoding="utf-8"), ctx["config"])
+    if parsed.get("units"):
+        return None
+    sections = (ctx["config"].get("contract") or {}).get("sections") or {}
+    return {"units": 0, "path": rel, "section": sections.get("units"),
+            "dropped": parsed.get("dropped") or []}
 
 
 def _refresh_profile(root, paths, s, ctx):
@@ -2957,6 +3040,23 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
     guard = _planned_guard(s, node, reviewer, round_)
     if guard is not None:
         return guard
+    stale = _dispatch_fingerprint_stale(root, ctx, node, round_)
+    if stale is not None:
+        return st.envelope(
+            "record", False, 3, s, {"round": round_, "dispatched_fp": stale},
+            "## 리뷰 대상 코드가 리뷰 뒤에 바뀌었다\n\n"
+            "라운드 %d 의 리뷰어를 지시한 시점(`next`)의 지문과 지금 소유 범위 "
+            "파일의 지문이 다르다. 이 제출은 **바뀌기 전 코드**를 본 리뷰다.\n\n"
+            "- 지적을 이미 고쳤다면: 순서가 틀렸다. `review_repair` 는 record "
+            "시점에 소모되므로, 코드를 먼저 고치고 record 하면 이미 해소된 지적에 "
+            "카운터가 탄다 (ADR-H046). 고친 것을 되돌릴 필요는 없다 — 리뷰 결과를 "
+            "그대로 두고 **다음 라운드**로 델타 재리뷰를 받는다: 이 파일을 지우지 "
+            "말고, `next --run-id %s` 를 다시 쳐 라운드 %d 의 지시(지문 포함)를 "
+            "갱신한 뒤 record 한다.\n"
+            "- 리뷰 전에 선수리(contract-trace Critical)를 했다면: `next` 를 다시 "
+            "쳐 리뷰 입력(인라인 diff·지문)을 갱신하고 그 diff 로 리뷰어를 부른다."
+            % (round_, s["run_id"], round_),
+            "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
     planned = _planned_for_round(node, round_)
 
     rounds = node.setdefault("rounds", {})
@@ -3011,6 +3111,21 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
 # 규약 위반 제출을 몇 번까지 되돌려 보내는가. 페이즈 파일의 "재제출 1회 →
 # 2회 실패 시 스킵 + degrade" 를 숫자로 옮긴 것이다.
 REVIEW_SUBMIT_TRIES = 2
+
+
+def _dispatch_fingerprint_stale(root, ctx, node, round_):
+    """지시 시점 지문 vs 지금. 다르면 저장된 지문을, 같거나 없으면 None.
+
+    옛 상태(지문을 안 남긴 런)는 검사하지 않는다 — 없는 것을 stale 로 읽으면
+    이 변경 전 런이 전부 거부된다.
+    """
+    saved = (node.get("dispatched_fp") or {}).get(str(round_))
+    if not saved:
+        return None
+    fresh = st.fingerprint(root, ctx["config"])
+    if st.fingerprint_matches(saved, fresh):
+        return None
+    return saved
 
 
 def _planned_for_round(node, round_):
@@ -3577,10 +3692,22 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
         if report.get("tests"):
             s["tests"] = report["tests"]
             st.save(paths, s)
-        stage = report["stages"][0] if report["stages"] else {}
-        ok = stage.get("state") != "ran" or stage.get("exit") == 0
-        return st.envelope("gate", ok, 0 if ok else 4, s, {"stage": stage},
-                           _stage_render(stage), None)
+        stages = report["stages"]
+        if not stages:
+            # 예전에는 `{}` 가 "ran 이 아니다" 로 읽혀 **exit 0** 이었다 —
+            # 오타 난 스테이지 이름이 초록불로 지나가는 경로다.
+            return st.envelope("gate", False, 2, s, {"stage": {}, "stages": []},
+                               "`--stage %s` 에 해당하는 스테이지가 %s 의 선언에 "
+                               "없다. `loop` · 쉼표 목록 · 단일 id 중 하나다."
+                               % (only_stage, pid), None)
+        failed = [x for x in stages
+                  if x.get("state") == "ran" and x.get("exit") != 0]
+        ok = not failed
+        # `stage` 는 옛 소비자용 단수 키 — 실패한 첫 스테이지, 없으면 마지막.
+        stage = failed[0] if failed else stages[-1]
+        return st.envelope("gate", ok, 0 if ok else 4, s,
+                           {"stage": stage, "stages": stages},
+                           "\n".join(_stage_render(x) for x in stages), None)
 
     _write_json(paths.run_dir / "04_gate_report.json", report)
 
@@ -4151,7 +4278,8 @@ def run_report(root, out=None, run_id=None):
     try:
         got = ledger_mod.stage_promotions(root)
         data["ledger"] = {"by_category": got["by_category"],
-                          "verdict_deadline": got["verdict_deadline"]}
+                          "verdict_deadline": got["verdict_deadline"],
+                          "by_reporter": ledger_mod.by_reporter(root)}
     except (OSError, ValueError, KeyError):
         pass
     # 소요는 `events.jsonl` 의 유도값이고, 08 시점에 그 파일은 이미 완결이다
@@ -4359,13 +4487,40 @@ def run_promote(root, scan=False, stage=False, apply=False, flush=False,
     scanned = pm.scan(root)
 
     if flush:
+        import ledger as ledger_mod
+
         promos = s.setdefault("promotions", [])
         n = pm.flush(promos)
+        # **시한이 지난 뒤의 미룸은 등급이 치른다** (ADR-H051). 시한은 표시로만
+        # 있었고(ADR-H033) 파일럿 40dc 는 「12 / 9 — 판정할 때다」 를 찍은 채
+        # 후보 셋을 전부 skip 했다. 여기는 런당 한 번, 승격이 종결되는 자리다.
+        overdue = bool(ledger_mod.verdict_deadline(root).get("due")) and any(
+            p.get("status") == "skipped" for p in promos)
+        if overdue:
+            st.demote(s, st.GRADES[1], "promotion_overdue")
+        # 런당 한 번 도는 자리 — 테스트 수 하한을 이 런의 전체 회귀로 올린다
+        # (ADR-H047). `state.tests.ran` 은 04/05 의 `full` 이 테스트 리포트에서 셌다.
+        config, _adapter, _cal = adapters.load(root)
+        floor = adapters.raise_tests_floor(
+            root, config, (s.get("tests") or {}).get("ran"), s["run_id"])
         st.save(paths, s)
+        note = ""
+        if floor:
+            note = ("\n\n테스트 수 하한을 %s → %d 로 올렸다 (`calibration.derived."
+                    "tests_ran_floor`, 이 런의 전체 회귀 %d개 × %.1f)."
+                    % (floor["from"], floor["to"], s["tests"]["ran"],
+                       harness.TESTS_FLOOR_RATIO))
         return st.envelope("promote", True, 0, s,
-                           {"flushed": n, "promotions": promos},
+                           {"flushed": n, "promotions": promos,
+                            "tests_ran_floor": floor,
+                            "promotion_overdue": overdue},
                            "잔여 승격 %d 건을 `skipped` 로 종결했다 — 임계가 다시 "
-                           "충족되면 다음 런에서 재승격 후보가 된다." % n, None)
+                           "충족되면 다음 런에서 재승격 후보가 된다." % n
+                           + ("\n\n**승격 판정 시한이 지났는데 후보를 미뤘다** — gap "
+                              "`promotion_overdue` 로 등급이 내려간다 (ADR-H051). "
+                              "다음 런에서는 판정(`create`/`amend`)하거나 임계를 "
+                              "고친다." if overdue else "")
+                           + note, None)
 
     if scan or stage:
         # **덮어쓰지 않고 병합한다** (G-3). 07 의 절차는 `--scan` → 판정 →

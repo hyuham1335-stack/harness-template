@@ -204,6 +204,16 @@ def decide(state, external, config, audit=False):
         effort = "low"
         reasons.append("04·05 에서 수리가 있었다 — 고친 코드는 두 번째 눈을 "
                        "받는다 (ADR-H043).")
+    elif r05.get("findings_total") == 0:
+        # **0 은 깨끗함의 증거가 아니다** (ADR-H050). 파일럿 9729 · 3305 는
+        # 리뷰어 넷이 전부 0건을 냈고 07 도 생략돼 자동 게이트 말고는 아무
+        # 눈도 안 받았다. "봤는데 없었다" 와 "보지 않았다" 를 기계가 못
+        # 가르므로 한 번은 돈다. 관측기 결손이 아니라 정책이라 gap 은 아니다.
+        # 키가 없는 옛 상태(`None`)는 이 분기에 오지 않는다.
+        effort = "low"
+        reasons.append("05 의 지적이 0건이다 — 0 은 \"봤는데 없었다\" 와 "
+                       "\"보지 않았다\" 를 가르지 못한다. 내장 리뷰를 low 로 "
+                       "한 번 돌린다 (ADR-H050).")
     else:
         skip, effort, skip_reason = True, "skipped", SKIP_CLEAN_05
         reasons.append("05 가 ok 이고 Major 가 없고 04·05 에 수리가 없었다 — "
