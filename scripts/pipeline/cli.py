@@ -2836,6 +2836,29 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
                "\n".join("- `%s` — %s" % (d.get("raw"), d.get("reason"))
                          for d in zero["dropped"][:10]) or "- (없음 — 불릿이 한 줄도 없다)"),
             _same_command(s, "03"))
+    bad_rules = _check_rules_read(claims, _rules_read_expected(root, ctx["config"]))
+    if bad_rules:
+        # **워커의 규칙 읽기를 게이트가 묻는다** (ADR-H055). `CLAUDE.md` 는
+        # 자동 주입되지 않고 「읽을 곳」이 가리키기만 한다 — 열었는지는 아무
+        # 기록도 없었다. 해시 일치는 "읽었다" 의 증명이 아니지만 "열어 보지도
+        # 않고 지켰다고 보고" 는 여기서 막힌다. 봉투에는 **경로와 상태만**
+        # 싣는다 — 해시를 주면 안 열고도 맞춘다.
+        st.set_phase_status(s, "03-implement", "failed")
+        st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
+                        rules_read=[{"role": r, "path": p, "status": why}
+                                    for r, p, why in bad_rules])
+        st.save(paths, s)
+        return st.envelope(
+            "record", False, 8, s,
+            {"rules_read": [{"role": r, "path": p, "status": why}
+                            for r, p, why in bad_rules]},
+            "## 규칙 읽기 증명이 없다 — `rules_read`\n\n각 역할의 제출에 "
+            "`rules_read: [{path, sha256}]` 가 있어야 하고, 아래 파일 전부의 "
+            "**현재** sha256 과 같아야 한다 (ADR-H055). 해시는 워커가 파일을 읽어 "
+            "직접 계산한다 — 봉투는 답을 주지 않는다.\n\n%s\n\n규칙 파일이 런 "
+            "중에 바뀌었으면 바뀐 것을 안 본 제출이다 — 다시 읽고 다시 낸다."
+            % "\n".join("- `%s` · `%s` — %s" % (r, p, why) for r, p, why in bad_rules),
+            _same_command(s, "03"))
     if not _roles_for(phase_item["front"], ctx, s):
         # 역할 0명은 이 페이즈가 적용한 양보다 — miss 검사보다 **먼저** 적어야
         # 빗나갔을 때 gap 이름에 들어간다.
@@ -2890,6 +2913,52 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
     st.set_phase_status(s, "03-implement", "passed",
                         claims=file.name)
     return _advance_to_next(root, paths, s, phase_item, ctx)
+
+
+def _rules_read_expected(root, config):
+    """워커가 읽었어야 할 규칙 파일 → 현재 sha256 (ADR-H055).
+
+    `config.project.instruction_file` 과 `rules_dir` **직속** `*.md` 다. 재귀가
+    아니다 — `docs/harness/**` 는 ADR 2600줄·원장·런 보고서이고 그것을 읽으라는
+    뜻이 아니다. 없는 파일은 항목을 만들지 않는다.
+    """
+    root = Path(root)
+    proj = config.get("project") or {}
+    out = {}
+    inst = proj.get("instruction_file")
+    if inst:
+        sha = st._sha256_file(root / inst)
+        if sha:
+            out[Path(inst).as_posix()] = sha
+    rules_dir = proj.get("rules_dir")
+    if rules_dir and (root / rules_dir).is_dir():
+        for p in sorted((root / rules_dir).glob("*.md")):
+            sha = st._sha256_file(p)
+            if sha:
+                out[p.relative_to(root).as_posix()] = sha
+    return out
+
+
+def _check_rules_read(claims, expected):
+    """[(role, path, 상태)] — 비어 있으면 통과. 역할 0명(docs 레인)은 대상이 없다."""
+    bad = []
+    for role in (claims or {}).get("roles") or []:
+        name = role.get("role") or role.get("agent") or "?"
+        got = role.get("rules_read")
+        if not isinstance(got, list):
+            for p in sorted(expected):
+                bad.append((name, p, "rules_read 없음"))
+            continue
+        seen = {}
+        for item in got:
+            if isinstance(item, dict) and item.get("path"):
+                seen[str(item["path"]).replace("\\", "/")] = item.get("sha256")
+        for p in sorted(expected):
+            if p not in seen:
+                bad.append((name, p, "누락"))
+            elif seen[p] != expected[p]:
+                bad.append((name, p, "불일치 — 지금 파일과 해시가 다르다"))
+    return bad
 
 
 def _contract_units_zero(root, s, ctx):
