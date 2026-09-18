@@ -2281,7 +2281,7 @@ compile 만큼(파일럿 실측 9~17초) 느려진다 — 그 시간이 배포 �
 
 ### ADR-H047: 하한과 캘리브레이션은 런이 갱신한다
 
-**날짜**: 2026-09-18 · **상태**: 제안됨 · **구현 상태**: 결정 1 구현됨 · 결정 2·3 미구현
+**날짜**: 2026-09-18 · **상태**: 제안됨 · **구현 상태**: 구현됨 (결정 1 은 회고 브랜치, 결정 2·3 은 2026-09-18 후속 — `precheck.CALIBRATION_STALE_RUNS = 5` · `harness.ADAPTER_VERIFY_MIN_RUNS = 3`)
 
 **맥락**: `harness/calibration.json` 은 2026-09-13 18:44 에 **한 번** 측정됐고(`full` 16개 테스트 →
 `derived.tests_ran_floor: 14`), 그 뒤 15런 동안 테스트가 113 → 652 개로 늘었는데 하한은 14 에 못
@@ -2298,10 +2298,10 @@ compile 만큼(파일럿 실측 9~17초) 느려진다 — 그 시간이 배포 �
    `derived.tests_ran_source: {run_id, ran}` 을 남긴다.** 내리지는 않는다 — 급감을 잡는 값이다.
    `TESTS_FLOOR_RATIO`(0.9) 는 `calibrate` 와 같은 상수다.
 2. **`calibration_stale` gap.** `measured_at` 이후 완주 런이 N(기본 5) 이상이면 `precheck` 가 gap 을
-   남기고 봉투가 재측정을 권한다. 등급은 내리지 않는다(표시다). — *미구현*
+   남기고 봉투가 재측정을 권한다. 등급은 내리지 않는다(표시다) — `report.NON_DEMOTING_GAPS`.
 3. **`harness.py verify-adapter`.** 완주 런 ≥ 3 이고 그 런들이 01~08 을 전부 `passed` 로 지났으면
    어댑터 `verified` 를 `true` 로 올린다. ROADMAP §6 의 "일부러 실패를 만들지 않는다" 와 충돌하지
-   않는다 — 실패를 만든 것이 아니라 **완주를 셌다**. — *미구현*
+   않는다 — 실패를 만든 것이 아니라 **완주를 셌다**. `skipped` 는 세지 않고 다른 어댑터의 런도 세지 않는다. 근거는 어댑터 `_verified_note` 와 `calibration.adapter_verified_source` 에 굳힌다(`_workspace/` 는 로컬 자료라서).
 
 **트레이드오프**: 결정 1 은 하네스가 `harness/calibration.json` 을 런 중에 **쓴다**는 뜻이다 —
 그 파일이 PR diff 에 들어간다. 그것이 의도다: 하한이 올라간 사실이 리뷰 가능한 변경이 된다.
@@ -2315,7 +2315,7 @@ compile 만큼(파일럿 실측 9~17초) 느려진다 — 그 시간이 배포 �
 
 ### ADR-H048: 카운터 상한은 강제되고, 재상정 승격은 지급이다
 
-**날짜**: 2026-09-18 · **상태**: 제안됨 · **구현 상태**: 미구현
+**날짜**: 2026-09-18 · **상태**: 제안됨 · **구현 상태**: 구현됨 (2026-09-18 — 02 `loop.max` 는 1 → 2 로 뜻이 "왕복 수" 에서 "Critical 제출 상한" 으로 바뀌었다. 동작은 같다: 두 번째 Critical 에서 멈춘다)
 
 **맥락**: (1) `3b43`(FR-004 수리 런)의 `state.json` 은 `counters.xverify_return.used = 2`, `max = 1`
 이다 — 상한 1 인 카운터가 2 까지 올라간 채 기록됐다. `counter_inc` 는 `exceeded` 를 돌려주는데 02

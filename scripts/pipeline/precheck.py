@@ -36,7 +36,14 @@ import adapters  # noqa: E402
 SCOPES = ("pr", "worktree")
 
 
-def run(root, scope="pr", changed=None, config=None, adapter=None):
+# 캘리브레이션 측정 뒤 이만큼 완주 런이 쌓이면 재측정을 권한다 (ADR-H047 결정 2).
+# 미검증 초기값이다 — 2차 파일럿은 1회 측정 뒤 15런을 돌았고 그동안 테스트가
+# 113 → 652 개로 늘었다. 재본 뒤 옮긴다 (ADR-H007).
+CALIBRATION_STALE_RUNS = 5
+
+
+def run(root, scope="pr", changed=None, config=None, adapter=None,
+        calibration=None):
     """반환: {"exit", "checks":[...], "budget":{...}, "classification", ...}
 
     `classification` 은 실패 3분류의 어휘다 — `policy` / `infra` / None.
@@ -54,7 +61,7 @@ def run(root, scope="pr", changed=None, config=None, adapter=None):
     if scope not in SCOPES:
         raise ValueError("알 수 없는 scope: %r (%s)" % (scope, ", ".join(SCOPES)))
     if config is None or adapter is None:
-        config, adapter, _cal = adapters.load(root)
+        config, adapter, calibration = adapters.load(root)
 
     checks = []
     if changed is None:
@@ -64,6 +71,7 @@ def run(root, scope="pr", changed=None, config=None, adapter=None):
     _check_branch(root, config, checks)
     _check_divergence(root, config, checks)
     infra, gaps = _check_infra(adapter, changed, checks)
+    _check_calibration_stale(root, calibration, checks, gaps)
 
     policy_failed = [c for c in checks if not c["ok"] and c["kind"] == "policy"]
     if infra:
@@ -271,6 +279,33 @@ def _check_infra(adapter, changed, checks):
             failures.append({"name": probe.get("name"), "kind": probe.get("kind"),
                              "detail": detail})
     return failures, gaps
+
+
+def _check_calibration_stale(root, calibration, checks, gaps):
+    """`measured_at` 이후 완주 런이 `CALIBRATION_STALE_RUNS` 이상이면 gap.
+
+    **표시다 — 등급은 내리지 않는다.** 재측정은 사람이 하는 일이고, 그것을
+    안 했다고 이 런의 코드가 덜 검증된 것은 아니다. 다만 게이트의 타임아웃·
+    테스트 수 하한이 옛 실측에서 유도된 것이라는 사실은 남아야 한다.
+    `measured_at` 이 없으면(템플릿 자신 · ADR-H039) 검사하지 않는다.
+    """
+    measured_at = (calibration or {}).get("measured_at")
+    if not measured_at:
+        return
+    since = [s for s in harness.completed_runs(root)
+             if (s.get("closed_at") or "") > measured_at]
+    n = len(since)
+    if n < CALIBRATION_STALE_RUNS:
+        _add(checks, "캘리브레이션", True, "policy",
+             "측정 %s 이후 완주 런 %d — 재측정 기준 %d 미만"
+             % (measured_at, n, CALIBRATION_STALE_RUNS), stale_runs=n)
+        return
+    _add(checks, "캘리브레이션", True, "policy",
+         "측정 %s 이후 완주 런 %d ≥ %d — 게이트의 타임아웃·테스트 수 하한이 옛 "
+         "실측에서 왔다. `python scripts/harness.py calibrate` 로 다시 잰다. "
+         "등급은 내리지 않는다" % (measured_at, n, CALIBRATION_STALE_RUNS),
+         stale_runs=n)
+    gaps.append("calibration_stale")
 
 
 def _probe(probe):

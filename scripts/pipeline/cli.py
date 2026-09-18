@@ -2627,6 +2627,8 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
         # 검사가 근거로 삼는 이전 회차 지적이 사라졌다. 정수를 읽는
         # 소비자는 어디에도 없었다 — 순수한 손실이다 (P3).
         s["phases"]["01-plan"]["converged_at_round"] = round_
+        # exceeded 무시 — 수렴이 라운드를 닫았다. 마지막 라운드에서 수렴한
+        # 것은 상한 초과가 아니고, 여기서 멈출 다음 라운드도 없다 (ADR-H048).
         st.counter_inc(s, _loop_counter(phase_item["front"]), max_rounds,
                        "converged", paths=paths)
         _note_cross_verify_gap(s)
@@ -2765,16 +2767,17 @@ def _record_02(root, paths, s, phase_item, ctx, file, reviewer, round_):
     _note_cross_verify_gap(s)
     if critical:
         front = phase_item["front"]
-        # **왕복 N회 허용**이 02 의 셈법이다 — `used > max_` 다. `max: 1` 에서
-        # 예전의 `exceeded and used > 1` 과 비트 단위로 같고, 상한을 올리면
-        # 그때 처음으로 뜻이 갈린다. 그 갈림이 없던 것이 M36 이다.
+        # **`loop.max` 는 Critical 제출 상한이다** — `max: 2` 면 두 번째 Critical
+        # 에서 멈춘다(되돌림은 1회). 판정은 `counter_inc` 의 `exceeded` 하나가
+        # 한다. 예전에는 이 반환값을 버리고 `used > max_` 를 따로 셌고, 그래서
+        # `3b43` 의 상태가 `used 2 / max 1` 로 남았다 (ADR-H048).
         max_decl = _loop_max(front)
         return_to = _loop_return_to(front)
-        used, max_, _exceeded = st.counter_inc(s, _loop_counter(front), max_decl,
-                                              "xverify_critical", paths=paths)
-        if used > max_:
+        used, max_, exceeded = st.counter_inc(s, _loop_counter(front), max_decl,
+                                             "xverify_critical", paths=paths)
+        if exceeded:
             _loop_on_exceed(front)
-            st.escalate(paths, s, "02 가 %d회를 넘겨 Critical 을 냈다" % max_,
+            st.escalate(paths, s, "02 가 Critical 을 %d회 냈다 — 상한이다" % max_,
                         ["이대로 진행한다", "범위를 줄인다", "중단한다"],
                         phase=front["id"])
             return _escalation_envelope("record", paths, s)
@@ -2792,7 +2795,8 @@ def _record_02(root, paths, s, phase_item, ctx, file, reviewer, round_):
             "record", False, 4, s,
             {"critical": len(critical), "granted_rounds": granted},
             "## Critical 이 남았다 — `%s` 로 되돌린다\n\n%s\n\n"
-            "왕복은 %d회다(`loop.max`). 바뀐 설계에 리뷰 라운드 **%d 를 새로 지급했다** — "
+            "Critical 은 %d회까지다(`loop.max`) — 다음 Critical 에서 멈춘다. "
+            "바뀐 설계에 리뷰 라운드 **%d 를 새로 지급했다** — "
             "새 설계가 한 라운드로 수렴할 이유가 없다.\n"
             "쓴 회차는 지워지지 않는다: %d / %d."
             % (return_to,
@@ -3344,6 +3348,17 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
     if blocking:
         front = phase_item["front"]
         max_decl = _loop_max(front)
+        # **재상정 승격은 지급이다** (ADR-H048). 같은 `finding_key` 가 이전
+        # 라운드보다 높은 심각도로 다시 오면 리뷰어가 처음에 낮게 본 것이지
+        # 수리자의 잘못이 아니다 — 그 비용을 수리자의 예산에서 빼지 않는다.
+        # 런당 1회다. 새 키가 major 로 나는 것은 새 지적이라 지급이 아니다.
+        raised = _severity_raised(node.get("rounds") or {}, round_, blocking)
+        if raised and "severity_raised_grant" not in node:
+            st.counter_grant(s, _loop_counter(front), 1, "severity_raised")
+            st.append_event(paths, "counter_grant", cmd="record",
+                            phase="05-code-review", counter=_loop_counter(front),
+                            extra=1, reason="severity_raised")
+            node["severity_raised_grant"] = {"round": round_, "keys": raised}
         used, _max, exceeded = st.counter_inc(s, _loop_counter(front), max_decl,
                                               "review_blocking", paths=paths)
         if exceeded:
@@ -3366,11 +3381,40 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             "record", False, 4, s,
             {"blocking": len(blocking), "findings": blocking,
              "review05": s["review05"], "delta_reviewer": delta},
-            _review_repair_render(blocking, used + 1, delta, prev_open),
+            _review_repair_render(blocking, used + 1, delta, prev_open,
+                                  raised=raised if node.get(
+                                      "severity_raised_grant", {}).get(
+                                      "round") == round_ else None),
             "python scripts/pipeline/cli.py gate --phase 04 --stage scoped "
             "--run-id %s" % s["run_id"])
 
     return _advance_to_next(root, paths, s, phase_item, ctx)
+
+
+def _severity_raised(rounds, round_, blocking):
+    """이전 라운드보다 심각도가 오른 blocking 지적의 `finding_key` 목록.
+
+    비교 재료는 `rounds[r][code].keys[] = {key, severity}` 다 — 같은 라운드
+    안의 2인 합치 상승(`review.merge` 의 `severity_raised_from`)은 대상이
+    아니다. 그것은 라운드를 가로지른 재상정이 아니다.
+    """
+    import ledger
+    best = {}
+    for rn, subs in rounds.items():
+        if int(rn) >= round_:
+            continue
+        for sub in subs.values():
+            for k in sub.get("keys") or []:
+                rank = ledger._SEVERITY_RANK.get(k.get("severity"), -1)
+                if rank > best.get(k["key"], -1):
+                    best[k["key"]] = rank
+    out = []
+    for f in blocking:
+        key = ledger.finding_key(f)
+        if key in best and \
+                ledger._SEVERITY_RANK.get(f.get("severity"), -1) > best[key]:
+            out.append(key)
+    return out
 
 
 def _delta_reviewer(blocking, planned, slot):
@@ -3394,10 +3438,16 @@ def _delta_reviewer(blocking, planned, slot):
     return max(alive, key=lambda c: (scores.get(c, 0), -alive.index(c)))
 
 
-def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
+def _review_repair_render(blocking, round_no, delta=None, previous_open=None,
+                          raised=None):
     lines = ["## 수리가 필요하다 (%d회차)" % round_no, "",
              "Critical/Major %d건. **Minor 는 고치지 않는다** — 원장에 쌓이고 "
              "보고서로 간다." % len(blocking), ""]
+    if raised:
+        lines += ["이전 라운드의 지적 %d건이 더 높은 심각도로 재상정됐다 — "
+                  "`review_repair` 를 **1 지급했다** (`severity_raised`, 런당 "
+                  "1회). 리뷰어가 처음에 낮게 본 비용을 수리자의 예산에서 빼지 "
+                  "않는다 (ADR-H048)." % len(raised), ""]
     if delta:
         lines += ["수리 뒤 **델타 재리뷰는 `%s` 한 명**이다. 전원을 다시 "
                   "부르지 않는다 — 그리고 그 한 명이 깨끗해도 앞선 라운드의 "
@@ -3971,8 +4021,11 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
         # **면제된 프로브는 등급이 치른다** (M44 · §E9). 어휘는 이미 있었고
         # 소비자(`pr.build_body`·`report.GAP_REASONS`)도 있었는데 **쓰는 코드가
         # 없었다** — 선언만 있고 코드가 안 읽는 M36 과 같은 모양이다.
+        # `NON_DEMOTING_GAPS`(calibration_stale) 는 이름만 남기고 등급은 그대로다
+        # — 사람이 할 일이 밀렸다는 표시이지 이 런의 관측 결손이 아니다 (ADR-H047).
+        import report as rep
         for gap in got.get("gaps") or []:
-            st.demote(s, st.GRADES[1], gap)
+            st.demote(s, None if gap in rep.NON_DEMOTING_GAPS else st.GRADES[1], gap)
         st.append_event(paths, "check_fail" if got["exit"] else "stage_done",
                         cmd="precheck", phase=pid, exit=got["exit"])
         if got["exit"] == 9:
@@ -4023,6 +4076,13 @@ def _precheck_render(got):
         # **면제를 조용히 넘기지 않는다** (M44). "전부 맞다" 로만 적으면
         # 면제가 통과와 구분되지 않는다.
         for gap in got.get("gaps") or []:
+            if gap == "calibration_stale":
+                stale = [c for c in got["checks"] if c["name"] == "캘리브레이션"]
+                lines += ["", "**캘리브레이션이 낡았다** — %s. 등급은 그대로이고 "
+                              "`calibration_stale` 로 보고서에 남는다. 다음 런 전에 "
+                              "`python scripts/harness.py calibrate` 를 돌린다."
+                          % (stale[0]["message"] if stale else gap)]
+                continue
             lines += ["", "**면제된 프로브가 있다: `%s`.** 통과가 아니라 "
                           "미검증이다 — 등급이 `PASS_WITH_GAPS` 로 내려가고 "
                           "보고서·PR 본문에 이름으로 남는다." % gap]

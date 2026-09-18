@@ -85,7 +85,17 @@ GAP_REASONS = {
     "run_record_missing": ("닫힌 런의 PR 갱신인데 런 기록 "
                            "`docs/harness/pipeline/runs/{run_id}.md` 가 diff 에 "
                            "없다 — 08 이 쓴 기록은 기능 PR 에 실린다 (ADR-H052)"),
+    "calibration_stale": ("캘리브레이션 측정 뒤 완주 런이 기준 이상 쌓였다 — "
+                          "게이트의 타임아웃·테스트 수 하한이 옛 실측이다. "
+                          "`python scripts/harness.py calibrate` 로 다시 잰다. "
+                          "표시이고 등급은 내리지 않는다 (ADR-H047)"),
 }
+
+# 등급을 내리지 않는 gap. `gaps[]` 에는 남아 보고서·PR 본문이 이름으로 적되
+# `demote` 는 등급을 건드리지 않는다 — "관측 결손" 이 아니라 "사람이 할 일이
+# 밀렸다" 는 표시다 (ADR-H047 결정 2). 부르는 쪽(`cli.run_precheck`)이 이
+# 목록으로 가른다.
+NON_DEMOTING_GAPS = ("calibration_stale",)
 
 
 def short_narrative(data):
@@ -765,6 +775,10 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
     if verified is False:
         notes.append("**어댑터가 `verified: false` 다** — 실패 경로가 실물에서 "
                      "돈 적이 없다. 이 런의 초록불은 그만큼만 말한다.")
+    if "calibration_stale" in gaps:
+        notes.append("**측정 뒤 완주 런이 기준 이상 쌓였다** (`calibration_stale`) — "
+                     "다음 런 전에 `python scripts/harness.py calibrate` 로 다시 "
+                     "잰다. 등급은 내리지 않았다 (ADR-H047).")
     lines += ([""] + ["- %s" % n for n in notes] if notes
               else ["", "- 캘리브레이션에 표시할 결손이 없다."])
     lines.append("")

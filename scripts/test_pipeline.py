@@ -128,6 +128,15 @@ def repo(tmp_path):
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
                         encoding="utf-8")
 
+    # 어댑터도 픽스처가 스스로 선언한다 — **미검증(`verified: false`)** 이다.
+    # 클론이 `verify-adapter` 로 실물을 `true` 로 올려도(ADR-H047) 여기서
+    # `adapter_unverified` 를 묻는 테스트가 그 실물에 묶이지 않는다.
+    ad_path = tmp_path / "harness" / "adapters" / "nextjs-ts.json"
+    ad = json.loads(ad_path.read_text(encoding="utf-8"))
+    ad["verified"] = False
+    ad_path.write_text(json.dumps(ad, ensure_ascii=False, indent=2) + chr(10),
+                       encoding="utf-8")
+
     # 캘리브레이션도 같다 — 실물은 영구히 미측정이고 픽스처는 잰 것이 있어야 한다.
     # 위 FIXTURE_CALIBRATION 주석을 본다 (ADR-H039 결정 2).
     (tmp_path / "harness" / "calibration.json").write_text(
@@ -873,6 +882,36 @@ class TestWaitingHumanEvents:
         assert env["exit"] == 9
         got = self._waits(paths)
         assert got and got[-1]["data"]["reason"] == "approval", got
+class TestCounterExceededIsConsumed:
+    """[[ADR-H048]] 결정 1 — `counter_inc` 의 `exceeded` 를 무시하는 호출부가 없다.
+
+    `3b43` 의 `state.json` 은 `counters.xverify_return.used = 2, max = 1` 이다 —
+    상한 1 인 카운터가 2 까지 올라간 채 기록됐다. 02 record 경로가 반환 3항을
+    버리고 `used > max_` 를 따로 판정했기 때문이다. 판정은 한 곳(`counter_inc`)
+    이 하고 호출부는 그것을 읽는다.
+    """
+
+    def test_모든_호출처가_exceeded_를_읽는다(self, repo):
+        """3항 언패킹이거나, 안 읽는 이유를 같은 자리에 적은 것만 허용한다."""
+        text = (ROOT / "scripts" / "pipeline" / "cli.py").read_text(encoding="utf-8")
+        spots = [m.start() for m in re.finditer(r"st\.counter_inc\(", text)]
+        assert len(spots) >= 7, "호출처를 못 찾았다 — 이 검사가 무의미해졌다"
+        for i in spots:
+            before = text[max(0, i - 160):i]
+            around = text[max(0, i - 400):i + 200]
+            unpacked = re.search(r"\w+, \w+, exceeded = \s*$", before)
+            assert unpacked or "exceeded 무시" in around, text[i - 160:i + 120]
+
+    def test_02_의_두_번째_Critical_은_상한_안에서_멈춘다(self, run01):
+        """`used <= max` 가 상태에 남는다 — 상한을 넘긴 숫자가 기록되지 않는다."""
+        repo, paths, s = run01
+        trip = TestLoopDeclarationsAreRead()._round_trip
+        assert trip(repo, paths)["exit"] == 4
+        second = trip(repo, paths)
+        _, after = st.load(repo, paths.run_id)
+        assert after.get("escalated"), second["render"]
+        node = after["counters"]["xverify_return"]
+        assert node["used"] <= node["max"], node
 
 
 class TestModelCallBudget:
@@ -2318,7 +2357,7 @@ class TestLoopDeclarationsAreRead:
         assert not after.get("escalated"), "상한 3 인데 두 번째에서 멈췄다"
 
     def test_상한을_안_올리면_두_번째_왕복이_멈춘다(self, run01):
-        """실물 선언(max 1)의 동작이 안 바뀌었음을 잠근다."""
+        """실물 선언(max 2 — Critical 제출 상한, 되돌림은 1회)의 동작을 잠근다."""
         repo, paths, s = run01
         assert self._round_trip(repo, paths)["exit"] == 4
         second = self._round_trip(repo, paths)
@@ -5686,6 +5725,89 @@ class TestPrecheckInfra:
         assert "sk-비밀값-12345" not in json.dumps(got, ensure_ascii=False)
 
 
+def _done_run(repo, run_id, closed_at, adapter="nextjs-ts", phases=None,
+              statuses=None):
+    """완주 런 하나를 `_workspace/runs/` 에 상태로 세운다.
+
+    `phases` 는 페이즈 id 목록이고 전부 `passed` 다 — `statuses` 로 일부를
+    덮는다. 완주 판정(`run_status: done`)과 페이즈 상태는 다른 사실이다.
+    """
+    d = repo / "_workspace" / "runs" / run_id
+    d.mkdir(parents=True, exist_ok=True)
+    ph = {pid: {"status": (statuses or {}).get(pid, "passed")}
+          for pid in (phases or [])}
+    (d / "state.json").write_text(json.dumps({
+        "run_id": run_id, "run_status": "done", "closed_at": closed_at,
+        "adapter": {"id": adapter}, "phases": ph}, ensure_ascii=False),
+        encoding="utf-8")
+    return d
+
+
+class TestPrecheckCalibrationStale:
+    """[[ADR-H047]] 결정 2 — 캘리브레이션 뒤 완주 런이 쌓이면 `precheck` 가 말한다.
+
+    `calibration.json` 은 2026-09-13 에 한 번 측정됐고 그 뒤 15런 동안 테스트가
+    113 → 652 개로 늘었는데 아무도 재측정을 권하지 않았다. 표시다 — 등급은
+    내리지 않는다. 그래서 `GAP_REASONS` 에 있되 `NON_DEMOTING_GAPS` 다.
+    """
+
+    AFTER = "2026-02-%02dT00:00:00+0900"     # 픽스처 measured_at 은 2026-01-01
+    BEFORE = "2025-12-%02dT00:00:00+0900"
+
+    def _runs(self, repo, n, fmt=None):
+        for i in range(n):
+            _done_run(repo, "r%d" % i, (fmt or self.AFTER) % (i + 1))
+
+    def test_기준_미만이면_조용하다(self, repo):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS - 1)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" not in got["gaps"], got["gaps"]
+
+    def test_기준_이상이면_gap_이고_등급은_그대로다(self, repo, request_file):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" in got["gaps"], got["gaps"]
+        assert got["exit"] == 0, "표시이지 실패가 아니다"
+        cal = [c for c in got["checks"] if c["name"] == "캘리브레이션"]
+        assert cal and cal[0]["ok"] and cal[0]["stale_runs"] == \
+            pc.CALIBRATION_STALE_RUNS, cal
+
+        cli.run_init(repo, "x", request_file)
+        env = cli.run_precheck(repo, scope="pr")
+        _, s = st.load(repo, env["run_id"])
+        assert "calibration_stale" in s["gaps"], s["gaps"]
+        assert s.get("grade") is None, "등급을 내리지 않는다 — 표시다"
+        assert "calibrate" in env["render"], env["render"]
+
+    def test_측정_전의_런은_세지_않는다(self, repo):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS, fmt=self.BEFORE)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" not in got["gaps"], got["gaps"]
+
+    def test_미측정이면_검사하지_않는다(self, repo):
+        """템플릿 자신은 영구 미측정이다 (ADR-H039) — 거기서 이 gap 이 나면 소음이다."""
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        cal = repo / "harness" / "calibration.json"
+        data = json.loads(cal.read_text(encoding="utf-8"))
+        data["measured_at"] = None
+        cal.write_text(json.dumps(data), encoding="utf-8")
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS + 2)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" not in got["gaps"], got["gaps"]
+
+    def test_보고서가_재측정을_권한다(self, repo):
+        s = {"gaps": ["calibration_stale"], "grade": "PASS"}
+        assert "calibrate" in rep_mod.explain_gap("calibration_stale")
+        assert "calibration_stale" in rep_mod.NON_DEMOTING_GAPS
+
+
 class TestPrecheckCli:
 
     def test_cli_emits_one_envelope(self, repo, request_file):
@@ -7330,6 +7452,23 @@ class TestFormatRejectCount:
     핸들러가 exit 8 을 돌려주면 그 자리에서 `format_reject` 를 남긴다.
     """
 
+class TestReview05SeverityRaisedGrant:
+    """[[ADR-H048]] 결정 2 — 재상정 승격은 지급이다.
+
+    `728c` 의 05 는 같은 지적이 1라운드 minor → 2라운드 major 로 재상정되며
+    `review_repair` 예산 2 를 소진했다 — 재수리 기회 없이. 심각도 상승은
+    리뷰어가 처음에 낮게 본 것이라 수리자의 잘못이 아니다. 그 비용을 수리자의
+    예산에서 빼지 않는다: `counter_grant("review_repair", 1, "severity_raised")`
+    를 **런당 1회** 지급한다. 새 키가 major 로 나는 것은 새 지적이라 지급이 아니다.
+    """
+
+    RAISED = {"id": "F-2", "category": "CONCURRENCY", "severity": "minor",
+              "target_role": "impl", "title": "동시 갱신에 잠금이 없다",
+              "quote": "잠금이 없다"}
+    BLOCK = {"id": "F-1", "category": "TX_BOUNDARY", "severity": "major",
+             "target_role": "impl", "title": "트랜잭션 경계가 없다",
+             "quote": "트랜잭션이 없다"}
+
     def _ready(self, repo, request_file, phases):
         ldg.seed(repo)
         run_id, paths = _enter_05(repo, request_file, phases)
@@ -7344,44 +7483,87 @@ class TestFormatRejectCount:
         st.save(paths, s)
         return run_id, paths
 
-    def _bad_submit(self, repo, paths, run_id):
-        j = paths.run_dir / "05_review_arch.json"
+    def _submit(self, repo, paths, run_id, round_, findings, resolved=()):
+        name = ("05_review_arch.json" if round_ == 1
+                else "05_review_arch_r%d.json" % round_)
+        j = paths.run_dir / name
         j.write_text(json.dumps({
-            "reviewer": "arch", "round": 1, "status": "ok",
-            "by_checklist": {}, "resolved_from_previous": [],
+            "reviewer": "arch", "round": round_, "status": "ok",
+            "by_checklist": {"전부": list(findings)},
+            "resolved_from_previous": list(resolved),
             "need_more_context": []}, ensure_ascii=False), encoding="utf-8")
-        j.with_name("05_review_arch.raw.md").write_text("# 리뷰\n", encoding="utf-8")
-        return cli.run_record(repo, "05", str(j), reviewer="arch", round_=1,
-                              run_id=run_id)
+        body = "".join("## %s\n\n%s\n" % (f["severity"], f["quote"])
+                       for f in findings)
+        j.with_name(name.replace(".json", ".raw.md")).write_text(
+            "# 리뷰\n\n" + body, encoding="utf-8")
+        return cli.run_record(repo, "05", str(j), reviewer="arch",
+                              round_=round_, run_id=run_id)
 
-    def test_exit_8_이_이벤트로_남는다(self, repo, request_file, phases):
+    def _first_round(self, repo, request_file, phases):
         run_id, paths = self._ready(repo, request_file, phases)
-        env = self._bad_submit(repo, paths, run_id)
-        assert env["exit"] == 8, env["render"]
-        got = [e for e in st.read_events(paths) if e["kind"] == "format_reject"]
-        assert len(got) == 1, got
-        assert got[0]["phase"] == "05-code-review"
-        assert got[0]["data"]["reviewer"] == "arch"
+        env = self._submit(repo, paths, run_id, 1, [self.BLOCK, self.RAISED])
+        assert env["exit"] == 4, env["render"]
+        return run_id, paths
 
-    def test_페이즈_소요_표가_형식_반려_수를_센다(self, repo, request_file, phases):
-        """두 번째 실패는 exit 8 이 아니라 스킵 + degrade 다 (05 의 재제출 1회
-        규칙) — 그래서 두 번 튕겨도 `format_reject` 는 1 이고, 나머지 한 번은
-        `reviewer_failed` 로 남는다. 둘을 뭉치지 않는다."""
-        run_id, paths = self._ready(repo, request_file, phases)
-        self._bad_submit(repo, paths, run_id)
-        self._bad_submit(repo, paths, run_id)
-        t = st.phase_durations(paths)
-        assert t["phases"]["05-code-review"]["format_rejects"] == 1, t["phases"]
-        rows = rep_mod._timing_lines(t)
-        assert any("형식 반려" in r for r in rows), rows
-        assert any("05-code-review" in r and "| 1 |" in r for r in rows), rows
+    def test_같은_키의_심각도가_오르면_한_번_지급한다(self, repo, request_file,
+                                                   phases):
+        run_id, paths = self._first_round(repo, request_file, phases)
+        env = self._submit(repo, paths, run_id, 2,
+                           [dict(self.RAISED, severity="major")],
+                           resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
+        _, s = st.load(repo, run_id)
+        assert not s.get("escalated"), env["render"]
+        assert env["exit"] == 4, env["render"]
+        node = s["counters"]["review_repair"]
+        assert [(g["extra"], g["reason"]) for g in node.get("grants") or []]             == [(1, "severity_raised")], node
+        assert node["used"] == 2 and node["max"] == 3, node
+        grant = s["phases"]["05-code-review"].get("severity_raised_grant")
+        assert grant and grant["round"] == 2, grant
+        assert "severity_raised" in env["render"], env["render"]
 
-    def test_05_선언이_회계_필드의_local_repair_를_허용한다(self, repo):
-        loaded, _ = cli.load_phases(ROOT)
-        lr = loaded["05-code-review"]["front"]["loop"]["local_repair"]
-        assert lr["accounting"] == ["resolved_from_previous",
-                                    "reraised_from_previous"], lr
+    def test_지급은_이벤트로도_남는다(self, repo, request_file, phases):
+        run_id, paths = self._first_round(repo, request_file, phases)
+        self._submit(repo, paths, run_id, 2, [dict(self.RAISED, severity="major")],
+                     resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
+        events = [json.loads(l) for l in
+                  paths.events.read_text(encoding="utf-8").splitlines() if l.strip()]
+        got = [e for e in events if e["kind"] == "counter_grant"
+               and e["data"].get("reason") == "severity_raised"]
+        assert len(got) == 1, [e for e in events if e["kind"] == "counter_grant"]
 
+    def test_새_키가_major_로_나는_것은_지급이_아니다(self, repo, request_file,
+                                                    phases):
+        """새 공격면이 라운드마다 드러나는 경우(`e7ff`)는 새 지적이다 —
+        예산이 모자라면 에스컬레이션이 맞다."""
+        run_id, paths = self._first_round(repo, request_file, phases)
+        new = {"id": "F-3", "category": "TX_BOUNDARY", "severity": "major",
+               "target_role": "impl", "title": "전혀 다른 새 지적",
+               "quote": "새로 찾은 것"}
+        self._submit(repo, paths, run_id, 2, [self.RAISED, new],
+                     resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
+        _, s = st.load(repo, run_id)
+        assert not s["counters"]["review_repair"].get("grants"), s["counters"]
+        assert s.get("escalated"), "예산 2 를 다 썼으면 에스컬레이션이다"
+
+    def test_두_번째_상승은_지급하지_않는다(self, repo, request_file, phases):
+        run_id, paths = self._first_round(repo, request_file, phases)
+        self._submit(repo, paths, run_id, 2, [dict(self.RAISED, severity="major")],
+                     resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
+        self._submit(repo, paths, run_id, 3,
+                     [dict(self.RAISED, severity="critical")])
+        _, s = st.load(repo, run_id)
+        node = s["counters"]["review_repair"]
+        assert len(node.get("grants") or []) == 1, node
+        assert s.get("escalated"), "실효 상한 3 을 다 썼다"
+
+
+class TestFormatRejectCount:
+    """[[ADR-H052]] 결정 3 — 형식 반려(exit 8 재제출)를 이벤트로 세고 08 에 적는다.
+
+    `e7ff` 의 sec 는 3라운드에서 accounting 형식 위반으로 두 번 튕겨 failed 로
+    닫혔는데 원장에는 '실패' 로만 남았다. 계수 지점은 `run_record` 하나다 —
+    핸들러가 exit 8 을 돌려주면 그 자리에서 `format_reject` 를 남긴다.
+    """
 
 class TestDeferredCarryover:
     """[[ADR-H051]] 결정 3 — 열린 `deferred` 는 다음 런으로 이월된다.
