@@ -81,13 +81,30 @@ GAP_REASONS = {
                           "게이트의 타임아웃·테스트 수 하한이 옛 실측이다. "
                           "`python scripts/harness.py calibrate` 로 다시 잰다. "
                           "표시이고 등급은 내리지 않는다 (ADR-H047)"),
+    # 08 지시문 검토 (ADR-H056 추기). 앞 셋은 표시이고 등급을 내리지 않는다.
+    "instruction_review_manual": ("08 지시문 검토를 스킬 없이 사람이 했다 — "
+                                  "config 의 `instruction_review.skill` 이 null 이다"),
+    "instruction_slot_over_budget": ("지시문 파일의 최상위 불릿 수가 "
+                                     "`instruction_slot_budget` 을 넘었다 — 예산을 "
+                                     "고치거나 규칙을 줄인다. 표시이고 등급은 "
+                                     "내리지 않는다"),
+    "instruction_slot_unmeasured": ("지시문 파일에 본문은 있는데 최상위 불릿이 "
+                                    "0개다 — 규칙 수를 재지 못했다"),
+    "instruction_changed": ("08 지시문 검토가 바꾼 지시문 파일이 기능 PR 에 "
+                            "실렸다 — 06 승인 지문 밖이라 05·07 리뷰어가 보지 "
+                            "않았다. PR 본문 「규칙 변경」 절을 본다"),
+    "instruction_change_missing": ("08 지시문 검토가 바꿨다고 적은 파일이 닫힌 "
+                                   "런의 PR 갱신에 커밋돼 있지 않다 — 커밋하고 "
+                                   "`pr --run-id` 를 다시 돌린다"),
 }
 
 # 등급을 내리지 않는 gap. `gaps[]` 에는 남아 보고서·PR 본문이 이름으로 적되
 # `demote` 는 등급을 건드리지 않는다 — "관측 결손" 이 아니라 "사람이 할 일이
 # 밀렸다" 는 표시다 (ADR-H047 결정 2). 부르는 쪽(`cli.run_precheck`)이 이
 # 목록으로 가른다.
-NON_DEMOTING_GAPS = ("calibration_stale",)
+NON_DEMOTING_GAPS = ("calibration_stale", "instruction_review_manual",
+                     "instruction_slot_over_budget", "instruction_slot_unmeasured",
+                     "instruction_changed")
 
 
 def is_non_demoting(gap):
@@ -271,6 +288,41 @@ def _prose_candidate_lines(data):
                     "`%s` %s회/%s런" % (c.get("rule_slug") or c.get("category"),
                                         c.get("count"), c.get("distinct_runs"))
                     for c in trace))]
+    return out
+
+
+def _instruction_review_cell(state):
+    rv = state.get("instruction_review")
+    if not rv:
+        return None
+    return "%s · 흡수 %d · 기각 %d · 바꾼 파일 %d" % (
+        "`%s`" % rv["skill"] if rv.get("skill") else "사람 검토",
+        len(rv.get("absorbed") or []), len(rv.get("declined") or []),
+        len({c.get("file") for c in rv.get("changes") or []}))
+
+
+def _slots_cell(state):
+    sl = state.get("instruction_slots")
+    if not sl:
+        return None
+    return "%s/%s (최상위 불릿 / `instruction_slot_budget`)" % (
+        sl.get("used"), sl.get("budget"))
+
+
+def _declined_lines(state, data):
+    """기각된 지시문 검토 후보. 이월이 길어지는 것이 보이게 누적을 같이 적는다."""
+    declined = (state.get("instruction_review") or {}).get("declined") or []
+    if not declined:
+        return []
+    seen = {c.get("rule_key"): c for c in
+            (data.get("ledger") or {}).get("prose_candidates") or []}
+    out = ["", "**지시문 검토에서 기각한 후보**:", ""]
+    for x in declined:
+        c = seen.get(x.get("rule_key")) or {}
+        out.append("- `%s`%s — %s" % (
+            c.get("category") or x.get("rule_key"),
+            " %s회 / %s런째 후보" % (c.get("count"), c.get("distinct_runs"))
+            if c else "", x.get("reason")))
     return out
 
 
@@ -659,10 +711,14 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
         # **생략과 불가는 다르다** (ADR-H042). `plan_unedited` 는 1라운드 수렴이라
         # 같은 관측기를 같은 전문에 다시 안 부른 것이고 등급이 안 내려간다.
         ("02 생략 사유", cv.get("skip_reason")),
+        # 08 지시문 검토와 슬롯 예산 (ADR-H056 추기).
+        ("지시문 검토", _instruction_review_cell(state)),
+        ("지시문 슬롯", _slots_cell(state)),
     ])
     if cv.get("last_primary_error"):
         lines += ["", "- **교차검증 primary 가 실패한 적이 있다** — `%s`. "
                   "부재가 아니라 일시 실패다." % cv["last_primary_error"]]
+    lines += _declined_lines(state, data)
     lines.append("")
 
     lines += ["## 캘리브레이션 상태", ""]

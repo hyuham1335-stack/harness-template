@@ -4457,6 +4457,47 @@ def run_report(root, out=None, run_id=None):
                            "python scripts/pipeline/cli.py promote --flush "
                            "--run-id %s" % s["run_id"])
 
+    # **지시문 검토는 보고서보다 먼저다** (ADR-H056). 열린 런은 검토 파일이
+    # 없거나 자진신고가 원장·diff 와 어긋나면 보고서를 쓰지 않고 되묻는다 —
+    # 80자 되묻기와 같이 파일을 고쳐 같은 명령을 치면 닫힌다. 닫힌 런의
+    # 재작성은 종전 계약대로 파일을 요구하지 않는다(있으면 멱등 은퇴만).
+    import ledger as ledger_mod
+    _config, _adapter, cal = adapters.load(root)
+    review, errors = _instruction_review(root, paths, s, _config)
+    closed = s.get("run_status") == st.DONE
+    if errors and not closed:
+        st.append_event(paths, "check_fail", cmd="report", phase="08-report",
+                        instruction_review=errors)
+        return st.envelope(
+            "report", False, 8, s, {"instruction_review_errors": errors},
+            "\n".join(["## 지시문 검토가 없거나 맞지 않는다", ""]
+                      + ["- %s" % e for e in errors]
+                      + ["", "`%s` 를 쓴다 — 스킬 `%s` 로 prose 후보와 이 런의 "
+                             "「배운 점」을 검토한 뒤 결과를 옮겨 적는다. 바꾼 것 "
+                             "없음도 유효하다(`changes: []`). 보고서는 아직 안 "
+                             "썼고 런도 닫지 않았다. 같은 명령으로 다시 낸다."
+                         % (paths.rel(paths.run_dir / INSTRUCTION_REVIEW_FILE),
+                            _review_skill(_config))]),
+            "python scripts/pipeline/cli.py report --run-id %s" % s["run_id"])
+    if review is not None and not errors:
+        for key in review["absorbed"]:
+            files = [c["file"] for c in review["changes"]
+                     if key in (c.get("rule_keys") or [])]
+            ledger_mod.retire(root, s["run_id"], key,
+                              "absorbed:" + ",".join(files))
+        if review.get("skill") is None:
+            st.demote(s, None, "instruction_review_manual")
+        s["instruction_review"] = {
+            "skill": review.get("skill"), "absorbed": review["absorbed"],
+            "declined": review["declined"], "changes": review["changes"]}
+    slots = _instruction_slots(root, _config)
+    if slots is not None:
+        s["instruction_slots"] = slots
+        if slots["used"] > slots["budget"]:
+            st.demote(s, None, "instruction_slot_over_budget")
+        elif slots["used"] == 0 and slots["prose_lines"]:
+            st.demote(s, None, "instruction_slot_unmeasured")
+
     src = paths.run_dir / "08_report_data.json"
     if not src.exists():
         return st.envelope("report", False, 3, s, {},
@@ -4469,11 +4510,9 @@ def run_report(root, out=None, run_id=None):
         st.append_event(paths, "check_fail", cmd="report", phase="08-report",
                         error=str(exc))
 
-    _config, _adapter, cal = adapters.load(root)
     # **원장 축은 모델이 쓰는 서술이 아니라 기계 사실이다.** 08 의 입력 파일은
     # 서술 전용이므로 실행기가 여기서 붙인다 — "승격 목록이 원장에서 자동으로
     # 나온다, 네가 빠뜨릴 수 없다" 와 같은 규율이다 (M39).
-    import ledger as ledger_mod
     try:
         got = ledger_mod.stage_promotions(root)
         data["ledger"] = {"by_category": got["by_category"],
@@ -4588,6 +4627,172 @@ def _report_render(rel, missing, s, data=None):
                   "없으면 gap `run_record_missing` 이다 (ADR-H052)."
               % s.get("run_id")]
     return "\n".join(lines)
+
+
+INSTRUCTION_REVIEW_FILE = "08_instruction_review.json"
+_SLOT_BULLET = re.compile(r"^[-*+]\s+")
+
+
+def _review_skill(config):
+    return ((config.get("project") or {}).get("instruction_review")
+            or {}).get("skill")
+
+
+def _instruction_destination(config, rel):
+    """지시문 목적지인가 — `_rules_read_expected` 의 집합 ∪ `.claude/agent-memory/**`.
+
+    존재가 아니라 경로로 가른다 — 검토가 `rules_dir` 에 새 파일을 만들 수 있다.
+    """
+    rel = Path(rel).as_posix()
+    proj = config.get("project") or {}
+    inst = proj.get("instruction_file")
+    if inst and rel == Path(inst).as_posix():
+        return True
+    rules_dir = proj.get("rules_dir")
+    if (rules_dir and rel.endswith(".md")
+            and Path(rel).parent.as_posix() == Path(rules_dir).as_posix()):
+        return True
+    return rel.startswith(".claude/agent-memory/")
+
+
+def _changed_since(root, ref):
+    """`ref` 이후 바뀐 파일(워크트리 포함) ∪ 미커밋·새 파일. `ref` 가 없으면 뒤엣것만."""
+    out = set()
+    if ref:
+        r = harness._git(root, "diff", "--name-only", ref)
+        if r is not None and r.returncode == 0:
+            out |= {ln.strip().strip('"') for ln in r.stdout.splitlines()
+                    if ln.strip()}
+    r = harness._git(root, "status", "--porcelain", "-uall")
+    if r is not None and r.returncode == 0:
+        out |= {ln[3:].strip().strip('"') for ln in r.stdout.splitlines()
+                if len(ln) > 3}
+    return {p.replace("\\", "/") for p in out}
+
+
+def _instruction_review(root, paths, s, config):
+    """08 지시문 검토 파일을 읽고 **자진신고를 기계로 대조한다** (ADR-H056).
+
+    반환: (검토 dict | None, 오류 목록). 오류가 없어야 흡수 키를 은퇴시킨다.
+
+    ① prose 후보는 흡수·기각 중 정확히 한쪽이다 — 어느 쪽도 아닌 경로가 없다
+    ② 흡수했다면 지시문 목적지가 **06 push 이후** 실제로 바뀌었어야 한다 —
+       base 이후 전체를 보면 기능 런마다 바뀌는 `rules_dir` 문서가 증거로 통과한다
+    ③ 후보도 이 런이 이미 은퇴시킨 키(재실행)도 아닌 키는 받지 않는다 — lint
+       후보를 여기서 은퇴시키는 것은 07 판정을 우회하는 길이다
+    """
+    import ledger as ledger_mod
+
+    p = paths.run_dir / INSTRUCTION_REVIEW_FILE
+    if not p.exists():
+        return None, ["`%s` 이 없다" % INSTRUCTION_REVIEW_FILE]
+    try:
+        d = harness._read_json(p)
+    except (OSError, ValueError) as exc:
+        return None, ["`%s` 를 읽지 못했다: %s" % (INSTRUCTION_REVIEW_FILE, exc)]
+    if not isinstance(d, dict):
+        return None, ["`%s` 는 객체다" % INSTRUCTION_REVIEW_FILE]
+
+    errors = []
+    if d.get("schema") != 1:
+        errors.append("`schema` 는 1 이다")
+    if d.get("reviewed") is not True:
+        errors.append("`reviewed` 는 true 다 — 검토하지 않았으면 파일을 쓰지 않는다")
+    want = _review_skill(config)
+    if d.get("skill") != want:
+        errors.append("`skill` 이 config 와 다르다: %r (config: %r)"
+                      % (d.get("skill"), want))
+
+    absorbed = d.get("absorbed")
+    declined = d.get("declined")
+    changes = d.get("changes")
+    if not (isinstance(absorbed, list)
+            and all(isinstance(k, str) and k for k in absorbed)):
+        errors.append("`absorbed` 는 rule_key 문자열 목록이다")
+        absorbed = []
+    if not (isinstance(declined, list) and all(isinstance(x, dict) for x in declined)):
+        errors.append("`declined` 는 {rule_key, reason} 목록이다")
+        declined = []
+    if not (isinstance(changes, list) and all(isinstance(x, dict) for x in changes)):
+        errors.append("`changes` 는 {file, summary, rule_keys} 목록이다")
+        changes = []
+    for x in declined:
+        if not str(x.get("reason") or "").strip():
+            errors.append("기각 `%s` 에 사유가 없다 — skip 에는 rationale 이 "
+                          "있다 (ADR-H051)" % x.get("rule_key"))
+    declined_keys = [x.get("rule_key") for x in declined]
+
+    try:
+        prose = [c["rule_key"] for c in
+                 ledger_mod.stage_promotions(root)["prose_candidates"]]
+    except (OSError, ValueError, KeyError):
+        prose = []
+    own = {(r.get("retire") or {}).get("rule_key")
+           for r in ledger_mod.read_all(root)
+           if (r.get("retire") or {}).get("run_id") == s.get("run_id")}
+    for key in prose:
+        n = (key in absorbed) + (key in declined_keys)
+        if n != 1:
+            errors.append("prose 후보 `%s` 는 absorbed·declined 중 정확히 한쪽에 "
+                          "있어야 한다 (지금 %d곳)" % (key, n))
+    for key in absorbed + declined_keys:
+        if key not in prose and key not in own:
+            errors.append("`%s` 는 이 런의 prose 후보가 아니다 — 기계 강제 후보의 "
+                          "은퇴는 07 의 `retire` 판정이다" % key)
+
+    if absorbed and not changes:
+        errors.append("흡수했는데 `changes` 가 비었다 — 지시문을 바꾸지 않고 "
+                      "후보를 은퇴시키지 않는다")
+    evidence = _changed_since(root, (s.get("pr") or {}).get("head_sha"))
+    covered = set()
+    for c in changes:
+        f = Path(str(c.get("file") or "")).as_posix()
+        if not c.get("file") or not str(c.get("summary") or "").strip():
+            errors.append("`changes` 항목에는 `file` 과 `summary` 가 있다: %r" % c)
+            continue
+        if not _instruction_destination(config, f):
+            errors.append("`%s` 는 지시문 목적지가 아니다 (instruction_file · "
+                          "rules_dir 직속 *.md · .claude/agent-memory/**)" % f)
+        elif f not in evidence:
+            errors.append("`%s` 가 06 push 이후 바뀌지 않았다" % f)
+        covered |= set(c.get("rule_keys") or [])
+    for key in absorbed:
+        if key not in covered:
+            errors.append("흡수 `%s` 에 대응하는 변경이 없다 — `changes[].rule_keys` "
+                          "에 적는다" % key)
+    d.update(absorbed=absorbed, declined=declined, changes=changes)
+    return d, errors
+
+
+def _instruction_slots(root, config):
+    """`instruction_slot_budget` 의 소비자 (ADR-H056). 재지 못하면 None.
+
+    `CRITICAL:` 라벨은 자기 선언이라 세지 않는다 — **0열에서 시작하는 불릿**
+    이 한 칸이다. 들여쓴 줄은 하위 항목이고 펜스·표 안은 규칙이 아니다.
+    `prose_lines` 는 제목·불릿이 아닌 본문 줄 수 — 규칙이 산문뿐이면 0칸이
+    "규칙 없음" 이 아니라 "못 잼" 이다.
+    """
+    proj = config.get("project") or {}
+    inst, budget = proj.get("instruction_file"), proj.get("instruction_slot_budget")
+    if not inst or budget is None:
+        return None
+    try:
+        text = (Path(root) / inst).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    used = prose = 0
+    fence = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if fence or not line.strip() or line.startswith("|"):
+            continue
+        if _SLOT_BULLET.match(line):
+            used += 1
+        elif not line.startswith("#"):
+            prose += 1
+    return {"used": used, "budget": budget, "prose_lines": prose}
 
 
 # ------------------------------------------------------------------- review07
@@ -5051,6 +5256,24 @@ def run_pr(root, run_id=None):
             st.demote(s, st.GRADES[1], "run_record_missing")
             st.save(paths, s)
             data["run_record_missing"] = rec_rel
+        # 08 지시문 검토가 바꾼 파일도 이 PR 에 실린다 (ADR-H056 추기). 지시문은
+        # 06 승인 지문 밖이라 리뷰어가 못 봤다 — 실렸으면 이름으로 드러내고,
+        # 안 실렸으면 런 기록과 같은 급이다. retire 는 08 에서 이미 원장에
+        # 굳었으므로 **커밋분**만 센다(미커밋은 push 되지 않는다).
+        changed = pr_mod._rule_changes(paths)
+        if changed:
+            base = (config.get("vcs") or {}).get("base_branch") or "main"
+            r = harness._git(root, "diff", "--name-only", base, "HEAD")
+            committed = ({ln.strip().strip('"') for ln in r.stdout.splitlines()}
+                         if r is not None and r.returncode == 0 else set())
+            missing = sorted({Path(str(c["file"])).as_posix() for c in changed}
+                             - committed)
+            if missing:
+                st.demote(s, st.GRADES[1], "instruction_change_missing")
+                data["instruction_change_missing"] = missing
+            else:
+                st.demote(s, None, "instruction_changed")
+            st.save(paths, s)
 
     # 3. 원격 상태 — 없으면 §P3 3지선다, non-FF 면 에스컬레이션
     rs = pr_mod.remote_state(root, config, branch)
@@ -5146,6 +5369,12 @@ def run_pr(root, run_id=None):
                          "`run_record_missing` 으로 등급이 내려갔다. 08 이 쓴 "
                          "기록을 커밋하고 다시 돌린다 (ADR-H052)."
                      % data["run_record_missing"]]
+        if data.get("instruction_change_missing"):
+            note += ["", "**08 지시문 검토가 바꾼 파일이 커밋돼 있지 않다**: %s — "
+                         "gap `instruction_change_missing` 으로 등급이 내려갔다. "
+                         "커밋하고 다시 돌린다 (ADR-H056)."
+                     % ", ".join("`%s`" % f
+                                 for f in data["instruction_change_missing"])]
         return st.envelope("pr", True, 0, s, data,
                            _pr_render(req, paths, req_path) + "\n".join(note), None)
     return st.envelope("pr", True, 0, s, data, _pr_render(req, paths, req_path),
