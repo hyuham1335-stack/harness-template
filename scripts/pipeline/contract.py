@@ -35,6 +35,7 @@ _SYMBOL = re.compile(r"[A-Za-z_][\w$]*")
 # 담으므로 PascalCase 를 함께 받는다.
 _DATA_SHAPE_NAME = re.compile(r"^(?:[A-Z][A-Za-z0-9]*|[A-Z][A-Z0-9_]*)$")
 _METHOD_PATH = re.compile(r"^\s*(?P<method>[A-Z]+)\s+(?P<path>/\S*)")
+_TAG = re.compile(r"\[([a-z][a-z0-9_-]*)\]")
 
 
 def section(text, heading):
@@ -139,9 +140,21 @@ def _entrypoints(block):
             m = _METHOD_PATH.match(span)
             if m:
                 out.append({"method": m.group("method"), "path": m.group("path"),
-                            "raw": span.strip()})
+                            "raw": span.strip(),
+                            "tags": _tags(line, m.group("path"))})
                 break
     return out
+
+
+def _tags(line, path):
+    """진입점 불릿 끝의 `[역할]` 태그 (ADR-H058).
+
+    어댑터 `param_styles` 가 `[]` 라 계약 줄에 `[id]` 가 정상으로 나온다. 그래서
+    태그는 **백틱을 지운 잔여 텍스트**에서만 뽑고, 경로 세그먼트와 같은 문자열은
+    받지 않는다 — 백틱 없이 적은 줄에서 `[id]` 가 역할이 되면 안 된다.
+    """
+    segments = set(_TAG.findall(path or ""))
+    return [t for t in _TAG.findall(_BACKTICK.sub("", line)) if t not in segments]
 
 
 def _errors(block):
