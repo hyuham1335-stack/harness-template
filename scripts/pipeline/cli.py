@@ -1881,8 +1881,7 @@ def _tests_required_render(root, ctx, s):
     test_role = trace_contract._test_role(ctx["config"])
     lines = ["## 게이트가 세는 테스트 — `%s` 역할" % test_role, "",
              "계약에서 기계로 뽑은 목록이다. 03 제출과 05 계약 대조가 **같은 목록**을 "
-             "센다 — baseline 기간(검사별 %d런)이 끝난 검사는 03 제출을 거부한다."
-             % trace_contract._baseline_runs(ctx["config"]), ""]
+             "센다 — 빠지면 03 제출이 거부된다.", ""]
     for ep in eps:
         need = "성공 경로"
         if ep.get("tags"):
@@ -2989,31 +2988,28 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
                 _same_command(s, "03"))
 
     req = _tests_required(root, s, ctx, adapter)
-    if req and req["blocking"]:
+    if req and req["findings"]:
         # **05 는 이것을 고치게 하지 못한다** (ADR-H058 결정 7). 계약 대조의
         # Major 는 원장에 `deferred` 로 쌓일 뿐 수리 루프를 돌리지 않는다 —
         # 워커 맥락이 살아 있는 여기서 요구한다.
         st.set_phase_status(s, "03-implement", "failed")
         st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
-                        tests_required=[f["code"] for f in req["blocking"]])
+                        tests_required=[f["code"] for f in req["findings"]])
         st.save(paths, s)
         return st.envelope(
-            "record", False, 8, s, {"tests_required": req["blocking"]},
+            "record", False, 8, s, {"tests_required": req["findings"]},
             "## 게이트가 세는 테스트가 없다\n\n%s\n\n패킷의 「게이트가 세는 "
             "테스트」 목록이다. 해당 역할이 테스트를 더하고 같은 명령을 다시 친다. "
-            "계약이 틀렸다고 판단되면 `CONTRACT_DEFECT` 로 보고한다."
-            % _findings_lines(req["blocking"]),
+            "계약이 틀렸다고 판단되면 `CONTRACT_DEFECT` 로 보고한다.\n\n"
+            "**테스트는 있는데 못 찾은 것이면 틀린 지적이다** — 어댑터 "
+            "`attribution.import_aliases`(import 경로 별칭) · `authz_denied_pattern`"
+            "(거부 단언 모양)을 고친다. 테스트에 이름만 적어 통과시키지 마라."
+            % _findings_lines(req["findings"]),
             _same_command(s, "03"))
 
     st.set_phase_status(s, "03-implement", "passed",
                         claims=file.name)
-    env = _advance_to_next(root, paths, s, phase_item, ctx)
-    if req and req["warn_only"]:
-        env["render"] = (
-            "## 경고 — 게이트가 세는 테스트가 빠졌다 (baseline 기간이라 통과)\n\n%s\n\n"
-            "baseline 이 끝나면 03 제출이 거부된다. 05 계약 대조에도 같은 지적이 "
-            "남는다.\n\n%s" % (_findings_lines(req["warn_only"]), env["render"]))
-    return env
+    return _advance_to_next(root, paths, s, phase_item, ctx)
 
 
 def _tests_required(root, s, ctx, adapter):

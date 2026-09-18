@@ -606,9 +606,9 @@ stateDiagram-v2
 | 그 유닛을 참조하는 테스트가 존재 | `untested_contract_item` | 심볼 문자열 **또는** 진입점 경로. Major, 테스트 역할 — **첫 3런 `warn_only`** (§E6) |
 | 계약의 오류 어휘 상수가 실재 | `missing_error_symbol` | `config.contract.sections.errors` 절. Critical, 선수리 |
 | 진입점이 실재 | `missing_entrypoint` | `adapter.entrypoint_resolver`. Critical, 선수리 |
-| 진입점마다 **그 진입점의** 테스트 파일이 존재 | `untested_entrypoint` | 같은 디렉터리의 스템 일치 ∪ import 지정자 해석(`attribution.import_aliases`). Major, 테스트 역할 — **첫 3런 `warn_only`** (ADR-H058) |
-| 오류 어휘 상수를 테스트가 쓴다 | `untested_error_symbol` | 테스트 본문에 `상수`. Major, 테스트 역할 — **첫 3런 `warn_only`** |
-| `[역할]` 태그 진입점의 거부 테스트 | `authz_untested` | 그 진입점의 테스트 파일에 `attribution.authz_denied_pattern`. Major, 테스트 역할 — **첫 3런 `warn_only`**. 패턴이 없으면 이 검사만 스킵 |
+| 진입점마다 **그 진입점의** 테스트 파일이 존재 | `untested_entrypoint` | 같은 디렉터리의 스템 일치 ∪ import 지정자 해석(`attribution.import_aliases`). Major, 테스트 역할 — **유예 없음**, 03 이 먼저 거부 (ADR-H058) |
+| 오류 어휘 상수를 테스트가 쓴다 | `untested_error_symbol` | 테스트 본문에 `상수`. Major, 테스트 역할 — **유예 없음** |
+| `[역할]` 태그 진입점의 거부 테스트 | `authz_untested` | 그 진입점의 테스트 파일에 `attribution.authz_denied_pattern`. Major, 테스트 역할 — **유예 없음**. 패턴이 없으면 이 검사만 스킵 |
 | 계약에 없는 신규 public 심볼 | `out_of_contract` | Major — **첫 3런 `warn_only`**. 계약이 이름 붙인 것은 유닛·오류 어휘뿐 아니라 `config.contract.sections.data_shapes` 절의 **타입·상수**도 포함한다 (M57 — 그 절이 파서에 등록된 적이 없어 P8 의 지적 6/6 이 구조적 오탐이었다) |
 
 - **「데이터 형태」 절은 형태로 거른다.** 백틱 안의 첫 심볼이 PascalCase 또는 UPPER_SNAKE 인 것만 센다 — 그 절은 산문이 섞여 있어 필드명·내장(`map`·`any`)·경로가 함께 백틱에 온다. 형태 없이 다 모으면 `symbols()` 가 넓어져 **오탐 대신 미탐**이 생긴다: 흔한 낱말이 계약 산문에 있다는 이유로 진짜 위반이 조용히 통과한다.
@@ -617,7 +617,7 @@ stateDiagram-v2
 - 커버리지 도구가 없는 상태에서 `untested_contract_item`이 "테스트 약화" 탐지를 대신한다.
 - `adapter.entrypoint_resolver`가 미정의면 진입점을 풀어야 하는 셋(`missing_entrypoint`·`untested_entrypoint`·`authz_untested`)만 스킵하고 나머지 5종은 수행한다 + 보고서에 사유와 함께 명시.
 - 테스트 존재 검사 넷(`untested_*`·`authz_untested`)은 **존재 검사이지 의미 검사가 아니다** — 단언이 맞는지는 test-quality 리뷰어가 본다.
-- **새 셋은 03 에서 먼저 요구한다** (ADR-H058 결정 6·7). 05 의 Major 는 수리 루프를 돌리지 않고 원장에 쌓일 뿐이라, 03 패킷이 계약에서 뽑은 목록을 주고 03 제출이 같은 함수(`required_tests`)로 센다 — baseline 기간은 경고, 끝나면 exit 8. 05 는 두 번째 방어선이다.
+- **새 셋은 03 에서 먼저 요구한다** (ADR-H058 결정 6·7). 05 의 Major 는 수리 루프를 돌리지 않고 원장에 쌓일 뿐이라, 03 패킷이 계약에서 뽑은 목록을 주고 03 제출이 같은 함수(`required_tests`)로 센다 — 빠지면 첫 런부터 exit 8(유예 없음, 결정 8). 05 는 두 번째 방어선이다.
 
 #### 리뷰어 선정 (결정론)
 
@@ -1112,7 +1112,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 - 판정은 **심볼명 문자열 + 진입점 경로** 둘 다 실패할 때만.
 - **첫 3런은 `warn`으로만 기록하고 finding으로 올리지 않는다.** 오탐률을 보고 나서 승격한다.
 - 같은 원칙을 `out_of_contract`에도 적용한다(생성 코드가 오탐을 만든다).
-- **"첫 3런" 은 검사별이다** (ADR-H058) — 그 검사가 지적(`warn_only` 포함)을 낸 런 수로 센다(`ledger.in_baseline_for`). 원장 전체 런 수로 재면 새 검사가 물려받은 원장에서 첫 런부터 baseline 을 벗어난다.
+- **"첫 3런" 은 검사별이고, 오탐 이력이 있는 두 검사(`untested_contract_item`·`out_of_contract`)에만 둔다** (ADR-H058) — 그 검사가 지적(`warn_only` 포함)을 낸 런 수로 센다(`ledger.in_baseline_for`). 원장 전체 런 수로 재면 새 검사가 물려받은 원장에서 첫 런부터 baseline 을 벗어난다.
 
 > **미검증 상속값** — "첫 3런"은 원본에서 왔고 이 리포에서 재본 적이 없다. 첫 세 런의 원장이 실제 오탐률을 만든다.
 

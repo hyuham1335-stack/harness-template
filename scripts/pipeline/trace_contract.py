@@ -12,9 +12,9 @@
 | `missing_error_symbol`    | 오류 어휘 상수가 실재하는가        | critical |
 | `missing_entrypoint`      | 진입점이 실재하는가                | critical |
 | `untested_contract_item`  | 그 유닛을 참조하는 테스트가 있는가 | major (첫 3런 warn_only) |
-| `untested_entrypoint`     | 진입점마다 그 진입점의 테스트 파일이 있는가 | major (첫 3런 warn_only) |
-| `untested_error_symbol`   | 오류 어휘 상수를 테스트가 한 번이라도 쓰는가 | major (첫 3런 warn_only) |
-| `authz_untested`          | `[역할]` 태그 진입점의 테스트에 거부 단언이 있는가 | major (첫 3런 warn_only) |
+| `untested_entrypoint`     | 진입점마다 그 진입점의 테스트 파일이 있는가 | major (유예 없음, 03 이 먼저 거부) |
+| `untested_error_symbol`   | 오류 어휘 상수를 테스트가 한 번이라도 쓰는가 | major (유예 없음, 03 이 먼저 거부) |
+| `authz_untested`          | `[역할]` 태그 진입점의 테스트에 거부 단언이 있는가 | major (유예 없음, 03 이 먼저 거부) |
 | `out_of_contract`         | 계약에 없는 신규 public 심볼      | major (첫 3런 warn_only) |
 
 "첫 3런" 은 **그 검사가 지적을 낸 런**으로 센다 (ADR-H058 · `ledger.in_baseline_for`).
@@ -48,9 +48,6 @@ CHECKS = ("missing_impl", "missing_error_symbol", "missing_entrypoint",
           "untested_contract_item", "untested_entrypoint", "untested_error_symbol",
           "authz_untested", "out_of_contract")
 
-# 테스트 존재 검사 셋 (ADR-H058). 03 제출과 05 가 같은 `_test_checks` 로 센다.
-TEST_CHECKS = ("untested_entrypoint", "untested_error_symbol", "authz_untested")
-
 _NO_RESOLVER = "어댑터에 `entrypoint_resolver` 가 없다"
 
 # 오탐이 잦은 둘. 상위 계층 테스트로만 커버되거나 테스트가 심볼명을 직접 쓰지
@@ -62,9 +59,13 @@ _NO_RESOLVER = "어댑터에 `entrypoint_resolver` 가 없다"
 # 오탐률은 아직 0런이다** — 78/78 은 고치기 전 값이고, 그것을 근거로 승격하면
 # 재지 않은 것을 잰 것처럼 쓰는 셈이다. 여기 남겨 두고 P4·P5 가 새 값을 만든다.
 #
-# 테스트 존재 검사 셋(ADR-H058)도 여기 둔다 — 오탐률을 아직 한 번도 재지 않았다.
-BASELINE_CHECKS = ("untested_contract_item", "untested_entrypoint",
-                   "untested_error_symbol", "authz_untested", "out_of_contract")
+# **테스트 존재 검사 셋(`_test_checks` — 03 제출과 05 가 같이 쓴다)은 여기 두지
+# 않는다** (ADR-H058 결정 8). 존재
+# 검사의 오탐은 구조적(재수출 import · 다른 거부 단언 모양)이라 매 런 똑같이 나고,
+# 런 수 유예는 그것을 고치지 못하고 거부만 미룬다. banana 실측(과거 계약 15개 ×
+# 현재 테스트 트리)에서 진입점 14 · 오류 상수 10 오탐 0, 자기 테스트를 빼면 14/14
+# 지적이었다. 위 둘은 78/78 · 6/6 오탐 이력이 있어 유예를 유지한다.
+BASELINE_CHECKS = ("untested_contract_item", "out_of_contract")
 
 DEFAULT_BASELINE_RUNS = 3
 
@@ -175,30 +176,22 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
     }
 
 
-def required_tests(root, config, adapter, contract_path, baseline_runs=None):
-    """테스트 존재 검사 셋만 — **03 제출이 부른다** (ADR-H058 결정 7).
+def required_tests(root, config, adapter, contract_path):
+    """테스트 존재 검사 셋만 — **03 제출이 부른다** (ADR-H058 결정 7·8).
 
-    05 의 `run()` 과 **같은 `_test_checks` 와 같은 baseline** 을 쓴다. 두 자리가
-    다른 목록을 보면 03 통과가 05 지적을 예고하지 못한다. 05 의 Major 는 원장에
-    `deferred` 로 쌓일 뿐 수리 루프를 돌리지 않으므로, 워커 맥락이 살아 있는
-    03 에서 요구해야 실제로 고쳐진다.
+    05 의 `run()` 과 **같은 `_test_checks`** 를 쓴다. 두 자리가 다른 목록을 보면
+    03 통과가 05 지적을 예고하지 못한다. 05 의 Major 는 원장에 `deferred` 로
+    쌓일 뿐 수리 루프를 돌리지 않으므로, 워커 맥락이 살아 있는 03 에서 요구해야
+    실제로 고쳐진다. 셋은 유예가 없어(`BASELINE_CHECKS` 밖) 지적이 곧 거부다.
 
-    반환: {"findings": [...], "blocking": [...], "warn_only": [...],
-           "skipped": [...], "skip_reasons": {...}}
+    반환: {"findings": [...], "skipped": [...], "skip_reasons": {...}}
     """
     root = Path(root)
     parsed = contract_mod.parse(Path(contract_path).read_text(encoding="utf-8"),
                                 config)
-    baseline_runs = (baseline_runs if baseline_runs is not None
-                     else _baseline_runs(config))
     tc = _test_checks(root, adapter, parsed, repo_files(root), _test_role(config))
-    in_baseline = {code: ledger.in_baseline_for(root, code, baseline_runs)
-                   for code in TEST_CHECKS}
-    _apply_baseline(root, tc["findings"], in_baseline, baseline_runs)
-    return {"findings": tc["findings"],
-            "blocking": [f for f in tc["findings"] if f["resolution"] != "warn_only"],
-            "warn_only": [f for f in tc["findings"] if f["resolution"] == "warn_only"],
-            "skipped": tc["skipped"], "skip_reasons": tc["skip_reasons"]}
+    return {"findings": tc["findings"], "skipped": tc["skipped"],
+            "skip_reasons": tc["skip_reasons"]}
 
 
 def _test_checks(root, adapter, parsed, files, test_role):

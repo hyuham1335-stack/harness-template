@@ -2453,6 +2453,15 @@ HEADING_ONLY_CONTRACT = """# 계약: 제목 유사도
 """
 
 
+def _assert_error_in_tests(repo):
+    """`CONTRACT_MD` 의 오류 어휘를 픽스처 테스트가 단언한다 — 03 이 첫 런부터
+    `untested_error_symbol` 을 거부하므로(ADR-H058 결정 8) 다른 검사를 묻는 테스트가
+    그 거부에 걸리지 않게 한다."""
+    p = repo / "src" / "lib" / "match.test.ts"
+    p.write_text(p.read_text(encoding="utf-8") + "// expect(code).toBe('MATCH_EMPTY')\n",
+                 encoding="utf-8")
+
+
 class TestRecord03ContractUnitsZero:
     """**계약 파일이 있는데 유닛이 0 이면 03 은 받지 않는다** (ADR-H049).
 
@@ -2501,7 +2510,9 @@ class TestRecord03ContractUnitsZero:
                             lambda *a, **k: {"id": "compile", "state": "ran",
                                              "exit": 0, "sec": 0.1})
         run_id, paths, claims = self._enter_03(repo, request_file, CONTRACT_MD)
-        claims.write_text(json.dumps(_claims(rules_read=_rules_read(repo))),
+        _assert_error_in_tests(repo)
+        claims.write_text(json.dumps(_claims(test=["src/lib/match.test.ts"],
+                                             rules_read=_rules_read(repo))),
                           encoding="utf-8")
         env = cli.run_record(repo, "03", str(claims), run_id=run_id)
         assert env["exit"] != 8, env["render"]
@@ -2574,7 +2585,9 @@ class TestRecord03RulesRead:
 
     def test_일치하면_지난다(self, repo, request_file, phases, monkeypatch):
         run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
-        env = self._submit(repo, run_id, claims, _claims(rules_read=_rules_read(repo)))
+        _assert_error_in_tests(repo)
+        env = self._submit(repo, run_id, claims, _claims(
+            test=["src/lib/match.test.ts"], rules_read=_rules_read(repo)))
         assert env["exit"] != 8, env["render"]
         _p, s = st.load(repo, run_id)
         assert st.phase_status(s, "03-implement") == "passed"
@@ -2643,7 +2656,7 @@ class TestTestsRequiredAt03:
     05 의 `contract-trace` 는 Major 를 원장에 `deferred` 로 쌓을 뿐 수리 루프를
     돌리지 않는다(루프는 리뷰어 병합 결과만 본다). 그래서 test-writer 가 목록을
     모르면 지적만 쌓이고 아무도 안 고친다. 03 패킷이 목록을 주고, 03 제출이 같은
-    검사를 돌린다 — baseline 기간은 경고, 끝나면 거부.
+    검사를 돌려 빠지면 첫 런부터 거부한다(결정 8 — 유예 없음).
     """
 
     def _enter(self, repo, request_file, monkeypatch, text=TESTS_REQUIRED_CONTRACT):
@@ -2654,13 +2667,6 @@ class TestTestsRequiredAt03:
 
     def _route(self, repo, test_body):
         _route(repo, "analyze", test_body)
-
-    def _close_baseline(self, repo, slug):
-        ldg.seed(repo)
-        for rid in ("r1", "r2", "r3"):
-            ldg.append(repo, rid, "05", [_finding(
-                category="TEST_MISSING_FAILURE_PATH", source="contract-trace",
-                rule_slug=slug)])
 
     def _submit(self, repo, run_id, claims):
         d = "src/app/api/analyze/"
@@ -2691,20 +2697,21 @@ class TestTestsRequiredAt03:
 
     # --- 제출 ---------------------------------------------------------------
 
-    def test_baseline_기간에는_경고하고_통과한다(self, repo, request_file, phases,
-                                                  monkeypatch):
+    def test_첫_런부터_거부한다_유예가_없다(self, repo, request_file, phases,
+                                           monkeypatch):
+        """원장이 비어 있어도 거부다 (ADR-H058 결정 8). 둘 다 빠지면 둘 다 알린다."""
         run_id, _paths, claims = self._enter(repo, request_file, monkeypatch)
         self._route(repo, "expect(res.status).toBe(200)\n")
         env = self._submit(repo, run_id, claims)
-        assert env["exit"] != 8, env["render"]
+        assert env["exit"] == 8, env["render"]
         _p, s = st.load(repo, run_id)
-        assert st.phase_status(s, "03-implement") == "passed"
+        assert st.phase_status(s, "03-implement") != "passed"
         assert "untested_error_symbol" in env["render"]
         assert "authz_untested" in env["render"]
+        assert "authz_denied_pattern" in env["render"], "오탐이면 고칠 자리를 알린다"
 
-    def test_baseline_이_끝난_검사는_03_을_거부한다(self, repo, request_file, phases,
-                                                     monkeypatch):
-        self._close_baseline(repo, "untested_error_symbol")
+    def test_빠진_테스트는_03_을_거부한다(self, repo, request_file, phases,
+                                         monkeypatch):
         run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
         self._route(repo, "expect(res.status).toBe(403)\n")
         env = self._submit(repo, run_id, claims)
@@ -2717,9 +2724,7 @@ class TestTestsRequiredAt03:
                if e["kind"] == "check_fail" and e["data"].get("tests_required")]
         assert got, "무엇이 빠졌는지가 이벤트에 남아야 한다"
 
-    def test_baseline_이_끝났어도_테스트가_있으면_지난다(self, repo, request_file,
-                                                         phases, monkeypatch):
-        self._close_baseline(repo, "untested_error_symbol")
+    def test_테스트가_있으면_지난다(self, repo, request_file, phases, monkeypatch):
         run_id, _paths, claims = self._enter(repo, request_file, monkeypatch)
         self._route(repo, "expect(body.code).toBe('MATCH_EMPTY')\n"
                           "expect(res.status).toBe(403)\n")
@@ -5635,10 +5640,16 @@ class TestContractTraceBaseline:
                 category="TEST_MISSING_FAILURE_PATH", source="contract-trace",
                 rule_slug="untested_contract_item")])
         got = _trace(repo, self._contract_untested(repo))
-        f = next(f for f in got["findings"] if f["code"] == "untested_error_symbol")
-        assert f["resolution"] == "warn_only"
         assert got["baseline"]["in_baseline"]["untested_contract_item"] is False
-        assert got["baseline"]["in_baseline"]["untested_error_symbol"] is True
+        assert got["baseline"]["in_baseline"]["out_of_contract"] is True
+
+    def test_test_existence_checks_have_no_grace(self, repo):
+        """존재 검사 셋은 유예가 없다 — 원장이 비어도 첫 런부터 지적이다 (ADR-H058 결정 8)."""
+        ldg.seed(repo)
+        got = _trace(repo, self._contract_untested(repo))
+        f = next(f for f in got["findings"] if f["code"] == "untested_error_symbol")
+        assert f["resolution"] == "deferred"
+        assert "untested_error_symbol" not in got["baseline"]["in_baseline"]
 
     def test_symbol_referenced_by_test_is_clean(self, repo):
         """심볼 문자열 **또는** 진입점 경로 — 둘 다 실패할 때만 지적한다."""
