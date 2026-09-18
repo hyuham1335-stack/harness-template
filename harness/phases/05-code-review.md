@@ -26,6 +26,7 @@
   "gate": {
     "runner": "adapter", "fail_fast": true, "rerun_failed_once": true,
     "steps": [
+      {"id": "compile", "loop_stage": true},
       {"id": "scoped", "tests_from": "contract", "loop_stage": true},
       {"id": "full", "once_after_loop": true, "assert_tests_ran": true}
     ]
@@ -66,7 +67,7 @@
 ```
 1. precheck --scope pr      정적 · 무료   예산 · 브랜치 · divergence · 인프라
 2. contract-trace           정적 · 무료   계약 ↔ 코드 대조 5종
-3. Critical 있으면 선수리 + gate --stage scoped                     → 2로 복귀
+3. Critical 있으면 선수리 + gate --phase 05 --stage loop             → 2로 복귀
 4. 리뷰:  diff ≤ merge_below_diff_lines  → 단일 에이전트 · 다중 체크리스트
           그보다 크면                      → 병렬 fan-out (profile 상한까지)
           인라인 상한 초과                  → 경로 전달 폴백
@@ -85,7 +86,10 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
   마라** — 범위와 히스토리는 사람의 것이다. **exit 10** 은 인프라이고 카운터를
   소모하지 않는다.
 - `contract-trace` **exit 8** 은 "리뷰어를 부르기 전에 고쳐라"다. 고친 뒤
-  `gate --phase 04 --stage scoped` 로 재게이트하고 다시 친다.
+  `gate --phase 05 --stage loop` 로 재게이트하고 다시 친다. **`loop` 는 이
+  페이즈가 선언한 루프 구간 전부**(compile → scoped)다 — scoped 만 돌리면
+  테스트 러너가 타입체크 없이 통과시킨 타입 에러가 PR 까지 흘러간다
+  (ADR-H046). 수리 뒤 재게이트도 같은 명령이다.
 - `entrypoint_resolver` 가 없으면 그 검사만 빠지고 `skipped` 에 남는다.
   **스킵을 통과로 적지 마라.**
 

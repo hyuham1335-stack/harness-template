@@ -124,6 +124,11 @@ python scripts/pipeline/cli.py promote --scan --run-id {run_id}
 `duplicate` 면 `create` 가 금지되고, `contradicts` 면 자동 쓰기가 차단되며
 에스컬레이션이다. **"일단 붙이기"가 선택지에 없다.**
 
+**`skip` 에는 `rationale` 이 필수다** — 비면 exit 8 (ADR-H051). 그리고
+승격 판정 시한(원장이 본 런 ≥ 9, ADR-H033)이 지난 뒤에도 후보를 `skip` 으로
+닫으면 `promote --flush` 가 gap `promotion_overdue` 로 등급을 내린다 — 시한은
+더 이상 표시만이 아니다. 판정하거나 임계를 고친다.
+
 `--apply` 는 **규칙 전용 브랜치**에서 돈다. 자체 게이트(`lint` + `check`)가
 실패하면 브랜치를 폐기하고 `rejected` + 사유를 남긴다 — **기능 PR 은 영향받지
 않는다.** 자체 게이트는 **네가 그 브랜치에서 돌린다** — 실행기가 강제하지
@@ -196,6 +201,11 @@ finding 은 **05 와 같은 스키마**를 쓴다 — **`rule_slug` 규칙도 �
     `path` 없이 `repaired` 를 주장할 수도 없다
   - 고쳐진 지적을 `deferred` 로 두면 **`EXCLUDED_FROM_COUNT` 밖이라 "반복되는
     미해결" 로 승격 집계에 학습된다** (M49)
+- **지적이 틀렸다고 직접 확인했으면 `"resolution": "false_positive"` 를 적고
+  `evidence` 에 왜 틀렸는지 적어라** (ADR-H050). `deferred` 로 두면 오탐이
+  "미해결" 로 승격 집계에 들어가고, 리뷰어 품질을 셀 축이 사라진다 — 08 이
+  리뷰어별 `repaired / deferred / false_positive` 를 센다. 확인하지 않은
+  것을 오탐으로 적지 마라 — 그것은 `deferred` 다.
 - **05 가 이미 낸 것과 같은 결함이면 `reraised_from_previous` 로 가리켜라.**
   `escaped_05` 의 대조는 `sha1(category|target_role|title)` 이라 **네가 같은
   결함에 다른 이름을 붙이면 새 것으로 센다** — 그러면 05 라우팅 품질의 유일한

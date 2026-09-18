@@ -40,7 +40,12 @@ STATUS = ("active", "proposed", "retired", "escalate_only", "unpromotable")
 # 승격 자체가 성립하지 않는 상태. 임계를 넘어도 후보가 되지 않는다.
 NEVER_PROMOTE = ("escalate_only", "unpromotable", "retired")
 
-RESOLUTIONS = ("repaired", "deferred", "dropped_by_enforcement", "warn_only")
+# `false_positive` — 리뷰어가 낸 지적이 **틀렸다**고 메인이 확인한 것 (ADR-H050).
+# 파일럿 140건에 이 축이 없어 오탐이 `deferred` 로 남았고, 승격 집계가 그것을
+# "반복되는 미해결" 로 학습했다. 리뷰어 품질을 세는 유일한 축이라 08 이
+# 리뷰어별로 센다 (`by_reporter`).
+RESOLUTIONS = ("repaired", "deferred", "dropped_by_enforcement", "warn_only",
+               "false_positive")
 SOURCES = ("reviewer", "code-review", "external", "human", "contract-trace")
 
 # (누적 횟수, 최소 distinct_runs). **여섯 숫자 전부 미검증 상속값이다** —
@@ -67,7 +72,7 @@ PROMOTION_VERDICT_AT_RUNS = 9
 
 # 승격 집계에서 빼는 resolution. baseline 기간(§E6)의 관측은 오탐률을 아직
 # 모르는 상태의 것이라 학습 근거가 될 수 없다.
-EXCLUDED_FROM_COUNT = ("warn_only",)
+EXCLUDED_FROM_COUNT = ("warn_only", "false_positive")
 
 _SEVERITY_RANK = {"minor": 0, "major": 1, "critical": 2}
 
@@ -579,6 +584,30 @@ def distinct_runs(root):
     """
     return len({r.get("run_id") for r in read_all(root)
                 if not r.get("_corrupt") and r.get("run_id")})
+
+
+def by_reporter(root):
+    """리뷰어(`reported_by`)별 resolution 집계 (ADR-H050). **승격과 무관한 관측이다.**
+
+    `repaired / deferred / false_positive` 의 비율이 리뷰어 품질의 첫 실측이다 —
+    파일럿에서는 오탐 축이 없어 "리뷰어 지적 62건 중 27% 수리" 까지만 셌고
+    나머지가 틀린 지적인지 미룬 지적인지 가를 수 없었다. 여러 리뷰어가 함께
+    낸 지적은 각자에게 1 로 센다.
+    """
+    buckets = {}
+    for row in observations(root):
+        res = row.get("resolution")
+        for code in row.get("reported_by") or ["?"]:
+            b = buckets.setdefault(code, {"reporter": code, "total": 0})
+            b["total"] += 1
+            b[res] = b.get(res, 0) + 1
+    out = []
+    for b in buckets.values():
+        for res in RESOLUTIONS:
+            b.setdefault(res, 0)
+        out.append(b)
+    out.sort(key=lambda b: (-b["total"], b["reporter"]))
+    return out
 
 
 def verdict_deadline(root):

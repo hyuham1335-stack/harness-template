@@ -10,6 +10,8 @@
 신호이므로, 필드를 늘리지 말고 코어에 스테이지·신호를 추가한다.
 """
 
+import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -40,6 +42,39 @@ def load(root):
         except (OSError, ValueError):
             calibration = None
     return config, adapter, calibration
+
+
+def raise_tests_floor(root, config, ran, run_id):
+    """`derived.tests_ran_floor` 를 **단조 증가**로 올린다. 반환 {from, to} 또는 None.
+
+    캘리브레이션은 1회 측정이라 그 뒤 테스트가 늘어도 하한이 안 움직인다 —
+    파일럿 15런이 전부 `expected_min: 14` 로 돌았고 마지막 런은 652개였다
+    (ADR-H047). 07 의 `promote --flush` 가 런당 한 번 도는 자리라 거기서
+    부른다. 내리지는 않는다 — 급감을 잡는 것이 이 값의 목적이다.
+    `TESTS_FLOOR_RATIO` 는 `calibrate` 와 같은 상수를 쓴다.
+    """
+    if not ran or ran <= 0:
+        return None
+    cal_rel = (config or {}).get("calibration_file")
+    if not cal_rel:
+        return None
+    path = Path(root) / cal_rel
+    if not path.exists():
+        return None
+    try:
+        cal = harness._read_json(path)
+    except (OSError, ValueError):
+        return None
+    derived = cal.setdefault("derived", {})
+    old = derived.get("tests_ran_floor")
+    new = int(math.floor(ran * harness.TESTS_FLOOR_RATIO))
+    if old is not None and new <= old:
+        return None
+    derived["tests_ran_floor"] = new
+    derived["tests_ran_source"] = {"run_id": run_id, "ran": ran}
+    path.write_text(json.dumps(cal, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+    return {"from": old, "to": new}
 
 
 def stage_spec(adapter, name):

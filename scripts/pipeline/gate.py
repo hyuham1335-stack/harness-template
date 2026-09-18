@@ -66,7 +66,8 @@ def run_gate(root, config, adapter, calibration, state, phase_front,
 
     steps = ((phase_front.get("gate") or {}).get("steps") or [])
     if only_stage:
-        steps = [s for s in steps if s.get("id") == only_stage]
+        wanted = resolve_stage_selector(steps, only_stage)
+        steps = [s for s in steps if s.get("id") in wanted]
 
     parsed = _parse_contract(root, config, state, replay)
     symbols = contract_mod.symbols(parsed) if parsed else set()
@@ -128,6 +129,23 @@ def run_gate(root, config, adapter, calibration, state, phase_front,
         GRADE_GAPS if loop_failed is None else None)
     report["gaps"] = gaps
     return report
+
+
+def resolve_stage_selector(steps, selector):
+    """`--stage` 인자를 스테이지 id 목록으로. **선언이 단일 출처다** (ADR-H046).
+
+    - `loop` — 그 페이즈의 루프 구간 전부 (`loop_stage` 까지). 04 는
+      compile·lint·check·scoped, 05 는 compile·scoped 다. 지시문이 스테이지
+      이름을 나열하면 페이즈 선언을 고쳐도 지시문은 옛 목록을 돈다 — 파일럿
+      e355 의 재게이트가 `--stage scoped` 하나만 돌아 타입 에러를 흘린 것이
+      그 모양이다 (커밋 `de4760e`).
+    - `a,b` — 쉼표 목록.
+    - 그 밖 — 단일 id (종전 동작).
+    """
+    if selector == "loop":
+        return [s.get("id") for s in steps
+                if s.get("loop_stage") or _before_loop_end(steps, s.get("id"))]
+    return [x.strip() for x in str(selector).split(",") if x.strip()]
 
 
 def _before_loop_end(steps, sid):

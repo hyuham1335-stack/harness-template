@@ -966,7 +966,7 @@ gap 은 effort 와 **따로 센다**:
 ```json
 {"run_id":"…","phase":"05","finding_key":"…","category":"AUTHZ_MISSING_RULE","severity":"critical",
  "target_role":"impl","title_norm":"…",
- "resolution":"repaired|deferred|dropped_by_enforcement|warn_only","repaired_by":"main|agent",
+ "resolution":"repaired|deferred|dropped_by_enforcement|warn_only|false_positive","repaired_by":"main|agent",
  "reported_by":["{code}"],"source":"reviewer|code-review|external|human|contract-trace",
  "rule_slug":"doc_contradicts_code","rule_key":"…","ts":"…"}
 ```

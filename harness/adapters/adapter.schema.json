@@ -221,6 +221,27 @@
         },
         "pattern": {
           "type": "string"
+        },
+        "param_styles": {
+          "description": "계약의 {name} 파라미터를 실제 경로에서 찾을 때 시도할 괄호 쌍. 두 글자 문자열(예: \"[]\"). 코어는 읽기만 한다 (ADR-H049).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^..$"
+          }
+        },
+        "_param_styles_note": {
+          "type": "string"
+        },
+        "implied_exports": {
+          "description": "진입점 관례 파일이 스택 관례로 내보내는 이름. 계약 유닛에 없어도 out_of_contract 가 아니다 (ADR-H049).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "_implied_exports_note": {
+          "type": "string"
         }
       }
     },

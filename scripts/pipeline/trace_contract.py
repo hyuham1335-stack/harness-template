@@ -399,6 +399,12 @@ def _out_of_contract(root, adapter, parsed, changed, primary):
     globs = (adapter.get("attribution") or {}).get("test_file_globs") or []
 
     known = contract_mod.symbols(parsed)
+    # **진입점 파일이 관례로 내보내는 이름은 계약 밖이 아니다** (ADR-H049).
+    # 라우트 파일의 `POST` · `maxDuration` 은 스택이 정한 이름이라 계약의
+    # `## 유닛` 에 다시 적을 것이 아닌데, 파일럿에서 9회/7런 반복 오탐이 났다
+    # (`maxduration-route-config-not-out-of-contract`). 어댑터가 선언한다.
+    implied = set((adapter.get("entrypoint_resolver") or {})
+                  .get("implied_exports") or [])
     out = []
     for rel in changed:
         if harness.glob_any(globs, rel):
@@ -406,9 +412,12 @@ def _out_of_contract(root, adapter, parsed, changed, primary):
         text = _added_lines(root, rel)
         if text is None:
             continue
+        at_entrypoint = bool(implied) and contract_mod.is_entrypoint_file(adapter, rel)
         for m in rx.finditer(text):
             name = m.group("name")
             if name in known:
+                continue
+            if at_entrypoint and name in implied:
                 continue
             out.append(_finding(
                 "out_of_contract", "major", primary,
