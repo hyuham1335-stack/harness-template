@@ -1819,6 +1819,8 @@ def render_packet(root, phase, ctx, s, checks=None):
             % ((s.get("profile") or {}).get("name")))
     elif role_tpl:
         parts.append(role_tpl)
+        if pid == "03-implement":
+            parts.append(_tests_required_render(root, ctx, s))
     parts.append(_section(body, "## 제출 형식"))
     parts.append(_section(body, "## 금지"))
 
@@ -1855,6 +1857,41 @@ def render_packet(root, phase, ctx, s, checks=None):
         cmd = ("python scripts/pipeline/cli.py record --phase %s --file <산출물> "
                "--run-id %s" % (pid.split("-")[0], s["run_id"]))
     return "\n\n".join(p for p in parts if p), cmd
+
+
+def _tests_required_render(root, ctx, s):
+    """03 패킷 — 계약에서 **기계로** 뽑은, 게이트가 세는 테스트 목록 (ADR-H058).
+
+    게이트가 계약 파서로 세는데 워커는 산문 지시문만 받으면, 워커가 같은 목록을
+    스스로 유도해야 한다. 같은 파서의 결과를 그대로 준다. 03 의 `requires` 가
+    계약 파일을 요구하므로 이 패킷이 렌더될 때 계약은 이미 있다.
+    """
+    import contract as contract_mod
+    import trace_contract
+
+    if ((s.get("contract") or {}).get("mode")) == "no_contract":
+        return ""
+    full = Path(root) / resolve("${run.contract_file}", ctx)
+    if not full.exists():
+        return ""
+    parsed = contract_mod.parse(full.read_text(encoding="utf-8"), ctx["config"])
+    eps, errors = parsed.get("entrypoints") or [], parsed.get("errors") or []
+    if not eps and not errors:
+        return ""
+    test_role = trace_contract._test_role(ctx["config"])
+    lines = ["## 게이트가 세는 테스트 — `%s` 역할" % test_role, "",
+             "계약에서 기계로 뽑은 목록이다. 03 제출과 05 계약 대조가 **같은 목록**을 "
+             "센다 — baseline 기간(검사별 %d런)이 끝난 검사는 03 제출을 거부한다."
+             % trace_contract._baseline_runs(ctx["config"]), ""]
+    for ep in eps:
+        need = "성공 경로"
+        if ep.get("tags"):
+            need += " + **거부 경로**(%s)" % ", ".join("`%s`" % t for t in ep["tags"])
+        lines.append("- 진입점 `%s` — 그 진입점 파일 옆의 같은 이름 테스트, 또는 그 "
+                     "파일을 import 하는 테스트에 %s" % (ep.get("raw"), need))
+    for name in errors:
+        lines.append("- 오류 어휘 `%s` — 이 상수를 단언하는 테스트" % name)
+    return "\n".join(lines)
 
 
 def _deferred_render(s):
@@ -2951,9 +2988,49 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
                 "## 컴파일 실패\n\n```\n%s\n```" % (result.get("output") or "")[:2000],
                 _same_command(s, "03"))
 
+    req = _tests_required(root, s, ctx, adapter)
+    if req and req["blocking"]:
+        # **05 는 이것을 고치게 하지 못한다** (ADR-H058 결정 7). 계약 대조의
+        # Major 는 원장에 `deferred` 로 쌓일 뿐 수리 루프를 돌리지 않는다 —
+        # 워커 맥락이 살아 있는 여기서 요구한다.
+        st.set_phase_status(s, "03-implement", "failed")
+        st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
+                        tests_required=[f["code"] for f in req["blocking"]])
+        st.save(paths, s)
+        return st.envelope(
+            "record", False, 8, s, {"tests_required": req["blocking"]},
+            "## 게이트가 세는 테스트가 없다\n\n%s\n\n패킷의 「게이트가 세는 "
+            "테스트」 목록이다. 해당 역할이 테스트를 더하고 같은 명령을 다시 친다. "
+            "계약이 틀렸다고 판단되면 `CONTRACT_DEFECT` 로 보고한다."
+            % _findings_lines(req["blocking"]),
+            _same_command(s, "03"))
+
     st.set_phase_status(s, "03-implement", "passed",
                         claims=file.name)
-    return _advance_to_next(root, paths, s, phase_item, ctx)
+    env = _advance_to_next(root, paths, s, phase_item, ctx)
+    if req and req["warn_only"]:
+        env["render"] = (
+            "## 경고 — 게이트가 세는 테스트가 빠졌다 (baseline 기간이라 통과)\n\n%s\n\n"
+            "baseline 이 끝나면 03 제출이 거부된다. 05 계약 대조에도 같은 지적이 "
+            "남는다.\n\n%s" % (_findings_lines(req["warn_only"]), env["render"]))
+    return env
+
+
+def _tests_required(root, s, ctx, adapter):
+    """03 제출의 테스트 존재 검사. 계약이 없는 런은 None."""
+    import trace_contract
+
+    if ((s.get("contract") or {}).get("mode")) == "no_contract":
+        return None
+    full = Path(root) / resolve("${run.contract_file}", ctx)
+    if not full.exists():
+        return None
+    return trace_contract.required_tests(root, ctx["config"], adapter, full)
+
+
+def _findings_lines(findings):
+    return "\n".join("- `%s` → **%s**: %s" % (f["code"], f["target_role"], f["title"])
+                     for f in findings)
 
 
 def _rules_read_expected(root, config):

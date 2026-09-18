@@ -617,6 +617,7 @@ stateDiagram-v2
 - 커버리지 도구가 없는 상태에서 `untested_contract_item`이 "테스트 약화" 탐지를 대신한다.
 - `adapter.entrypoint_resolver`가 미정의면 진입점을 풀어야 하는 셋(`missing_entrypoint`·`untested_entrypoint`·`authz_untested`)만 스킵하고 나머지 5종은 수행한다 + 보고서에 사유와 함께 명시.
 - 테스트 존재 검사 넷(`untested_*`·`authz_untested`)은 **존재 검사이지 의미 검사가 아니다** — 단언이 맞는지는 test-quality 리뷰어가 본다.
+- **새 셋은 03 에서 먼저 요구한다** (ADR-H058 결정 6·7). 05 의 Major 는 수리 루프를 돌리지 않고 원장에 쌓일 뿐이라, 03 패킷이 계약에서 뽑은 목록을 주고 03 제출이 같은 함수(`required_tests`)로 센다 — baseline 기간은 경고, 끝나면 exit 8. 05 는 두 번째 방어선이다.
 
 #### 리뷰어 선정 (결정론)
 

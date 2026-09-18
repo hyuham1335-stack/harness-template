@@ -2685,7 +2685,8 @@ ADR 을 인용한 새 ADR 로 한다.
 ### ADR-H058: 계약·인가 테스트는 존재했지만 요구되지 않았다 — contract-trace 가 센다
 
 **날짜**: 2026-09-19 · **상태**: 제안됨 · **구현 상태**: 구현됨 (2026-09-19 — `trace_contract` 의
-`untested_entrypoint` · `untested_error_symbol` · `authz_untested` · `ledger.in_baseline_for`. e2e 준비와
+`untested_entrypoint` · `untested_error_symbol` · `authz_untested` · `ledger.in_baseline_for` · 03 패킷 목록과
+03 제출 검사 `required_tests`. e2e 준비와
 PR 본문 재구성은 후속 묶음에서 여기 추기)
 
 **맥락**: 파일럿 15런 뒤의 테스트는 38파일 652개였다 — 라우트·스키마 계약 테스트 16파일, 인가 거부(403)
@@ -2718,6 +2719,17 @@ PR 본문 재구성은 후속 묶음에서 여기 추기)
    배열에 섞지 않는다. 넣으면 리뷰어가 같은 슬러그를 내 버킷이 섞이고 `trace_repeats` 분리
    ([[ADR-H056]] 결정 2)가 흐려진다.
 5. test-writer 지시문에 한 문단: 진입점마다 성공 1 · 오류 어휘마다 1 · 태그 진입점은 거부 1 — 게이트가 센다.
+6. **03 패킷이 목록을 준다** (`cli._tests_required_render`). 게이트는 계약 파서로 세는데 워커가 산문
+   지시문만 받으면 같은 목록을 스스로 유도해야 한다 — 같은 파서의 결과(진입점·태그·오류 상수)를
+   그대로 싣는다. 03 의 `requires` 가 계약 파일을 요구하므로 패킷 렌더 시점에 계약은 있다.
+7. **03 제출이 같은 검사를 돌린다** (`trace_contract.required_tests` · `submit_checks.tests_required`).
+   검사만 05 에 더하면 **아무도 고치지 않는다** — 05 수리 루프는 리뷰어 병합 결과의 Critical·Major 만
+   돌리고, 계약 대조의 Major 는 원장에 `deferred` 로 쌓여 [[ADR-H056]] 결정 2 에 따라
+   `trace_repeats` 로 보고서에 찍힐 뿐이다. 워커 맥락이 살아 있는 03 에서 요구한다. 05 와 **같은
+   `_test_checks` · 같은 검사별 baseline** 을 쓴다 — baseline 기간인 검사는 경고하고 통과시키며
+   (05 가 원장에 `warn_only` 로 쌓아 기간을 센다), 끝난 검사는 exit 8 이다. 재지 않은 오탐률로
+   워커를 거부 루프에 넣지 않기 위해서다. `untested_contract_item` 은 03 에서 요구하지 않는다 — 원인
+   미규명 오탐 6/6(§E6)이 남아 있다.
 
 **트레이드오프**: 셋 다 **존재 검사이지 의미 검사가 아니다.** 커버리지 도구가 없는 stdlib 실행기의
 알려진 한계다 — 상수를 주석에 적거나 `403` 을 아무 단언에 쓰면 통과한다. 단언이 맞는지는

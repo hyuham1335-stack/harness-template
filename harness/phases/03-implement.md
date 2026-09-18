@@ -26,7 +26,9 @@
      "on_fail": 8},
     {"id": "clean_ownership", "from": "config.roles",
      "except": "config.main_owned_paths",
-     "claims": "${run.dir}/03_claims.json", "on_fail": 8}
+     "claims": "${run.dir}/03_claims.json", "on_fail": 8},
+    {"id": "tests_required", "from": "${run.contract_file}",
+     "unless": "state.contract.mode == \"no_contract\"", "on_fail": 8}
   ],
   "gate": {"runner": "adapter", "fail_fast": true, "steps": [{"id": "compile"}]},
   "allow": {"agents": "config.roles[].agent", "parallel": true,
@@ -71,7 +73,11 @@
 3. **역할 전원을 한 메시지 안에서 동시 호출한다.** 각 역할에게 지시문 패킷을
    준다 — 패킷에 **소유권 표**가 들어 있고, 그 표가 소유 경계의 유일한 출처다.
 4. 각 역할의 제출물을 받아 `03_claims.json` 으로 합친다.
-5. 소유 검사와 컴파일 게이트를 돌린다.
+5. 소유 검사와 컴파일 게이트를 돌린다. 이어서 **테스트 존재 검사**(`tests_required` —
+   진입점·오류 어휘·`[역할]` 태그의 테스트)를 05 계약 대조와 같은 함수로 돌린다.
+   baseline 기간인 검사는 경고만, 끝난 검사는 exit 8 이다 (ADR-H058). 05 의 Major 는
+   수리 루프를 돌리지 않으므로 여기서 요구해야 고쳐진다. 목록은 패킷의
+   「게이트가 세는 테스트」 절이 계약에서 뽑아 준다 — 역할에게 그대로 넘긴다.
 
 ### docs 레인 — 역할 0명 (ADR-H044)
 
