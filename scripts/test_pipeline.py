@@ -7444,14 +7444,6 @@ class TestPhase05Ledgering:
 # ---------------------------------------------------------------------------
 
 
-class TestFormatRejectCount:
-    """[[ADR-H052]] 결정 3 — 형식 반려(exit 8 재제출)를 이벤트로 세고 08 에 적는다.
-
-    `e7ff` 의 sec 는 3라운드에서 accounting 형식 위반으로 두 번 튕겨 failed 로
-    닫혔는데 원장에는 '실패' 로만 남았다. 계수 지점은 `run_record` 하나다 —
-    핸들러가 exit 8 을 돌려주면 그 자리에서 `format_reject` 를 남긴다.
-    """
-
 class TestReview05SeverityRaisedGrant:
     """[[ADR-H048]] 결정 2 — 재상정 승격은 지급이다.
 
