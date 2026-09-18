@@ -415,7 +415,7 @@ def _req_adapter_stage(root, req, ctx, state):
     except (OSError, ValueError, KeyError) as exc:
         return _bad("adapter_stage", "어댑터를 읽지 못했다: %s" % exc)
     absent = [n for n in req.get("steps") or []
-              if adapters.stage_state(adapter, n) == "absent"]
+              if adapters.stage_state(adapter, n) != "present"]
     if not absent:
         return _ok("adapter_stage")
     msg = "이 스택에 없는 스테이지: %s — 없는 것이지 통과한 것이 아니다" % ", ".join(absent)
@@ -4094,7 +4094,7 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
         # — 사람이 할 일이 밀렸다는 표시이지 이 런의 관측 결손이 아니다 (ADR-H047).
         import report as rep
         for gap in got.get("gaps") or []:
-            st.demote(s, None if gap in rep.NON_DEMOTING_GAPS else st.GRADES[1], gap)
+            st.demote(s, None if rep.is_non_demoting(gap) else st.GRADES[1], gap)
         st.append_event(paths, "check_fail" if got["exit"] else "stage_done",
                         cmd="precheck", phase=pid, exit=got["exit"])
         if got["exit"] == 9:
@@ -4481,6 +4481,12 @@ def run_report(root, out=None, run_id=None):
                           "by_reporter": ledger_mod.by_reporter(root)}
     except (OSError, ValueError, KeyError):
         pass
+    # `verify-adapter` 기준 충족도 기계 사실이다 — 보고서가 말하지 않으면
+    # 기준을 넘은 뒤에도 `adapter_unverified` 가 영구 gap 으로 남는다.
+    if not _adapter.get("verified"):
+        data["adapter_verify"] = {
+            "qualified": len(harness.qualified_runs(root, _config.get("adapter"))),
+            "min_runs": harness.ADAPTER_VERIFY_MIN_RUNS}
     # 소요는 `events.jsonl` 의 유도값이고, 08 시점에 그 파일은 이미 완결이다
     # — 미완 구간이 없다. 비용은 그 반대라 **있으면** 적고 아니면 `미계측` 이다
     # (ADR-H032 · ADR-H052 결정 2).
@@ -5159,7 +5165,8 @@ def _approval_prompt(root, s, rs, branch, config):
     b = got["budget"]
     r05 = s.get("review05") or {}
     gaps = s.get("gaps") or []
-    skipped = [g for g in gaps if g.startswith("stage_absent:")] or ["없음"]
+    skipped = [g for g in gaps
+               if g.startswith(("stage_absent:", "stage_na:"))] or ["없음"]
     return "\n".join([
         "## PR 생성 승인 요청",
         "",

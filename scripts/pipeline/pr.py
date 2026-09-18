@@ -364,7 +364,7 @@ def build_body(root, paths, state, config):
     stat = _diff_stat(root, config)
     adopted = _adopted(paths)
     minors = _minor_open(paths, state)
-    skipped = [g for g in gaps if g.startswith(("stage_absent:",
+    skipped = [g for g in gaps if g.startswith(("stage_absent:", "stage_na:",
                                                 "stage_not_touched:",
                                                 "infra_skipped:"))]
 

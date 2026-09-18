@@ -43,7 +43,7 @@
       "timeout_sec": 900,
       "when_touched": ["next.config.ts", "package.json", "tsconfig.json", "src/app/**"]
     },
-    "docs": {"cmd": null, "_note": "문서 빌드 산출물이 없다."}
+    "docs": {"cmd": null, "not_applicable": "문서 빌드 산출물이 없다."}
   },
 
   "test_report": {

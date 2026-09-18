@@ -85,9 +85,14 @@ def stage_state(adapter, name):
     """`absent` 는 **없는 것**이지 통과한 것이 아니다.
 
     게이트가 이 둘을 같은 칸에 넣으면 스크립트를 지운 스택이 조용히 초록불이 된다.
+    `na` 는 어댑터가 사유(`not_applicable`)를 적어 **구조적으로 없다**고 선언한
+    것이다 — 미룬 부재(`absent`)와 같은 gap 코드면 둘이 구분되지 않는다
+    (ADR-H047 추기).
     """
     spec = stage_spec(adapter, name)
     if spec is None or spec.get("cmd") is None:
+        if spec and str(spec.get("not_applicable") or "").strip():
+            return "na"
         return "absent"
     return "present"
 
@@ -206,8 +211,9 @@ def run_stage(root, adapter, name, select=None, log_path=None,
     반환에서 **못 잰 칸은 만들지 않는다** — 스킵된 스테이지에 `sec: 0` 을 넣으면
     "안 돌았다"와 "0초에 끝났다"가 같은 칸에 들어간다.
     """
-    if stage_state(adapter, name) == "absent":
-        return {"id": name, "state": "skipped", "reason": "absent"}
+    state = stage_state(adapter, name)
+    if state != "present":
+        return {"id": name, "state": "skipped", "reason": state}
 
     argv = stage_argv(root, adapter, name, select)
     timeout, t_src = stage_timeout(adapter, calibration, name)

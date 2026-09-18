@@ -696,6 +696,14 @@ class CalibrateTest(DoctorTestBase):
         self.assertNotIn("e2e", ran)
         self.assertNotIn("docs", ran)
 
+    def test_not_applicable_stage_is_na_not_absent(self):
+        """구조적으로 없는 스테이지(`not_applicable`)는 부재와 다른 칸이다 (ADR-H047 추기)."""
+        harness.run_calibrate(self.root, runner=self.fake_runner())
+        stages = self.load()["stages"]
+        self.assertEqual("na", stages["docs"]["state"])
+        self.assertIn("문서 빌드", stages["docs"]["reason"])
+        self.assertEqual("absent", stages["e2e"]["state"])
+
     def test_scoped_is_skipped_without_select(self):
         harness.run_calibrate(self.root, runner=self.fake_runner())
         entry = self.load()["stages"]["scoped"]

@@ -385,6 +385,10 @@
           "description": "모노레포용 스테이지별 오버라이드.",
           "type": "string"
         },
+        "not_applicable": {
+          "description": "`cmd: null` 인 스테이지가 이 스택에 **구조적으로 없다**는 선언과 그 사유. 있으면 게이트가 `stage_na:<id>` 로 기록하고 등급을 내리지 않는다. 없으면 `stage_absent:<id>` — 미룬 부재이고 등급이 내려간다 (ADR-H047 추기).",
+          "type": "string"
+        },
         "timeout_sec": {
           "type": "integer",
           "minimum": 1

@@ -3132,14 +3132,17 @@ class TestGateReplay:
         assert env["exit"] in (0, 11), env["render"]
 
     def test_all_pass_grades_pass_with_gaps_for_absent_stages(self, gated, fxdir):
-        """cmd:null 스테이지는 스킵으로 기록되고 등급에 반영된다."""
+        """cmd:null 스테이지는 스킵으로 기록되고 등급에 반영된다.
+
+        docs 는 어댑터가 `not_applicable` 로 선언해 `stage_na` 다 — 부재가 아니다.
+        """
         repo, paths, s = gated
         fx = make_fixture(fxdir, "all-pass", dict(ALL_PASS))
         env = _gate(repo, fx)
         report = json.loads((paths.run_dir / "04_gate_report.json")
                             .read_text(encoding="utf-8"))
         assert "stage_absent:e2e" in report["gaps"]
-        assert "stage_absent:docs" in report["gaps"]
+        assert "stage_na:docs" in report["gaps"]
         assert report["grade"] == "PASS_WITH_GAPS"
 
     def test_greenfield_zero_tests_is_not_a_green_light(self, gated, fxdir):
@@ -5957,6 +5960,111 @@ class TestPrecheckCalibrationStale:
         s = {"gaps": ["calibration_stale"], "grade": "PASS"}
         assert "calibrate" in rep_mod.explain_gap("calibration_stale")
         assert "calibration_stale" in rep_mod.NON_DEMOTING_GAPS
+
+
+class TestStageNotApplicable:
+    """[[ADR-H047]] 추기 — 스택에 **구조적으로 없는** 스테이지는 부재와 다른 사실이다.
+
+    banana 15런 전부 `stage_absent:docs` 로 강등됐는데, docs 는 그 스택에
+    처음부터 없는 것이고 e2e 는 TRD 가 미룬 것이다. 같은 gap 코드면 "도입을
+    미뤘다" 와 "해당 없다" 가 구분되지 않는다. 어댑터가 `not_applicable` 로
+    사유를 선언하면 `stage_na:<id>` 로 남되 등급은 내리지 않는다.
+    """
+
+    NA = {"cmd": None, "not_applicable": "문서 빌드 산출물이 없다."}
+
+    def _adapter(self, repo, **stages):
+        p = repo / "harness" / "adapters" / "nextjs-ts.json"
+        ad = json.loads(p.read_text(encoding="utf-8"))
+        ad["stages"].update(stages)
+        ad["verified"] = True
+        p.write_text(json.dumps(ad, ensure_ascii=False), encoding="utf-8")
+
+    def test_선언이_있으면_na_이고_없거나_비면_absent_다(self):
+        assert adapters.stage_state({"stages": {"docs": dict(self.NA)}}, "docs") == "na"
+        assert adapters.stage_state({"stages": {"docs": {"cmd": None}}}, "docs") == "absent"
+        assert adapters.stage_state(
+            {"stages": {"docs": {"cmd": None, "not_applicable": " "}}}, "docs") == "absent"
+
+    def test_run_stage_는_na_로_건너뛴다(self, repo):
+        got = adapters.run_stage(repo, {"stages": {"docs": dict(self.NA)}}, "docs",
+                                 runner=lambda *a, **k: pytest.fail("실행했다"))
+        assert got == {"id": "docs", "state": "skipped", "reason": "na"}
+
+    def test_비강등_판정은_하나의_함수다(self):
+        assert rep_mod.is_non_demoting("stage_na:docs")
+        assert rep_mod.is_non_demoting("calibration_stale")
+        assert not rep_mod.is_non_demoting("stage_absent:e2e")
+        assert rep_mod.gap_reason("stage_na:docs"), "어휘에 있어야 보고서가 설명한다"
+
+    def test_게이트는_stage_na_만으로_등급을_내리지_않는다(self, gated, fxdir,
+                                                    monkeypatch):
+        repo, paths, s = gated
+        # 다른 gap 을 걷어내 stage_na 만 남긴다 — 1파일 픽스처는 scoped 가
+        # 늘 퇴화이고, build 는 when_touched 밖이라 stage_not_touched 다.
+        monkeypatch.setattr(contract_mod, "DEGENERATE_RATIO", 2.0)
+        self._adapter(repo, e2e=dict(self.NA), docs=dict(self.NA),
+                      build={"cmd": ["run", "build"]})
+        fx = make_fixture(fxdir, "all-pass", dict(ALL_PASS))
+        _gate(repo, fx)
+        report = json.loads((paths.run_dir / "04_gate_report.json")
+                            .read_text(encoding="utf-8"))
+        assert "stage_na:docs" in report["gaps"] and "stage_na:e2e" in report["gaps"]
+        assert "stage_absent:docs" not in report["gaps"]
+        assert [g for g in report["gaps"] if not rep_mod.is_non_demoting(g)] == [], \
+            report["gaps"]
+        assert report["grade"] == "PASS", report["gaps"]
+
+    def test_PR_본문의_건너뛴_게이트에_남는다(self, repo, request_file, phases):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _pp, s = st.load(repo, run_id)
+        s["gaps"] = ["stage_na:docs"]
+        st.save(_pp, s)
+        body = pr_mod.build_body(repo, paths, s,
+                                 harness._read_json(repo / harness.CONFIG_REL))
+        assert "- stage_na:docs" in body, body
+
+
+class TestAdapterVerifyReady:
+    """[[ADR-H047]] 결정 3 의 후속 — 기준을 넘었는데 아무도 명령을 안 돌렸다.
+
+    banana 는 완주 15런(기준 3)인데 `verified: false` 였다. 보고서가
+    "기준 충족" 을 말하지 않으면 `adapter_unverified` 는 영구 gap 이 된다.
+    """
+
+    def _runs(self, repo, n):
+        ids = harness.phase_ids(repo)
+        for i in range(n):
+            _done_run(repo, "q%d" % i, "2026-02-%02dT00:00:00+0900" % (i + 1),
+                      phases=ids)
+
+    def test_qualified_runs_는_verify_adapter_와_같은_셈이다(self, repo, phases):
+        self._runs(repo, 2)
+        _done_run(repo, "bad", "2026-02-09T00:00:00+0900",
+                  phases=harness.phase_ids(repo),
+                  statuses={harness.phase_ids(repo)[0]: "skipped"})
+        _done_run(repo, "other", "2026-02-10T00:00:00+0900", adapter="x",
+                  phases=harness.phase_ids(repo))
+        assert harness.qualified_runs(repo, "nextjs-ts") == ["q0", "q1"]
+
+    def test_기준_이상이면_보고서가_명령을_적는다(self, repo, request_file, phases):
+        self._runs(repo, harness.ADAPTER_VERIFY_MIN_RUNS)
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths)
+        cli.run_report(repo, run_id=run_id)
+        text = (repo / "docs" / "harness" / "pipeline" / "runs"
+                / ("%s.md" % run_id)).read_text(encoding="utf-8")
+        assert "기준 충족" in text and "verify-adapter" in text, text
+
+    def test_기준_미만이면_적지_않는다(self, repo, request_file, phases):
+        self._runs(repo, harness.ADAPTER_VERIFY_MIN_RUNS - 1)
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths)
+        cli.run_report(repo, run_id=run_id)
+        text = (repo / "docs" / "harness" / "pipeline" / "runs"
+                / ("%s.md" % run_id)).read_text(encoding="utf-8")
+        assert "기준 충족" not in text
 
 
 class TestPrecheckCli:
