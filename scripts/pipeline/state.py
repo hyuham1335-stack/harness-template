@@ -32,7 +32,7 @@ TZ = runtime.TZ
 STAMP_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
 
 WORKSPACE_REL = "_workspace"
-RUNS_REL = "_workspace/runs"
+RUNS_REL = harness.RUNS_REL      # 완주 런 세기(`harness.completed_runs`)와 같은 곳
 
 # 페이즈 상태 어휘. `pending` 과 `submitted` 는 **없다** —
 #   pending   : 키 부재가 그것이다. 미진입 칸을 미리 파 두면 "안 돌았다"와
