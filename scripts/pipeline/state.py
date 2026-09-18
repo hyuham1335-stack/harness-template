@@ -105,6 +105,14 @@ EVENT_KINDS = (
     # 계약이 바뀌어 프로파일이 다시 정해졌다. 리뷰어 상한이 그 값에서 나오므로
     # 언제 무엇에서 무엇으로 바뀌었는지가 사후에 필요하다 (M34).
     "profile_reconfirmed",
+    # 사람을 기다리기 시작했다(`waiting_human`, exit 9 의 자리들) — 다음 이벤트
+    # 까지가 대기다. exit 10 은 `escalated → resumed` 로 따로 잰다. 이것이
+    # 없으면 `40dc` 의 00-triage 36분이 "트리아지가 36분 걸렸다" 로 읽힌다
+    # (ADR-H052). `format_reject` 는 제출이 규약을 어겨 exit 8 로 되돌아온
+    # 것을 **횟수로** 세는 자리다 — `check_fail` 이 그 사실을 남기지만
+    # 절반의 exit 8 경로는 그것조차 없었고, 세지 않으면 `e7ff` 의 sec 처럼
+    # 두 번 튕겨 failed 로 닫힌 리뷰어가 원장에 "실패" 로만 남는다.
+    "waiting_human", "format_reject",
     # 00 이 레인을 정했다(`triage_decided`), 그 예측이 03·05 의 실물에서 상향으로
     # 빗나갔다(`triage_miss`). 둘을 뭉치면 임계값을 고칠 근거(어느 예측이
     # 얼마나 틀리나)가 원장에서 사라진다.
@@ -260,16 +268,27 @@ def _initial_profile(profile):
 # 모델 등급의 관측 단위. **실행기는 어느 모델이 돌았는지 볼 수 없다** —
 # 봉투가 지시 키마다 등급을 찍고 `/feature` 가 그것을 Agent 호출의 `model`
 # 인자로 넘길 뿐이다. `budget.model_calls` 와 같은 부류의 자진신고 없는 지시다.
-MODELS_BASIS = "instructed"
+# `instructed` 는 봉투가 지시한 등급, `reported` 는 리뷰어가 제출 JSON 의
+# `model_used` 로 자진신고한 모델이다 (ADR-H052 결정 2). 둘은 다른 사실이고
+# 어느 쪽도 실측이 아니다 — 자진신고는 대조할 값이 없다.
+MODELS_BASIS = "instructed+reported"
 MODELS_BLIND_SPOTS = (
-    "지시한 등급이 실제로 쓰였는지 실행기는 보지 못한다 — 자진신고도 없다",
+    "지시한 등급이 실제로 쓰였는지 실행기는 보지 못한다",
+    "reported 는 리뷰어의 자진신고다 — 대조할 실측이 없다 (선택 필드라 빈 것이 보통이다)",
     "inherit 는 메인 세션의 모델이고 그 값은 상태에 없다",
 )
 
 
 def _models_node():
-    return {"basis": MODELS_BASIS, "instructed": {},
+    return {"basis": MODELS_BASIS, "instructed": {}, "reported": {},
             "blind_spots": list(MODELS_BLIND_SPOTS)}
+
+
+def note_model_reported(s, key, model):
+    """리뷰어가 `model_used` 로 자진신고한 모델을 지시 키 `key` 에 남긴다."""
+    node = s.setdefault("models", _models_node())
+    node.setdefault("reported", {})[key] = model
+    return node
 
 
 def note_model_instruction(s, key, tier):
@@ -506,11 +525,12 @@ def phase_durations(paths):
     phases = {}
     current = None
     pending_escalation = None       # (페이즈, 시각)
+    pending_human = None            # (페이즈, 시각) — exit 9 뒤 다음 명령까지
 
     def node(name):
         return phases.setdefault(name, {"wall_sec": 0, "segments": 0,
                                         "entries": 0, "passes": 0,
-                                        "escalations": 0})
+                                        "escalations": 0, "format_rejects": 0})
 
     for idx, (event, when) in enumerate(stamped):
         name = event.get("phase") or current
@@ -523,6 +543,20 @@ def phase_durations(paths):
         cell = node(name)
 
         kind = event.get("kind")
+        # **사람 대기는 다음 이벤트까지다** (ADR-H052). exit 9 뒤에 오는 첫
+        # 명령이 무엇이든 그것이 답이다 — `status` 처럼 이벤트를 안 남기는
+        # 명령은 안 보이고, 그때는 그 다음 이벤트까지가 대기로 잡힌다(과다).
+        if pending_human is not None:
+            owner, since = pending_human
+            waited = int((when - since).total_seconds())
+            if waited >= 0:
+                node(owner)["human_wait_sec"] = \
+                    node(owner).get("human_wait_sec", 0) + waited
+            pending_human = None
+        if kind == "waiting_human":
+            pending_human = (name, when)
+        elif kind == "format_reject":
+            cell["format_rejects"] += 1
         if kind == "phase_enter":
             cell["entries"] += 1
         elif kind == "phase_pass":
@@ -545,6 +579,13 @@ def phase_durations(paths):
     unresumed = 1 if pending_escalation is not None else 0
     waits = [p["escalation_wait_sec"] for p in phases.values()
              if "escalation_wait_sec" in p]
+    human = [p["human_wait_sec"] for p in phases.values()
+             if "human_wait_sec" in p]
+    # 순 작업 = 벽시계 − 에스컬레이션 대기 − 사람 판단 대기. 세 값의 합이
+    # 벽시계와 같은 것이 검산이다.
+    for p in phases.values():
+        p["work_sec"] = (p["wall_sec"] - p.get("escalation_wait_sec", 0)
+                         - p.get("human_wait_sec", 0))
 
     out = {
         "basis": PHASE_DURATION_BASIS,
@@ -554,9 +595,12 @@ def phase_durations(paths):
         "wall_sec": int((stamped[-1][1] - stamped[0][1]).total_seconds()),
         "phases": phases,
         "unresumed_escalations": unresumed,
+        "unanswered_waits": 1 if pending_human is not None else 0,
     }
     if waits:
         out["escalation_wait_sec"] = sum(waits)
+    if human:
+        out["human_wait_sec"] = sum(human)
     return out
 
 
@@ -715,6 +759,8 @@ PHASE_DURATION_BLIND_SPOTS = (
     "phase_enter 가 아니면 그 준비 시간이 앞 페이즈에 붙는다 (앞이 과다)",
     "타임스탬프가 초 단위다 — 1초 미만 페이즈는 0 으로 보인다 (과소)",
     "버려진 런은 아무도 일하지 않은 날들이 그대로 벽시계에 들어간다 (과다)",
+    "사람 판단 대기(exit 9)는 다음 이벤트까지다 — 이벤트를 안 남기는 명령"
+    "(status 등)이 답이면 그 다음 이벤트까지가 대기로 잡힌다 (대기 과다)",
 )
 
 

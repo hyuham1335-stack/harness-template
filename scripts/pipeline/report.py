@@ -192,18 +192,41 @@ def _triage_cell(state):
 
 
 def _models_cell(state):
-    """봉투가 지시한 등급. **지시이지 실측이 아니다** — blind spot 을 함께 적는다."""
+    """봉투가 지시한 등급 + 리뷰어의 자진신고. **둘 다 실측이 아니다** — blind
+    spot 을 함께 적는다 (ADR-H052 결정 2)."""
     node = state.get("models") or {}
     inst = node.get("instructed") or {}
-    if not inst:
+    reported = node.get("reported") or {}
+    if not inst and not reported:
         return None
     by = {}
     for tier in inst.values():
         by[tier or "inherit"] = by.get(tier or "inherit", 0) + 1
-    return "%s\n  기준: **%s** — 봉투가 지시한 등급이다.\n%s" % (
-        " · ".join("%s: %d" % (k, v) for k, v in sorted(by.items())),
-        node.get("basis"),
+    head = " · ".join("%s: %d" % (k, v) for k, v in sorted(by.items())) or "지시 없음"
+    if reported:
+        seen = {}
+        for m in reported.values():
+            seen[m] = seen.get(m, 0) + 1
+        head += "\n  자진신고(`model_used`): %s" % " · ".join(
+            "%s: %d" % (k, v) for k, v in sorted(seen.items()))
+    return "%s\n  기준: **%s** — 봉투가 지시한 등급과 리뷰어의 자진신고다.\n%s" % (
+        head, node.get("basis"),
         "\n".join("  - %s" % b for b in node.get("blind_spots") or []))
+
+
+def _cost_cell(cost):
+    """「비용(있으면)」. 값이 없으면 **`미계측`** 이라고 적는다 — 0 이 아니다.
+
+    `cmd_cost` 는 트랜스크립트의 `cost-state` 를 읽고, 08 을 돌리는 세션 자신은
+    아직 그 줄을 안 썼다 — 그래서 값이 있어도 **미완**이다 (ADR-H032 · H052).
+    파일럿 클론처럼 `cmd_cost` 가 없는 리포에서는 항상 `미계측` 이다.
+    """
+    if not cost or "cost_usd" not in cost:
+        return "미계측 — `cmd_cost` 가 값을 내지 못했다"
+    sessions = [c for c in (cost.get("sessions") or [])
+                if c.get("basis") == "touched"]
+    return "$%.2f (세션 %d · 읽지 못한 세션 %d · 08 세션은 미완이라 제외)" % (
+        cost["cost_usd"], len(sessions), cost.get("unread_sessions") or 0)
 
 
 def _counter_cell(node):
@@ -261,32 +284,56 @@ def _timing_lines(timing):
     if not timing or not timing.get("phases"):
         return ["", UNMEASURED_DURATION, ""]
 
-    rows = ["", "| 페이즈 | 벽시계(대기 포함) | 그중 에스컬레이션 대기 | 구간 |",
-            "|---|---|---|---|"]
+    # **순 작업과 두 종류의 대기를 갈라 적는다** (ADR-H052). `728c` 는 2h48m
+    # 중 1h09m 이 05 의 사람 대기였는데 "05 가 1h50m 걸렸다" 로 읽혔다.
+    # 형식 반려 수는 소요가 아니라 **왕복 비용**이다 — 같은 표에 두는 이유는
+    # 그것이 그 페이즈의 벽시계를 먹기 때문이다.
+    rows = ["", "| 페이즈 | 벽시계(대기 포함) | 순 작업 | 에스컬레이션 대기 "
+                "| 사람 판단 대기 | 형식 반려 | 구간 |",
+            "|---|---|---|---|---|---|---|"]
     for name in sorted(timing["phases"]):
         cell = timing["phases"][name]
         wait = cell.get("escalation_wait_sec")
+        human = cell.get("human_wait_sec")
+        rejects = cell.get("format_rejects") or 0
         segs = "%s구간" % cell.get("segments")
         entries = cell.get("entries") or 0
         if entries != 1:
             # 진입 이벤트가 0 이거나 여럿인 것 자체가 사실이다 — 08 은 0 이고
             # 되돌아간 01 은 여러 번이다. 구간 수와 다른 것을 말한다.
             segs = "%s · 진입 %s" % (segs, entries)
-        rows.append("| %s | %s | %s | %s |"
+        rows.append("| %s | %s | %s | %s | %s | %s | %s |"
                     % (name, _hms(cell.get("wall_sec")),
-                       _hms(wait) if wait else "—", segs))
+                       _hms(cell.get("work_sec")),
+                       _hms(wait) if wait else "—",
+                       _hms(human) if human else "—",
+                       rejects if rejects else "—", segs))
 
     total_wait = timing.get("escalation_wait_sec")
+    total_human = timing.get("human_wait_sec")
     wall = timing.get("wall_sec")
-    share = ""
-    if total_wait and wall:
-        share = " (%.1f%%)" % (100.0 * total_wait / wall)
-    rows.append("| **합계** | **%s** | **%s** | |"
-                % (_hms(wall), (_hms(total_wait) + share) if total_wait else "—"))
+
+    def _share(v):
+        if v and wall:
+            return "%s (%.1f%%)" % (_hms(v), 100.0 * v / wall)
+        return _hms(v) if v else "—"
+
+    work = None
+    if wall is not None:
+        work = wall - (total_wait or 0) - (total_human or 0)
+    rejects_total = sum(c.get("format_rejects") or 0
+                        for c in timing["phases"].values())
+    rows.append("| **합계** | **%s** | **%s** | **%s** | **%s** | **%s** | |"
+                % (_hms(wall), _hms(work) if work is not None else "—",
+                   _share(total_wait), _share(total_human),
+                   rejects_total if rejects_total else "—"))
 
     if timing.get("unresumed_escalations"):
         rows += ["", "재개되지 않은 에스컬레이션 %s건 — **대기 길이는 아직 없다.**"
                  % timing["unresumed_escalations"]]
+    if timing.get("unanswered_waits"):
+        rows += ["", "답이 오지 않은 사람 판단 대기 %s건 — **대기 길이는 아직 없다.**"
+                 % timing["unanswered_waits"]]
 
     rows += ["", "기준: **%s** — 이벤트를 seq 순으로 걸으며 인접한 두 `ts` 의 "
                  "차를 그때 활성인 페이즈에 더한다. `Σ 페이즈 소요 == 런 "
@@ -305,7 +352,7 @@ def _tbl(rows):
     return out
 
 
-def build(state, data, calibration, promotions, timing=None):
+def build(state, data, calibration, promotions, timing=None, cost=None):
     """보고서 마크다운. 반환: (text, missing_sections).
 
     **필수 섹션이 빠져도 파이프라인을 실패시키지 않는다** — 원장에 기록만
@@ -384,6 +431,8 @@ def build(state, data, calibration, promotions, timing=None):
         # **지시된 등급이지 실측이 아니다** (ADR-H044). 어느 모델이 돌았는지
         # 실행기는 보지 못한다 — blind spot 이 셀 안에 같이 적힌다.
         ("지시된 모델 등급", _models_cell(state)),
+        # 비용은 있으면 적고 없으면 `미계측` 이다. 0 으로 적지 않는다.
+        ("비용(있으면)", _cost_cell(cost)),
     ])
     lines += _timing_lines(timing)
 

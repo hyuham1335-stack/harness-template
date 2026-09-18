@@ -2082,10 +2082,17 @@ def run_record(root, phase, file, reviewer=None, round_=None, run_id=None,
     # **제출을 세지 않는다** (M26). 계수는 `next`·`review07`·`gate` 가 기동을
     # 지시하는 자리에서 일어난다 — `_instruction_keys` 를 보라.
     try:
-        return handler(root, paths, s, phase_item, ctx, Path(file), reviewer,
-                       round_)
+        env = handler(root, paths, s, phase_item, ctx, Path(file), reviewer,
+                      round_)
     except ConfigDeclarationError as exc:
         return _declaration_envelope("record", s, exc)
+    # **형식 반려는 여기 한 곳에서 센다** (ADR-H052 결정 3). exit 8 을 내는
+    # 자리는 핸들러 안에 열다섯 곳이고 절반은 `check_fail` 도 없다 — 핸들러가
+    # 무엇을 돌려주든 8 이면 제출이 규약을 어겨 되돌아온 것이다.
+    if env.get("exit") == 8:
+        st.append_event(paths, "format_reject", cmd="record", phase=pid,
+                        reviewer=reviewer, round=round_)
+    return env
 
 
 def _instruction_keys(s, pid, ctx, front=None):
@@ -2325,6 +2332,9 @@ def _record_00(root, paths, s, phase_item, ctx, file, reviewer, round_):
                    "small — 역할 소유 경로 셋 이하의 작은 변경",
                    "normal — 그 밖 전부"]
         st.save(paths, s)
+        # 여기서부터 사람을 기다린다 — `40dc` 의 36분이 이 자리였다 (ADR-H052).
+        st.append_event(paths, "waiting_human", cmd="record", phase="00-triage",
+                        reason="triage_unclear")
         return st.envelope(
             "record", False, 9, s,
             {"options": options, "signals": node.get("signals"),
@@ -3093,6 +3103,11 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
                       "dropped_by_enforcement": got["dropped_by_enforcement"],
                       "truncated": got["truncated"],
                       "need_more_context": payload.get("need_more_context") or []}
+    # 자진신고(선택). 지시 키와 같은 모양으로 남겨 08 이 나란히 놓는다 (ADR-H052).
+    if payload.get("model_used"):
+        slot[reviewer]["model_used"] = payload["model_used"]
+        st.note_model_reported(s, "05:r%d:%s" % (round_, reviewer),
+                               payload["model_used"])
     st.save(paths, s)
 
     missing = [c for c in planned if c not in slot]
@@ -3390,7 +3405,11 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
     if contract_defect:
         lines += ["", "**`CONTRACT_DEFECT` 가 있다.** 이것은 수리 대상이 아니라 "
                       "에스컬레이션이다 — 계약은 메인 단독 소유다."]
-    lines += ["", "고친 뒤 `gate --phase 04 --stage scoped` 로 재게이트하고, "
+    lines += ["", "제출이 **내용은 그대로이고 회계 필드만** 틀려 exit 8 로 되돌아오면 "
+                  "(`resolved_from_previous` · `reraised_from_previous`) 메인이 "
+                  "`local_repair` 로 그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·"
+                  "severity 는 여전히 손대지 않는다 (ADR-H052).",
+              "", "고친 뒤 `gate --phase 04 --stage scoped` 로 재게이트하고, "
                   "델타 재리뷰 1명을 돌린 다음 다시 제출한다.",
               "**수리하면 지문이 바뀌어 영수증이 낡는다** — 06 이 자동으로 막으므로 "
               "재게이트를 잊을 수 없다."]
@@ -3929,6 +3948,11 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
             st.demote(s, st.GRADES[1], gap)
         st.append_event(paths, "check_fail" if got["exit"] else "stage_done",
                         cmd="precheck", phase=pid, exit=got["exit"])
+        if got["exit"] == 9:
+            # 예산·브랜치·divergence 는 사람이 판단한다 — 그 대기가 여기서
+            # 시작된다 (ADR-H052). `check_fail` 은 "무엇이" 이고 이것은 "언제부터" 다.
+            st.append_event(paths, "waiting_human", cmd="precheck", phase=pid,
+                            reason="precheck_policy")
         st.save(paths, s)
 
         if got["exit"] == 10:
@@ -4220,6 +4244,25 @@ def cmd_report(root, args):
     return st.emit(run_report(root, args.out, args.run_id))
 
 
+def _report_cost(root, s):
+    """08 의 「비용(있으면)」 입력. **`run_cost` 를 부르는 유일한 자리다.**
+
+    `run_cost` 가 값을 못 내면(exit ≠ 0 · `cost_usd` 없음 · 예외) None 이고
+    보고서는 `미계측` 을 적는다. 세션 원장·`cmd_cost` 를 걷어낸 클론은 이
+    함수 본문을 `return None` 으로 두면 된다 — 그것이 델타 병합의 전부다.
+    """
+    try:
+        env = run_cost(root, run_id=s.get("run_id"))
+    except (OSError, ValueError, KeyError, ImportError):
+        return None
+    if not env or env.get("exit") != 0:
+        return None
+    data = env.get("data") or {}
+    if "cost_usd" not in data:
+        return None
+    return data
+
+
 def run_report(root, out=None, run_id=None):
     """08 — 결정론 표 조립 + 필수 섹션 검사. 종료 코드 **0 / 3 / 6**.
 
@@ -4283,9 +4326,11 @@ def run_report(root, out=None, run_id=None):
     except (OSError, ValueError, KeyError):
         pass
     # 소요는 `events.jsonl` 의 유도값이고, 08 시점에 그 파일은 이미 완결이다
-    # — 미완 구간이 없다. 비용이 보고서에 없는 것은 그 반대다 (ADR-H032).
+    # — 미완 구간이 없다. 비용은 그 반대라 **있으면** 적고 아니면 `미계측` 이다
+    # (ADR-H032 · ADR-H052 결정 2).
     text, missing = rep.build(s, data, cal or {}, s.get("promotions") or [],
-                              st.phase_durations(paths))
+                              st.phase_durations(paths),
+                              cost=_report_cost(root, s))
 
     target = Path(out) if out else (
         root / "docs" / "harness" / "pipeline" / "runs"
@@ -4758,6 +4803,8 @@ def run_pr(root, run_id=None):
     rs = pr_mod.remote_state(root, config, branch)
     data["remote"] = rs
     if not rs["has_remote"]:
+        st.append_event(paths, "waiting_human", cmd="pr", phase="06-pr",
+                        reason="no_remote")
         return st.envelope("pr", False, 9, s, data, _no_remote_render(rs), None)
     if rs["non_ff"]:
         st.escalate(paths, s,
@@ -4773,6 +4820,10 @@ def run_pr(root, run_id=None):
     # 4. 승인 — 없거나 철회됐으면 exit 9, 지문이 어긋나면 exit 6
     node = (s.get("approval") or {}).get("06") or {}
     if not node.get("granted"):
+        # 승인 대기 — `728c` 의 1h09m 같은 시간이 06 의 벽시계에 섞이지 않게
+        # 시작점을 남긴다 (ADR-H052).
+        st.append_event(paths, "waiting_human", cmd="pr", phase="06-pr",
+                        reason="approval")
         return st.envelope("pr", False, 9, s, data,
                            _approval_prompt(root, s, rs, branch, config), None)
     fresh = st.fingerprint(root, config)

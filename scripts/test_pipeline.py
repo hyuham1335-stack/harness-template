@@ -781,6 +781,100 @@ class TestCounterSpendReason:
             assert "paths=paths" in window, window
 
 
+class TestWaitingHuman:
+    """[[ADR-H052]] 결정 1 — 사람 대기를 페이즈 벽시계에서 분리해 잰다.
+
+    `728c` 는 총 2h48m 중 1h09m(41.4%) 이 05 의 사람 대기였고, `40dc` 의
+    00-triage 36m53s 는 `triage_unclear` exit 9 로 사람을 기다린 시간이다 —
+    둘 다 "05 가 1h50m 걸렸다" 로 읽혔다. exit 10 은 `escalated → resumed` 로
+    이미 잰다. exit 9 는 `waiting_human` → **다음 이벤트** 까지다.
+    """
+
+    def _at(self, h, m=0, s=0):
+        return datetime(2026, 3, 1, h, m, s, tzinfo=st.TZ)
+
+    def test_대기가_페이즈에_귀속되고_순_작업이_남는다(self, repo, request_file):
+        paths, _ = st.create_run(repo, "demo", request_file)
+        paths.events.write_text("", encoding="utf-8")
+        st.append_event(paths, "phase_enter", phase="00-triage", now=self._at(10))
+        st.append_event(paths, "waiting_human", phase="00-triage",
+                        reason="triage_unclear", now=self._at(10, 5))
+        st.append_event(paths, "submit_received", phase="00-triage",
+                        now=self._at(10, 35))
+        st.append_event(paths, "phase_pass", phase="00-triage", now=self._at(10, 40))
+        st.append_event(paths, "phase_enter", phase="01-plan", now=self._at(10, 40))
+        st.append_event(paths, "run_closed", phase="01-plan", now=self._at(11))
+        t = st.phase_durations(paths)
+        cell = t["phases"]["00-triage"]
+        assert cell["human_wait_sec"] == 1800, cell
+        assert cell["work_sec"] == 600, cell
+        assert t["human_wait_sec"] == 1800, t
+        assert "human_wait_sec" not in t["phases"]["01-plan"]
+
+    def test_불변식_순_작업_더하기_대기는_벽시계다(self, repo, request_file):
+        paths, _ = st.create_run(repo, "demo", request_file)
+        paths.events.write_text("", encoding="utf-8")
+        st.append_event(paths, "phase_enter", phase="01-plan", now=self._at(10))
+        st.append_event(paths, "escalated", phase="01-plan", now=self._at(10, 10))
+        st.append_event(paths, "resumed", phase="01-plan", now=self._at(11, 10))
+        st.append_event(paths, "waiting_human", phase="01-plan",
+                        reason="precheck_policy", now=self._at(11, 20))
+        st.append_event(paths, "stage_done", phase="01-plan", now=self._at(11, 30))
+        st.append_event(paths, "phase_pass", phase="01-plan", now=self._at(11, 40))
+        t = st.phase_durations(paths)
+        for name, cell in t["phases"].items():
+            assert (cell["work_sec"] + cell.get("escalation_wait_sec", 0)
+                    + cell.get("human_wait_sec", 0)) == cell["wall_sec"], (name, cell)
+
+    def test_답이_안_온_대기는_길이가_없고_횟수만_센다(self, repo, request_file):
+        paths, _ = st.create_run(repo, "demo", request_file)
+        paths.events.write_text("", encoding="utf-8")
+        st.append_event(paths, "phase_enter", phase="06-pr", now=self._at(10))
+        st.append_event(paths, "waiting_human", phase="06-pr",
+                        reason="approval", now=self._at(10, 5))
+        t = st.phase_durations(paths)
+        assert t["unanswered_waits"] == 1, t
+        assert "human_wait_sec" not in t["phases"]["06-pr"], t["phases"]
+
+    def test_사각이_이름으로_남는다(self):
+        assert any("다음 이벤트" in b for b in st.PHASE_DURATION_BLIND_SPOTS)
+
+
+class TestWaitingHumanEvents:
+    """exit 9 를 내는 세 자리가 전부 `waiting_human` 을 남긴다."""
+
+    def _waits(self, paths):
+        return [e for e in st.read_events(paths) if e["kind"] == "waiting_human"]
+
+    def test_트리아지_unclear_가_남긴다(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT)
+        cli.run_next(repo, run_id=paths.run_id)
+        env = _submit_triage(repo, paths, {"profile": "unclear",
+                                           "expected_paths": [], "reasons": []})
+        assert env["exit"] == 9, env["render"]
+        got = self._waits(paths)
+        assert got and got[-1]["data"]["reason"] == "triage_unclear", got
+
+    def test_precheck_정책_실패가_남긴다(self, repo, request_file):
+        _branch(repo, "feat-x")
+        cli.run_init(repo, "x", request_file)
+        _bulk_change(repo, 40)
+        env = cli.run_precheck(repo, scope="pr")
+        assert env["exit"] == 9
+        paths, _ = st.load(repo)
+        got = self._waits(paths)
+        assert got and got[-1]["data"]["reason"] == "precheck_policy", got
+
+    def test_승인_대기가_남긴다(self, repo, request_file, phases, tmp_path):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _remote(repo, tmp_path)
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 9
+        got = self._waits(paths)
+        assert got and got[-1]["data"]["reason"] == "approval", got
+
+
 class TestModelCallBudget:
     """M22 — 선언만 되고 아무도 세지 않던 예산.
 
@@ -7226,6 +7320,67 @@ class TestPhase05Ledgering:
 # ---------------------------------------------------------------------------
 
 
+class TestFormatRejectCount:
+    """[[ADR-H052]] 결정 3 — 형식 반려(exit 8 재제출)를 이벤트로 세고 08 에 적는다.
+
+    `e7ff` 의 sec 는 3라운드에서 accounting 형식 위반으로 두 번 튕겨 failed 로
+    닫혔는데 원장에는 '실패' 로만 남았다. 계수 지점은 `run_record` 하나다 —
+    핸들러가 exit 8 을 돌려주면 그 자리에서 `format_reject` 를 남긴다.
+    """
+
+    def _ready(self, repo, request_file, phases):
+        ldg.seed(repo)
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        cli.run_contract_trace(repo, run_id=run_id)
+        paths, s = st.load(repo, run_id)
+        node = s["phases"]["05-code-review"]
+        node["planned"] = ["arch"]
+        node["routing"] = {"reviewers": [{"code": "arch"}], "dropped": [],
+                           "capped": False}
+        node["mode"] = "fanout"
+        st.save(paths, s)
+        return run_id, paths
+
+    def _bad_submit(self, repo, paths, run_id):
+        j = paths.run_dir / "05_review_arch.json"
+        j.write_text(json.dumps({
+            "reviewer": "arch", "round": 1, "status": "ok",
+            "by_checklist": {}, "resolved_from_previous": [],
+            "need_more_context": []}, ensure_ascii=False), encoding="utf-8")
+        j.with_name("05_review_arch.raw.md").write_text("# 리뷰\n", encoding="utf-8")
+        return cli.run_record(repo, "05", str(j), reviewer="arch", round_=1,
+                              run_id=run_id)
+
+    def test_exit_8_이_이벤트로_남는다(self, repo, request_file, phases):
+        run_id, paths = self._ready(repo, request_file, phases)
+        env = self._bad_submit(repo, paths, run_id)
+        assert env["exit"] == 8, env["render"]
+        got = [e for e in st.read_events(paths) if e["kind"] == "format_reject"]
+        assert len(got) == 1, got
+        assert got[0]["phase"] == "05-code-review"
+        assert got[0]["data"]["reviewer"] == "arch"
+
+    def test_페이즈_소요_표가_형식_반려_수를_센다(self, repo, request_file, phases):
+        """두 번째 실패는 exit 8 이 아니라 스킵 + degrade 다 (05 의 재제출 1회
+        규칙) — 그래서 두 번 튕겨도 `format_reject` 는 1 이고, 나머지 한 번은
+        `reviewer_failed` 로 남는다. 둘을 뭉치지 않는다."""
+        run_id, paths = self._ready(repo, request_file, phases)
+        self._bad_submit(repo, paths, run_id)
+        self._bad_submit(repo, paths, run_id)
+        t = st.phase_durations(paths)
+        assert t["phases"]["05-code-review"]["format_rejects"] == 1, t["phases"]
+        rows = rep_mod._timing_lines(t)
+        assert any("형식 반려" in r for r in rows), rows
+        assert any("05-code-review" in r and "| 1 |" in r for r in rows), rows
+
+    def test_05_선언이_회계_필드의_local_repair_를_허용한다(self, repo):
+        loaded, _ = cli.load_phases(ROOT)
+        lr = loaded["05-code-review"]["front"]["loop"]["local_repair"]
+        assert lr["accounting"] == ["resolved_from_previous",
+                                    "reraised_from_previous"], lr
+
+
 class TestPhase05Repaired:
     """수리된 지적은 원장에서 `repaired` 다 (M29).
 
@@ -9688,6 +9843,110 @@ def _report_data(paths, **kw):
     return p
 
 
+class TestReport08Cost:
+    """[[ADR-H052]] 결정 2 — 08 표에 「비용(있으면)」 을 두고 못 재면 `미계측` 이다.
+
+    `rep.build` 를 직접 불러 `run_cost` 의 유무에 독립이다 — 파일럿 클론은
+    `cmd_cost` 를 걷어냈고(`2a05c86`), 거기서도 이 칸은 `미계측` 으로 남는다.
+    """
+
+    def test_없으면_미계측이라고_적는다(self, repo, request_file, phases):
+        run_id, _paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        text, _missing = rep_mod.build(s, {}, {}, [], None, cost=None)
+        assert "비용(있으면)" in text
+        assert "미계측" in text
+
+    def test_있으면_금액과_세션_수를_적는다(self, repo, request_file, phases):
+        run_id, _paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        text, _missing = rep_mod.build(
+            s, {}, {}, [], None,
+            cost={"cost_usd": 1.234, "sessions": [{"basis": "touched"},
+                                                   {"basis": "touched"}],
+                  "unread_sessions": 1})
+        assert "$1.23" in text
+        assert "미완" in text, "08 세션은 진행 중이라 빠진다는 것을 적는다"
+
+    def test_report_cost_는_run_cost_가_값을_못_내면_None_이다(self, repo,
+                                                              request_file,
+                                                              phases,
+                                                              monkeypatch):
+        run_id, _paths = _enter_08(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        monkeypatch.setattr(cli, "run_cost", lambda *a, **k: {"exit": 3, "data": {}})
+        assert cli._report_cost(repo, s) is None
+        monkeypatch.setattr(cli, "run_cost",
+                            lambda *a, **k: {"exit": 0, "data": {"sessions": [],
+                                                                  "unread_sessions": 2}})
+        assert cli._report_cost(repo, s) is None, "cost_usd 가 없으면 못 잰 것이다"
+        monkeypatch.setattr(cli, "run_cost",
+                            lambda *a, **k: {"exit": 0, "data": {"cost_usd": 2.5,
+                                                                  "sessions": []}})
+        assert cli._report_cost(repo, s)["cost_usd"] == 2.5
+
+    def test_보고서_경로가_비용_칸을_채운다(self, repo, request_file, phases,
+                                          monkeypatch):
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths)
+        monkeypatch.setattr(cli, "run_cost",
+                            lambda *a, **k: {"exit": 0, "data": {"cost_usd": 0.5,
+                                                                  "sessions": []}})
+        cli.run_report(repo, run_id=run_id)
+        out = (repo / "docs" / "harness" / "pipeline" / "runs"
+               / ("%s.md" % run_id)).read_text(encoding="utf-8")
+        assert "$0.50" in out
+
+
+class TestModelsReported:
+    """[[ADR-H052]] 결정 2 — 리뷰어의 `model_used` 자진신고(선택). 기준은
+    `instructed+reported` 이고, 자진신고는 실측이 아니라는 사각을 같이 적는다."""
+
+    def test_기준이_둘을_말한다(self):
+        assert st.MODELS_BASIS == "instructed+reported"
+
+    def test_자진신고가_상태에_쌓인다(self, repo, request_file):
+        _, s = st.create_run(repo, "demo", request_file)
+        st.note_model_reported(s, "05:r1:arch", "claude-sonnet-5")
+        assert s["models"]["reported"] == {"05:r1:arch": "claude-sonnet-5"}
+        cell = rep_mod._models_cell(s)
+        assert cell and "claude-sonnet-5" in cell, cell
+        assert "자진신고" in cell, cell
+
+    def test_05_제출의_model_used_가_슬롯과_상태에_남는다(self, repo, request_file,
+                                                        phases):
+        ldg.seed(repo)
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        cli.run_contract_trace(repo, run_id=run_id)
+        paths, s = st.load(repo, run_id)
+        node = s["phases"]["05-code-review"]
+        node["planned"] = ["arch"]
+        node["routing"] = {"reviewers": [{"code": "arch"}], "dropped": [],
+                           "capped": False}
+        node["mode"] = "fanout"
+        st.save(paths, s)
+        j = paths.run_dir / "05_review_arch.json"
+        j.write_text(json.dumps({
+            "reviewer": "arch", "round": 1, "status": "ok",
+            "model_used": "claude-opus-5",
+            "by_checklist": {"전부": []}, "resolved_from_previous": [],
+            "need_more_context": []}, ensure_ascii=False), encoding="utf-8")
+        j.with_name("05_review_arch.raw.md").write_text("# 리뷰\n", encoding="utf-8")
+        env = cli.run_record(repo, "05", str(j), reviewer="arch", round_=1,
+                             run_id=run_id)
+        assert env["exit"] != 8, env["render"]
+        _, after = st.load(repo, run_id)
+        rounds = after["phases"]["05-code-review"]["rounds"]["1"]
+        assert rounds["arch"]["model_used"] == "claude-opus-5", rounds
+        assert after["models"]["reported"]["05:r1:arch"] == "claude-opus-5"
+
+    def test_문자열이_아니면_거부한다(self, repo):
+        got = rv.check(repo, _config(repo), _sub(model_used=5), RAW_ONE, [])
+        assert got["exit"] == 8
+        assert any("model_used" in e for e in got["errors"]), got["errors"]
+
+
 class TestReport08:
 
     def test_필수_섹션_다섯이_전부_있다(self, repo, request_file, phases):
@@ -10908,7 +11167,7 @@ class TestModelTierRouting:
         assert "`01:r0:plan` → model: `sonnet`" in env["render"], env["render"]
         _, after = st.load(repo, paths.run_id)
         assert after["models"]["instructed"] == {"01:r0:plan": "sonnet"}
-        assert after["models"]["basis"] == "instructed"
+        assert after["models"]["basis"] == st.MODELS_BASIS
         assert after["models"]["blind_spots"]
 
     def test_without_a_models_block_the_packet_says_so(self, repo, phases):
