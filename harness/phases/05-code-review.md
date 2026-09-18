@@ -286,6 +286,7 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
 | diff 가 인라인 상한 초과 | — | **기계가 정한다** — `next` 가 `review.inline_max` 로 재고 봉투가 "경로로 전달하라" 고 말한다. 네 재량이 아니다 (ADR-H042). 폴백 사실이 상태에 남는다 |
 | `review_repair` 초과 · 동일 sig 2회 | 정책 | 에스컬레이션. **계약 결함을 먼저 의심**하라고 패킷에 적는다 |
 | 제출이 내용은 그대로인데 회계 필드만 틀려 exit 8 | 기계 | `format_reject` 이벤트로 센다. `loop.local_repair.accounting` 의 필드는 메인이 고쳐 재제출해도 된다 — quote·헤딩 수·severity 는 여전히 금지 (ADR-H052) |
+| 이전 라운드 지적이 더 높은 심각도로 재상정 | 기계 | `review_repair` 를 **1 지급**(`severity_raised`, 런당 1회). 리뷰어가 처음에 낮게 본 비용을 수리자 예산에서 빼지 않는다. 새 키의 major 는 지급 아님 (ADR-H048) |
 
 **`review_repair.max: 2` · `stuck_after_identical: 2` · `local_repair.max_per_run: 3`
 과 그 판정 기준 세 숫자는 미검증 상속값이다.** 원본 명세에서 왔고 이 리포에서

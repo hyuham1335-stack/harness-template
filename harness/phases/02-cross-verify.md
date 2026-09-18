@@ -25,7 +25,7 @@
     {"id": "critical_zero", "on_fail": 4}
   ],
   "gate": {"runner": "none"},
-  "loop": {"counter": "xverify_return", "max": 1, "on_exceed": "escalate",
+  "loop": {"counter": "xverify_return", "max": 2, "on_exceed": "escalate",
            "on_fail_return_to": "01-plan"},
   "allow": {"agents": []},
   "on_success": "03-implement"
@@ -64,7 +64,8 @@ xv 를 전혀 안 부르므로 그 전제가 없다 — 02 를 스킵하면 이 
 1. 확정된 `01_plan.md` 전문을 교차검증기에 넘긴다.
 2. 판정을 `02_verdict.json` 으로 받는다.
 3. Critical 이 남아 있으면 `loop.on_fail_return_to` 가 가리키는 페이즈로
-   되돌린다 — 왕복 횟수는 `loop.max`(현재 1)다. **셋 다 코드가 이 선언에서
+   되돌린다 — `loop.max`(현재 2)는 **Critical 제출 상한**이다: 두 번째
+   Critical 에서 멈추므로 되돌림은 1회다 (ADR-H048). **셋 다 코드가 이 선언에서
    읽는다** (M36): 되돌아갈 페이즈도 상한도 코드에 박혀 있지 않고, 선언이
    없으면 기본값으로 낙하하는 대신 exit 2 다. `lint-phases` 가 되돌아갈
    페이즈는 자기보다 **앞**이어야 함을 검사한다.
@@ -153,5 +154,5 @@ LLM)를 위해 예약된 자리다. **지금은 항상 `status: "not_configured"
 | 무엇 | 어떻게 |
 |---|---|
 | Critical 이 남았다 | exit 4 — 01 로 1회 되돌린다 |
-| 두 번째 되돌림 | exit 7 → 에스컬레이션. 왕복 상한이 1이다 |
+| 두 번째 Critical | exit 7 → 에스컬레이션. `loop.max: 2` 가 Critical 제출 상한이다 — 되돌림은 1회 |
 | 교차검증기 둘 다 불가 | 스킵 + 등급 `PASS_WITH_GAPS`. **조용히 통과가 아니다** |
