@@ -849,7 +849,8 @@ gap 은 effort 와 **따로 센다**:
 ```
 1. promote --scan     후보 0 → 모델 호출 없이 스킵, promotions: [] 종결   ← 초기 런의 최빈 경로
                       재집계는 **병합이다** — 종단 상태(applied/rejected/skipped)를 덮지 않는다
-2. verdict            create | amend | skip  (duplicate 면 create 금지, contradicts 면 차단 → 에스컬레이션)
+2. verdict            create | amend | skip | retire  (duplicate 면 create 금지, contradicts 면 차단 → 에스컬레이션.
+                      후보는 lint·check 목적지뿐 — prose 는 08 검토로, retire 는 rule_key 컷오프, ADR-H056)
 3. base fetch → 규칙 전용 브랜치 분기 (있으면 체크아웃해 이어서, §E11)
 4. promote --apply    파일 쓰기 + 베이스라인 파일 스테이징 확인
 5. 자체 게이트         lint + check 스테이지
@@ -1037,7 +1038,9 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 - **기계로 막을 수 있는 규칙을 산문으로 승격하면 exit 8.** 이것이 `config.project.instruction_slot_budget`과 맞물려서, 그 예산이 **진짜 기계가 못 잡는 규칙**에만 쓰이게 만든다.
 - **`lint` 승격의 베이스라인은 실행기가 직접 잰다** — `--apply`가 어댑터의 `baseline_cmd`를 돌리고 `baseline_file`의 VCS 변화를 본다. 안 바뀌었으면 `rejected`이고, `rules_changelog.md`에 들어가는 값도 **기계가 잰 것**이다. 모델의 자진 신고는 받되 대조하고 다르면 exit 8 — 07의 `external`과 같은 규율이다. **종료 코드를 성패로 읽지 않는다**(린터가 위반을 찾으면 0이 아니고 그것이 정상이다). 실행 자체가 불가능하면(127·124) `infra`이고 exit 10이라 아무것도 쓰지 않는다. 어댑터에 `baseline_cmd`가 없는 스택은 막지 않되 갭 `promotion_baseline_unverified` + `PASS_WITH_GAPS`다 — **스킵은 통과가 아니다.** 결정은 [ADR-H021](../DECISIONS.md).
 - **중복·충돌**: `promote --scan`이 같은 category의 active 규칙 / anchors 교집합 2개 이상 / 목적지 파일 검색 결과를 **원문과 함께** 제시한다. 판정은 모델이 하되 `verdict` 강제 기록 — `duplicate`면 `action`은 `skip`/`amend`만(**`create` 금지**), `contradicts`면 자동 쓰기 차단 + 에스컬레이션. **"일단 붙이기"를 선택지에서 없앤다.** 런당 `create` 최대 3건 — **미검증 상속값이다 (§11.1).**
+- **원장 승격은 `lint`·`check` 목적지만이다** ([ADR-H056](../DECISIONS.md)). `prose` 목적지 버킷은 `prose_candidates`로 따로 나와 staged되지 않고 08 지시문 검토의 입력이 된다. 관측이 전부 `contract-trace`인 버킷은 `trace_repeats`(검사 반복 검출)이고 후보가 아니다.
 - **철회**: 오탐 3회 이상 · 사용자 반려 · 상위 규칙 흡수. `status = retired`로 바꾸고 린트 규칙은 **삭제가 아니라 무시 표시 + 사유**. 삭제가 아니라 이동이라 감사 이력이 보존된다.
+- **규칙 단위 은퇴(`retire`)는 철회와 다른 추가 개념이다** — 카테고리가 아니라 `rule_key` 하나의 관측을 **그 시점에서 끊는 컷오프**다. 근본 원인을 하네스에서 고쳤을 때 07 판정 `action: retire` + `retired_reason`으로 쓴다. 원장에 은퇴 줄을 append하고 읽는 쪽이 이전 관측을 승격 집계·이월에서 뺀다. 이후 관측은 0부터 다시 세고, 임계를 넘으면 「재발」로 표기된다.
 - `rules_changelog.md`: 날짜 / `run_id` / `rule_id` / category / `enforceable` / 근거 런·횟수 / 중복·충돌 판정 / 실제 조치 / 베이스라인 diff / 철회 사유.
 - **05는 `staged`까지, 실제 쓰기는 07에서 한 번.** dedup이 로직이 아니라 시점으로 성립하고 PR diff에 규칙 문서 변경이 섞이지 않는다. 08 시작 시 `promote --flush`로 잔여를 강제 처리한다.
 

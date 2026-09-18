@@ -4394,14 +4394,16 @@ class TestRuleKeyAxis:
                     for n in ("A", "B", "C", "D", "E", "F")])
         assert len(ldg.observations(repo)) == 6, "관측은 안 접힌다"
         got = ldg.stage_promotions(repo)
-        buckets = got["candidates"] + got["held"]
+        # contract-trace 만의 반복은 승격 후보가 아니라 검사 반복 검출이다
+        # (ADR-H056) — 접기 자체는 그대로다.
+        buckets = got["trace_repeats"]
         assert len(buckets) == 1, buckets
         b = buckets[0]
         assert b["count"] == 6, b
         assert b["rule_slug"] == "out_of_contract", b
         assert len(b["finding_keys"]) == 6, b
-        assert got["candidates"] == [], "한 런이라 distinct_runs 가 모자란다"
-        assert len(got["held"]) == 1, got["held"]
+        assert got["candidates"] == [] and got["held"] == [], got
+        assert b["held_because"], "한 런이라 distinct_runs 가 모자란다"
 
     def test_두_런이면_후보가_된다(self, repo):
         """심볼이 런마다 달라도 규칙은 같다 — C4 가 겨눈 바로 그 자리."""
@@ -4413,8 +4415,9 @@ class TestRuleKeyAxis:
                                  title="계약에 없는 public 심볼 %s 가 생겼다" % n)
                         for n in names])
         got = ldg.stage_promotions(repo)
-        assert len(got["candidates"]) == 1, got["candidates"]
-        c = got["candidates"][0]
+        assert got["candidates"] == [], "게이트가 막는 규칙이라 후보가 아니다"
+        assert len(got["trace_repeats"]) == 1, got["trace_repeats"]
+        c = got["trace_repeats"][0]
         assert c["count"] == 6 and c["distinct_runs"] == 2, c
         assert c["rule_key"] and c["rule_slug"] == "out_of_contract", c
 
@@ -4571,8 +4574,10 @@ class TestRuleKeyAxis:
                                  title="%s 에서 %s 를 아무도 안 잠근다" % (run, n))
                         for n in ("상한", "빈 값", "경계")])
         got = ldg.stage_promotions(repo)
-        assert len(got["candidates"]) == 1, got["candidates"]
-        c = got["candidates"][0]
+        # 목적지가 prose 라 08 지시문 검토 후보다 (ADR-H056).
+        assert got["candidates"] == [], got["candidates"]
+        assert len(got["prose_candidates"]) == 1, got["prose_candidates"]
+        c = got["prose_candidates"][0]
         assert c["count"] == 6 and c["distinct_runs"] == 2, c
         assert c["rule_slug"] == "nothing_locked", c
 
@@ -8976,7 +8981,7 @@ class TestPromoteScan:
         assert s["promotions"] == []
 
     def test_임계를_넘으면_후보가_올라온다(self, repo, request_file, phases):
-        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+        _fill_ledger(repo, "파괴적 마이그레이션", "MIG_DESTRUCTIVE", "critical",
                      ["r1", "r2"])
         run_id, _p = _enter_06(repo, request_file, phases)
         env = cli.run_promote(repo, scan=True, run_id=run_id)
@@ -8990,7 +8995,7 @@ class TestPromoteScan:
         같은 런의 같은 페이즈에서 두 번 온 것은 이제 **관측 하나**다 (M30).
         그래서 여기서 막는 것은 `distinct_runs` 이전에 누적 자체다.
         """
-        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+        _fill_ledger(repo, "파괴적 마이그레이션", "MIG_DESTRUCTIVE", "critical",
                      ["r1", "r1"])
         run_id, _p = _enter_06(repo, request_file, phases)
         env = cli.run_promote(repo, scan=True, run_id=run_id)
@@ -9020,7 +9025,7 @@ class TestPromoteScan:
 
 
 def _staged_authz(repo, request_file, phases):
-    _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+    _fill_ledger(repo, "파괴적 마이그레이션", "MIG_DESTRUCTIVE", "critical",
                  ["r1", "r2"])
     run_id, paths = _enter_06(repo, request_file, phases)
     cli.run_promote(repo, scan=True, run_id=run_id)
@@ -9030,9 +9035,9 @@ def _staged_authz(repo, request_file, phases):
 def _one_verdict(**kw):
     """판정은 **어느 후보를 올리는지 가리켜야 한다** — rule_id 는 새로 짓는
     목적지 이름이라 후보의 기본 이름과 다를 수 있다."""
-    d = {"action": "create", "judgement": "new", "rule_id": "authz-catchall",
-         "category": "AUTHZ_MISSING_RULE", "enforceable": "prose",
-         "rationale": "캐치올 위치는 기계가 못 본다"}
+    d = {"action": "create", "judgement": "new", "rule_id": "migration-guard",
+         "category": "MIG_DESTRUCTIVE", "enforceable": "check",
+         "rationale": "파괴적 변경은 마이그레이션 검사가 잡는다"}
     d.update(kw)
     return d
 
@@ -9121,7 +9126,7 @@ class TestPromotionOverdue:
     """
 
     def _flush_after(self, repo, request_file, phases, runs):
-        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+        _fill_ledger(repo, "파괴적 마이그레이션", "MIG_DESTRUCTIVE", "critical",
                      ["r%d" % i for i in range(runs)])
         run_id, paths = _enter_06(repo, request_file, phases)
         cli.run_promote(repo, scan=True, run_id=run_id)
@@ -9160,7 +9165,7 @@ class TestPromoteApply:
         assert env["exit"] == 0, env["render"]
         log = (repo / "docs" / "harness" / "pipeline" / "ledger"
                / "rules_changelog.md").read_text(encoding="utf-8")
-        assert "authz-catchall" in log
+        assert "migration-guard" in log
         assert run_id in log
 
     def test_적용이_promotions_를_applied_로_만든다(self, repo, request_file,
@@ -9510,7 +9515,7 @@ class TestPromoteStatePreservation:
     """
 
     def test_scan_은_applied_를_되돌리지_않는다(self, repo, request_file, phases):
-        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+        _fill_ledger(repo, "파괴적 마이그레이션", "MIG_DESTRUCTIVE", "critical",
                      ["r1", "r2"])
         run_id, _p = _enter_06(repo, request_file, phases)
         paths, s = st.load(repo, run_id)
@@ -9525,7 +9530,7 @@ class TestPromoteStatePreservation:
         assert s2["promotions"][0]["status"] == "applied"
 
     def test_stage_는_applied_를_지우지_않는다(self, repo, request_file, phases):
-        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+        _fill_ledger(repo, "파괴적 마이그레이션", "MIG_DESTRUCTIVE", "critical",
                      ["r1", "r2"])
         run_id, _p = _enter_06(repo, request_file, phases)
         cli.run_promote(repo, stage=True, run_id=run_id)
@@ -9540,21 +9545,21 @@ class TestPromoteStatePreservation:
         assert s2["promotions"][0]["reason"] == "이미 썼다"
 
     def test_stage_는_새_후보를_더한다(self, repo, request_file, phases):
-        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+        _fill_ledger(repo, "파괴적 마이그레이션", "MIG_DESTRUCTIVE", "critical",
                      ["r1", "r2"])
         run_id, _p = _enter_06(repo, request_file, phases)
         cli.run_promote(repo, stage=True, run_id=run_id)
-        _fill_ledger(repo, "트랜잭션 경계가 없다", "TX_BOUNDARY", "critical",
+        _fill_ledger(repo, "마이그레이션 누락", "MIG_MISSING", "critical",
                      ["r3", "r4"])
         cli.run_promote(repo, stage=True, run_id=run_id)
         _pp, s = st.load(repo, run_id)
         cats = {p["category"] for p in s["promotions"]}
-        assert cats == {"AUTHZ_MISSING_RULE", "TX_BOUNDARY"}
+        assert cats == {"MIG_DESTRUCTIVE", "MIG_MISSING"}
 
     def test_promotions_가_빈_리스트면_전량_재stage_하지_않는다(
             self, repo, request_file, phases):
         """`or` 가 적법하게 빈 `[]` 를 거짓으로 읽는 자리 — G-4:1655 와 같은 모양."""
-        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+        _fill_ledger(repo, "파괴적 마이그레이션", "MIG_DESTRUCTIVE", "critical",
                      ["r1", "r2"])
         run_id, paths = _enter_06(repo, request_file, phases)
         _p, s = st.load(repo, run_id)
@@ -9562,8 +9567,8 @@ class TestPromoteStatePreservation:
         st.save(_p, s)
         vf = paths.run_dir / "07_promo_verdict.json"
         vf.write_text(json.dumps({"verdicts": [
-            {"rule_id": "authz", "category": "AUTHZ_MISSING_RULE",
-             "enforceable": "prose", "judgement": "new", "action": "create",
+            {"rule_id": "authz", "category": "MIG_DESTRUCTIVE",
+             "enforceable": "check", "judgement": "new", "action": "create",
              "rationale": "r"}]}, ensure_ascii=False), encoding="utf-8")
         cli.run_promote(repo, apply=True, verdict_file=str(vf), run_id=run_id)
         _pp, s2 = st.load(repo, run_id)
@@ -11384,11 +11389,257 @@ class TestMergedModeCountsOnce:
             ["05:r1:arch", "05:r1:test"]
 
 
+def _trace_ledger(repo, runs, slug="out_of_contract", category="NAMING"):
+    """`contract-trace` 만 낸 반복 — 게이트가 이미 막는 규칙의 기계 출력이다."""
+    ldg.seed(repo)
+    for rid in runs:
+        ldg.append(repo, rid, "05", [
+            _finding(category=category, severity="critical",
+                     source="contract-trace", rule_slug=slug,
+                     title="%s 의 계약 밖 심볼" % rid)])
+
+
+def _clock(monkeypatch, start=0):
+    """`st.stamp` 를 초 단위로 한 칸씩 전진시킨다 — 컷오프 비교가 결정론이 된다."""
+    tick = {"n": start}
+
+    def stamp(now=None):
+        tick["n"] += 1
+        return "2026-09-18T10:%02d:%02d+0900" % divmod(tick["n"], 60)
+    monkeypatch.setattr(st, "stamp", stamp)
+
+
+class TestPromotionDestinationSplit:
+    """**원장 승격은 기계 강제만이다** (ADR-H056).
+
+    파일럿 `rules_changelog.md` 13행이 전부 `skipped` 였다 — 후보는 임계를
+    넘었고 목적지가 `prose` 라 07 판정자가 매번 미뤘다. prose 후보는 버리지
+    않고 08 지시문 검토의 입력으로 따로 싣는다. `contract-trace` 만 낸 버킷은
+    이미 게이트가 막는 규칙이라 어느 쪽 후보도 아니다.
+    """
+
+    def test_prose_는_후보가_아니라_지시문_검토_후보다(self, repo):
+        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+                     ["r1", "r2"])
+        got = ldg.stage_promotions(repo)
+        assert got["candidates"] == [], got["candidates"]
+        assert [c["category"] for c in got["prose_candidates"]] == \
+            ["AUTHZ_MISSING_RULE"], got["prose_candidates"]
+
+    def test_scan_은_prose_를_staged_하지_않고_모델을_부르지_않는다(
+            self, repo, request_file, phases):
+        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+                     ["r1", "r2"])
+        run_id, _p = _enter_06(repo, request_file, phases)
+        env = cli.run_promote(repo, scan=True, run_id=run_id)
+        assert env["data"]["needs_model"] is False
+        _pp, s = st.load(repo, run_id)
+        assert s["promotions"] == []
+        assert "지시문 검토 후보" in env["render"], env["render"]
+
+    def test_prose_후보는_시한이_지나도_promotion_overdue_가_아니다(
+            self, repo, request_file, phases):
+        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+                     ["r%d" % i for i in range(ldg.PROMOTION_VERDICT_AT_RUNS)])
+        run_id, _p = _enter_06(repo, request_file, phases)
+        cli.run_promote(repo, scan=True, run_id=run_id)
+        env = cli.run_promote(repo, flush=True, run_id=run_id)
+        _pp, s = st.load(repo, run_id)
+        assert "promotion_overdue" not in (s.get("gaps") or [])
+        assert env["data"]["promotion_overdue"] is False
+
+    def test_contract_trace_만의_반복은_검사_반복_검출이다(self, repo):
+        _trace_ledger(repo, ["r1", "r2"])
+        got = ldg.stage_promotions(repo)
+        assert got["candidates"] == [] and got["prose_candidates"] == []
+        assert len(got["trace_repeats"]) == 1, got["trace_repeats"]
+        t = got["trace_repeats"][0]
+        assert t["rule_slug"] == "out_of_contract" and t["distinct_runs"] == 2
+        out = cli._promote_scan_render(dict(got, needs_model=False))
+        assert "검사 반복 검출" in out, out
+
+    def test_리뷰어_관측이_섞이면_종전대로_후보다(self, repo):
+        _trace_ledger(repo, ["r1"])
+        ldg.append(repo, "r2", "05", [
+            _finding(category="NAMING", severity="critical",
+                     source="reviewer", rule_slug="out_of_contract",
+                     title="리뷰어가 본 계약 밖 심볼")])
+        got = ldg.stage_promotions(repo)
+        assert len(got["candidates"]) == 1, got
+        assert got["trace_repeats"] == [], got["trace_repeats"]
+
+    def test_보고서가_지시문_검토_후보를_적는다(self, repo, request_file, phases):
+        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+                     ["r1", "r2"])
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths)
+        cli.run_report(repo, run_id=run_id)
+        out = (repo / "docs" / "harness" / "pipeline" / "runs"
+               / ("%s.md" % run_id)).read_text(encoding="utf-8")
+        assert "지시문 검토 후보" in out, out
+        assert "AUTHZ_MISSING_RULE" in out
+
+
+class TestLedgerRetire:
+    """rule_key 단위 은퇴는 **컷오프**다 (ADR-H056).
+
+    근본 원인을 하네스에서 고친 규칙(ADR-H049 의 `out_of_contract`)의 옛
+    관측을 은퇴시킬 수단이 없어 후보가 영원히 남았다. 은퇴 이후 관측은 새
+    표본으로 0 부터 센다 — 영구 제외는 카테고리 `status: retired` 의 일이다.
+    """
+
+    def _key(self, repo):
+        return ldg.stage_promotions(repo)["candidates"][0]["rule_key"]
+
+    def test_은퇴_이전_관측은_후보에서_빠진다(self, repo, monkeypatch):
+        _clock(monkeypatch)
+        _fill_ledger(repo, "같은 이름", "NAMING", "critical", ["r1", "r2"])
+        key = self._key(repo)
+        ldg.retire(repo, "r3", key, "하네스에서 근본 원인을 고쳤다")
+        got = ldg.stage_promotions(repo)
+        assert got["candidates"] == [] and got["held"] == [], got
+
+    def test_은퇴_뒤_재발은_0부터_세고_은퇴_시각을_싣는다(self, repo,
+                                                        monkeypatch):
+        _clock(monkeypatch)
+        _fill_ledger(repo, "같은 이름", "NAMING", "critical", ["r1", "r2"])
+        key = self._key(repo)
+        ldg.retire(repo, "r3", key, "고쳤다")
+        _fill_ledger(repo, "같은 이름", "NAMING", "critical", ["r4"])
+        assert ldg.stage_promotions(repo)["candidates"] == [], \
+            "은퇴 이전 런이 임계에 끼어들면 안 된다"
+        _fill_ledger(repo, "같은 이름", "NAMING", "critical", ["r5"])
+        got = ldg.stage_promotions(repo)["candidates"]
+        assert len(got) == 1, got
+        assert got[0]["count"] == 2 and got[0]["runs"] == ["r4", "r5"], got
+        assert got[0]["retired_at"], got
+
+    def test_은퇴_줄은_관측도_런도_아니다(self, repo, monkeypatch):
+        _clock(monkeypatch)
+        _fill_ledger(repo, "같은 이름", "NAMING", "critical", ["r1", "r2"])
+        key = self._key(repo)
+        n_obs, n_runs = len(ldg.observations(repo)), ldg.distinct_runs(repo)
+        ldg.retire(repo, "r9", key, "고쳤다")
+        assert len(ldg.observations(repo)) == n_obs
+        assert ldg.distinct_runs(repo) == n_runs
+
+    def test_은퇴는_이월도_닫는다(self, repo, monkeypatch):
+        _clock(monkeypatch)
+        ldg.seed(repo)
+        ldg.append(repo, "r1", "05", [_finding(path="src/a.ts")])
+        key = ldg.read_all(repo)[0]["rule_key"]
+        assert ldg.open_deferred(repo)
+        ldg.retire(repo, "r2", key, "고쳤다")
+        assert ldg.open_deferred(repo) == []
+
+    def test_같은_런의_같은_규칙은_한_줄이다(self, repo, monkeypatch):
+        _clock(monkeypatch)
+        _fill_ledger(repo, "같은 이름", "NAMING", "critical", ["r1", "r2"])
+        key = self._key(repo)
+        ldg.retire(repo, "r3", key, "고쳤다")
+        ldg.retire(repo, "r3", key, "고쳤다")
+        assert sum(1 for r in ldg.read_all(repo) if "retire" in r) == 1
+
+    def test_사유가_없으면_거부한다(self, repo):
+        ldg.seed(repo)
+        with pytest.raises(ValueError):
+            ldg.retire(repo, "r1", "k", "  ")
+
+
+class TestPromoteRetire:
+    """07 판정 어휘 `retire` — lint 베이스라인 경로를 타지 않는다 (ADR-H056)."""
+
+    def _staged_lint(self, repo, request_file, phases):
+        _fill_ledger(repo, "같은 이름", "NAMING", "critical", ["r1", "r2"])
+        run_id, paths = _enter_06(repo, request_file, phases)
+        cli.run_promote(repo, scan=True, run_id=run_id)
+        _pp, s = st.load(repo, run_id)
+        return run_id, paths, s["promotions"][0]["rule_key"]
+
+    def _retire(self, key, **kw):
+        d = {"action": "retire", "rule_key": key, "enforceable": "lint",
+             "retired_reason": "ADR-H049 로 근본 원인을 고쳤다"}
+        d.update(kw)
+        return d
+
+    def test_retire_가_원장에_닫고_changelog_에_사유를_남긴다(
+            self, repo, request_file, phases, monkeypatch):
+        _clock(monkeypatch)
+        run_id, paths, key = self._staged_lint(repo, request_file, phases)
+        seen = []
+        f = _verdict_file(paths, [self._retire(key)])
+        env = cli.run_promote(repo, apply=True, verdict_file=str(f),
+                              run_id=run_id, runner=_silent_runner(seen=seen))
+        assert env["exit"] == 0, env["render"]
+        assert seen == [], "retire 는 베이스라인을 재지 않는다"
+        rows = [r["retire"] for r in ldg.read_all(repo) if "retire" in r]
+        assert rows and rows[0]["rule_key"] == key and rows[0]["run_id"] == run_id
+        _pp, s = st.load(repo, run_id)
+        assert s["promotions"][0]["status"] == "retired", s["promotions"]
+        log = (repo / "docs" / "harness" / "pipeline" / "ledger"
+               / "rules_changelog.md").read_text(encoding="utf-8")
+        assert "ADR-H049 로 근본 원인을 고쳤다" in log
+        assert ldg.stage_promotions(repo)["candidates"] == []
+
+    def test_flush_는_retired_를_skipped_로_바꾸지_않는다(
+            self, repo, request_file, phases, monkeypatch):
+        _clock(monkeypatch)
+        run_id, paths, key = self._staged_lint(repo, request_file, phases)
+        f = _verdict_file(paths, [self._retire(key)])
+        cli.run_promote(repo, apply=True, verdict_file=str(f), run_id=run_id)
+        env = cli.run_promote(repo, flush=True, run_id=run_id)
+        _pp, s = st.load(repo, run_id)
+        assert s["promotions"][0]["status"] == "retired"
+        assert env["data"]["promotion_overdue"] is False
+
+    def test_사유가_없으면_exit_8(self, repo, request_file, phases):
+        run_id, paths, key = self._staged_lint(repo, request_file, phases)
+        f = _verdict_file(paths, [self._retire(key, retired_reason="")])
+        env = cli.run_promote(repo, apply=True, verdict_file=str(f),
+                              run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+        assert "retired_reason" in env["render"]
+
+    def test_원장에_없는_규칙은_exit_8(self, repo, request_file, phases):
+        run_id, paths, _key = self._staged_lint(repo, request_file, phases)
+        f = _verdict_file(paths, [self._retire("없는키")])
+        env = cli.run_promote(repo, apply=True, verdict_file=str(f),
+                              run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+
+    def test_staged_가_아닌_prose_규칙도_은퇴시킬_수_있다(
+            self, repo, request_file, phases, monkeypatch):
+        _clock(monkeypatch)
+        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+                     ["r1", "r2"])
+        key = ldg.stage_promotions(repo)["prose_candidates"][0]["rule_key"]
+        run_id, paths = _enter_06(repo, request_file, phases)
+        cli.run_promote(repo, scan=True, run_id=run_id)
+        f = _verdict_file(paths, [self._retire(key, enforceable="prose")])
+        env = cli.run_promote(repo, apply=True, verdict_file=str(f),
+                              run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        assert ldg.stage_promotions(repo)["prose_candidates"] == []
+
+    def test_prose_규칙을_create_하면_exit_8(self, repo, request_file, phases):
+        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+                     ["r1", "r2"])
+        key = ldg.stage_promotions(repo)["prose_candidates"][0]["rule_key"]
+        run_id, paths = _enter_06(repo, request_file, phases)
+        cli.run_promote(repo, scan=True, run_id=run_id)
+        f = _verdict_file(paths, [_one_verdict(
+            rule_key=key, category="AUTHZ_MISSING_RULE", enforceable="prose")])
+        env = cli.run_promote(repo, apply=True, verdict_file=str(f),
+                              run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+        assert "ADR-H056" in env["render"]
+
+
 class TestPromoteJudgementIsCounted:
 
     def test_a_scan_with_candidates_counts_the_judgement(self, repo, request_file,
                                                           phases):
-        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
+        _fill_ledger(repo, "파괴적 마이그레이션", "MIG_DESTRUCTIVE", "critical",
                      ["r1", "r2"])
         run_id, _p = _enter_06(repo, request_file, phases)
         env = cli.run_promote(repo, scan=True, run_id=run_id)

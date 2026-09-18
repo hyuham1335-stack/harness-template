@@ -17,6 +17,10 @@ dedup 이 로직이 아니라 **시점**으로 성립하고, 기능 PR 의 diff 
 `duplicate` 면 `create` 가 금지되고, `contradicts` 면 자동 쓰기가 차단되며
 에스컬레이션이다. 그리고 `lint` 승격은 **베이스라인 diff 를 반드시 남긴다** —
 없으면 "규칙은 추가했는데 아무것도 안 막는다"가 조용히 통과한다.
+
+**원장 승격은 기계 강제(`lint`·`check`)만이다** (ADR-H056). prose 후보는
+08 지시문 검토로 가고, 여기서는 `retire`(근본 원인을 고친 규칙의 관측을
+끊는 컷오프)만 받는다.
 """
 
 import json
@@ -32,11 +36,13 @@ import harness  # noqa: E402
 import ledger  # noqa: E402
 
 # `promotions[].status` 의 닫힌 어휘. 05 는 `staged` 만 쓰고 07 이 나머지를 쓴다.
-STATUSES = ("staged", "applied", "rejected", "skipped")
+STATUSES = ("staged", "applied", "rejected", "skipped", "retired")
 
 # 판정 어휘. `duplicate` 에서 `create` 가 금지되는 것이 요점이다.
+# `retire` 는 규칙(`rule_key`)의 관측을 끊는 컷오프다 — 근본 원인을 하네스에서
+# 고쳤을 때 쓴다. 판정(`judgement`)·create 상한·베이스라인을 타지 않는다 (ADR-H056).
 JUDGEMENTS = ("new", "duplicate", "contradicts")
-ACTIONS = ("create", "amend", "skip")
+ACTIONS = ("create", "amend", "skip", "retire")
 
 # **미검증 상속값이다.** 원본 명세에서 왔고 이 리포에서 재본 적이 없다.
 # 매 런 상한에 닿으면 낮은 것이다. 판정 시한은 `THRESHOLDS` 와 같은 것을
@@ -132,8 +138,17 @@ def check_verdicts(root, verdicts, promotions=None):
     errors, blocked = [], False
     creates = 0
     taken = set()
+    prose_keys = {c.get("rule_key") for c in
+                  ledger.stage_promotions(root)["prose_candidates"]}
     for v in verdicts or []:
         rid0 = v.get("rule_id") or "(이름 없음)"
+        if v.get("action") == "retire":
+            errors += _check_retire(root, v, promotions, taken)
+            continue
+        if _identity(v) in prose_keys and v.get("action") in ("create", "amend"):
+            errors.append("%s: prose 규칙은 원장 승격이 아니라 08 지시문 검토로 "
+                          "간다 (ADR-H056) — 07 에서는 `retire` 만 받는다." % rid0)
+            continue
         if not _resolve_category(root, v, promotions):
             errors.append("%s: 어느 후보를 승격하는지 가리키지 않았다 — "
                           "`category` 또는 `rule_key` 가 필요하다." % rid0)
@@ -186,6 +201,61 @@ def check_verdicts(root, verdicts, promotions=None):
                       "**미검증 상속값이지만 넘는 것을 조용히 통과시키지는 "
                       "않는다.**" % (creates, CREATE_MAX_PER_RUN))
     return errors, blocked
+
+
+def _ledger_rows(root, key):
+    """원장에서 이 규칙의, 아직 은퇴되지 않은 관측."""
+    retired = ledger.retirements(root)
+    return [r for r in ledger.observations(root)
+            if (r.get("rule_key") or r.get("finding_key")) == key
+            and not ledger.is_retired(r, retired)]
+
+
+def _check_retire(root, v, promotions, taken):
+    """`retire` 판정의 규약. staged 가 아니어도 원장에 있는 규칙이면 받는다."""
+    key = v.get("rule_key")
+    rid = v.get("rule_id") or key or "(이름 없음)"
+    errors = []
+    if not key:
+        errors.append("%s: retire 는 `rule_key` 가 필요하다 — 무엇을 끊는지 "
+                      "신원으로 가리킨다." % rid)
+    if not (v.get("retired_reason") or "").strip():
+        errors.append("%s: action 이 retire 인데 retired_reason 이 비었다 — "
+                      "무엇을 고쳐서 끊는지 한 줄이 필요하다." % rid)
+    if not key:
+        return errors
+    hit = resolve_target(root, v, promotions or [], taken)
+    if hit is not None:
+        taken.add(id(hit))
+    elif not _ledger_rows(root, key):
+        errors.append("%s: 은퇴시킬 규칙이 원장에 없다 (rule_key=%r)." % (rid, key))
+    return errors
+
+
+def _apply_retire(root, run_id, v, promotions, taken):
+    """원장에 은퇴 줄을 쓰고, staged 행이면 `retired` 로 닫는다. 반환: changelog 행."""
+    key = v["rule_key"]
+    reason = v["retired_reason"].strip()
+    rows = _ledger_rows(root, key)
+    target = resolve_target(root, v, promotions, taken)
+    ledger.retire(root, run_id, key, reason)
+    if target is not None:
+        taken.add(id(target))
+        target["status"] = "retired"
+        target["reason"] = reason
+    return {
+        "run_id": run_id,
+        "rule_id": v.get("rule_id") or (target or {}).get("rule_id") or key,
+        "category": (target or {}).get("category")
+                    or (rows[0].get("category") if rows else None),
+        "enforceable": v.get("enforceable") or (target or {}).get("enforceable"),
+        "evidence": "%d회 / %d런" % (len(rows),
+                                     len({r.get("run_id") for r in rows})),
+        "judgement": v.get("judgement") or "-",
+        "action": "retired",
+        "baseline_diff": "해당 없음",
+        "retired_reason": reason,
+    }
 
 
 def _resolve_category(root, v, promotions=None):
@@ -252,7 +322,8 @@ _INFRA_EXITS = (124, 127)
 
 def wants_baseline(verdicts):
     """`lint` 승격이 실제로 하나라도 있는가. 재는 비용을 거기에만 쓴다."""
-    return any(v.get("enforceable") == "lint" and v.get("action") != "skip"
+    return any(v.get("enforceable") == "lint"
+               and v.get("action") not in ("skip", "retire")
                for v in verdicts or [])
 
 
@@ -347,6 +418,10 @@ def apply(root, run_id, promotions, verdicts, baseline=None):
     rows = []
     taken = set()
     for v in verdicts or []:
+        # retire 는 lint 분기보다 앞이다 — 베이스라인을 타지 않는다.
+        if v.get("action") == "retire":
+            rows.append(_apply_retire(root, run_id, v, promotions, taken))
+            continue
         rid = v.get("rule_id")
         code = _resolve_category(root, v, promotions)
         target = resolve_target(root, v, promotions, taken)

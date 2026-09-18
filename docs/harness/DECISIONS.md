@@ -2615,4 +2615,42 @@ ADR 을 인용한 새 ADR 로 한다.
 
 ---
 
+### ADR-H056: 원장 승격은 기계 강제만 — prose 는 08 검토로, 규칙 단위 `retire`
+
+**날짜**: 2026-09-18 · **상태**: 제안됨 · **구현 상태**: 구현됨 (2026-09-18 — `ledger.stage_promotions` 의 세 갈래 · `ledger.retire` · `promote` 의 `retire` 판정. 08 지시문 검토 게이트는 후속 묶음)
+
+**맥락**: 파일럿 15런의 `rules_changelog.md` 13행이 전부 `skipped` 였다. **임계가 높았던 것이 아니다**
+— [[ADR-H033]] 의 판정 시한(9런)이 지난 뒤에도 후보 셋이 임계를 넘은 채 7런 연속 미뤄졌다
+(`maxduration…/out_of_contract` 9회/7런 · `transition-action-coverage-stale` 17회/5런). 원인이 둘이다.
+① 목적지가 `prose` 인 후보는 07 판정자가 매번 skip 했다 — 기능 PR 과 분리된 규칙 브랜치에서 산문
+지시문을 고칠 판단 근거가 07 에 없다. ② `out_of_contract` 는 [[ADR-H049]] 로 근본 원인이 하네스에서
+고쳐졌는데, 옛 관측을 은퇴시킬 수단이 없어 후보가 영원히 남았다. [[ADR-H051]] 의 `promotion_overdue`
+는 그 미룸에 등급을 물렸지만 미룸의 원인을 없애지는 못했다.
+
+**결정**:
+1. **원장 승격(`candidates`)은 목적지가 기계 강제(`lint`·`check`)인 규칙만이다.** prose 버킷은
+   `prose_candidates` 로 따로 반환하고 staged 하지 않는다 — 그래서 07 모델 호출도 `promotion_overdue`
+   도 유발하지 않는다. 버리지 않는다: 07 스캔 렌더와 08 보고서가 「지시문 검토 후보」 로 찍고, 08 의
+   지시문 검토(후속 묶음)가 입력으로 받는다.
+2. **기계 검사의 출력은 승격 후보가 아니다.** 버킷의 관측이 전부 `source == "contract-trace"` 면
+   `trace_repeats` 로 빠진다 — 게이트가 이미 막는 규칙이라 흡수할 것이 없다. 리뷰어 관측이 섞인
+   버킷은 종전대로 분류한다.
+3. **`retire` 는 `rule_key` 단위의 컷오프다.** 07 판정 어휘에 `retire`(필수: `rule_key` ·
+   `retired_reason`)를 더한다. 원장에 `{"retire": {rule_key, ts, reason, run_id}}` 줄을 append 하고
+   (append-only 유지 — 관측 행은 안 고친다), 읽는 쪽(`stage_promotions` · `open_deferred`)이 은퇴 ts
+   이하(같은 초 포함)의 관측을 뺀다. 이후 관측은 새 표본으로 **0 부터** 세고, 임계를 다시 넘으면
+   `retired_at` 과 함께 「재발」 로 표기된다. staged 행이면 `status: retired` 로 닫고, 아니어도 원장에
+   있는 규칙이면 받는다. `judgement` · create 상한 · lint 베이스라인을 타지 않는다.
+4. 카테고리 `status: retired`(§5.3 「철회」)는 **영구 제외**로 그대로 남는다 — 규칙 단위 `retire` 는
+   그것을 대체하지 않는 추가 개념이다.
+
+**트레이드오프**: prose 규칙은 이제 07 에서 원장 승격될 길이 없다 — 08 검토가 들어서기 전까지는
+보고서에 찍히기만 한다. 13/13 skip 이 이미 그 상태였으므로 잃는 것은 없고, 미룸이 등급을 내리는
+소음(`promotion_overdue`)이 사라진다. `retire` 의 컷오프는 초 단위 ts 비교라 은퇴와 같은 초의 관측은
+은퇴 쪽으로 들어간다.
+
+관련: [[ADR-H033]] · [[ADR-H034]](축은 `rule_key`) · [[ADR-H049]] · [[ADR-H051]](skip 에는 사유)
+
+---
+
 ### ADR-H00N: {다음 결정}
