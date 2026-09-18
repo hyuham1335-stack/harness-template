@@ -21,6 +21,7 @@ import harness  # noqa: E402
 import adapters  # noqa: E402
 import attribution as attr  # noqa: E402
 import contract as contract_mod  # noqa: E402
+import report as rep  # noqa: E402
 import state as st  # noqa: E402
 
 # 등급 어휘의 단일 출처는 `state.GRADES` 다. 여기서 문자열을 다시 적으면
@@ -125,7 +126,8 @@ def run_gate(root, config, adapter, calibration, state, phase_front,
 
     report["failed"] = loop_failed
     report["symbols"] = sorted(symbols)
-    report["grade"] = GRADE_PASS if (not gaps and loop_failed is None) else (
+    demoting = [g for g in gaps if not rep.is_non_demoting(g)]
+    report["grade"] = GRADE_PASS if (not demoting and loop_failed is None) else (
         GRADE_GAPS if loop_failed is None else None)
     report["gaps"] = gaps
     return report

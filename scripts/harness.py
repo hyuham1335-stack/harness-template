@@ -634,7 +634,14 @@ def _check_stage_commands(root, adapter, report):
 
 def _report_null_stages(adapter, report):
     """cmd:null 은 '없는 것'이지 '통과한 것'이 아니다. 등급에 반영되도록 드러낸다."""
-    nulls = [name for name in sorted(adapter["stages"]) if not adapter["stages"][name].get("cmd")]
+    stages = adapter["stages"]
+    nulls = [name for name in sorted(stages) if not stages[name].get("cmd")]
+    na = [n for n in nulls if str(stages[n].get("not_applicable") or "").strip()]
+    nulls = [n for n in nulls if n not in na]
+    if na:
+        report.add("해당 없는 스테이지", "PASS",
+                   "not_applicable — %s. 게이트는 `stage_na:<id>` 로 기록하고 "
+                   "등급을 내리지 않는다." % ", ".join(na))
     if nulls:
         report.add("스킵될 스테이지", "WARN",
                    "cmd:null — %s. 게이트는 이 스테이지를 '스킵됨'으로 기록한다. "
@@ -891,6 +898,30 @@ def phase_ids(root):
     return sorted(p.stem for p in d.glob("*.md"))
 
 
+def _classify_runs(root, adapter_id, ids):
+    """완주 런을 [(run_id, [])] 자격 · [(run_id, passed 아닌 페이즈)] 탈락으로 가른다.
+
+    `skipped` 는 세지 않는다: 정책 생략은 관측이 없었던 것이다. 다른 어댑터로
+    돈 런도 세지 않는다.
+    """
+    qualified, rejected = [], []
+    for s in completed_runs(root):
+        if ((s.get("adapter") or {}).get("id")) != adapter_id:
+            continue
+        phases = s.get("phases") or {}
+        bad = [pid for pid in ids if (phases.get(pid) or {}).get("status") != "passed"]
+        (rejected if bad else qualified).append((s.get("run_id"), bad))
+    return qualified, rejected
+
+
+def qualified_runs(root, adapter_id):
+    """`verify-adapter` 가 세는 런의 id — 08 보고서가 "기준 충족" 을 같은 셈으로 말한다."""
+    ids = phase_ids(root)
+    if not ids:
+        return []
+    return [r for r, _ in _classify_runs(root, adapter_id, ids)[0]]
+
+
 def run_verify_adapter(root, min_runs=ADAPTER_VERIFY_MIN_RUNS, now=None):
     """완주 런 ≥ `min_runs` 이고 그 런들이 페이즈 전부를 `passed` 로 지났으면
     어댑터 `verified` 를 `true` 로 올린다 (ADR-H047 결정 3).
@@ -914,13 +945,7 @@ def run_verify_adapter(root, min_runs=ADAPTER_VERIFY_MIN_RUNS, now=None):
         print("  %s 에 페이즈 파일이 없다 — 무엇을 완주라 부를지 모른다." % PHASES_DIR_REL)
         return 2
 
-    qualified, rejected = [], []
-    for s in completed_runs(root):
-        if ((s.get("adapter") or {}).get("id")) != adapter_id:
-            continue
-        phases = s.get("phases") or {}
-        bad = [pid for pid in ids if (phases.get(pid) or {}).get("status") != "passed"]
-        (rejected if bad else qualified).append((s.get("run_id"), bad))
+    qualified, rejected = _classify_runs(root, adapter_id, ids)
 
     print("\n  verify-adapter — %s" % adapter_id)
     print("  완주 런 %d · 그중 %s 전부 passed 인 런 %d / 기준 %d"
@@ -1244,8 +1269,11 @@ def run_calibrate(root, stage=None, select=None, runner=None, now=None, replace=
     for name in targets:
         spec = adapter["stages"][name]
         if not spec.get("cmd"):
-            stages[name] = {"sec": None, "skipped": True, "state": "absent",
-                            "reason": "cmd:null — 이 스택에 없는 스테이지"}
+            na = str(spec.get("not_applicable") or "").strip()
+            stages[name] = {"sec": None, "skipped": True,
+                            "state": "na" if na else "absent",
+                            "reason": ("cmd:null — 해당 없음: %s" % na) if na
+                            else "cmd:null — 이 스택에 없는 스테이지"}
             continue
         if name == "scoped" and not select:
             stages[name] = {"sec": None, "skipped": True, "state": "unmeasured",

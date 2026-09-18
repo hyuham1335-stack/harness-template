@@ -2313,6 +2313,20 @@ compile 만큼(파일럿 실측 9~17초) 느려진다 — 그 시간이 배포 �
 **재검토 시점**: 다음 파일럿에서 `tests.status: shrank` 가 실제로 한 번 잡히는가. 잡히지 않으면
 0.9 가 헐거운 것이다.
 
+**추기 (2026-09-18, banana 15런 회고)**:
+4. **`stage_na:<id>` — 해당 없음은 부재가 아니다.** 15런 전부 `stage_absent:e2e`·`stage_absent:docs` 가
+   같은 코드로 강등했는데, docs 는 그 스택에 구조적으로 없는 것이고 e2e 는 TRD 가 미룬 것이다. 어댑터
+   스테이지에 `not_applicable: "<사유>"` 를 적으면 `adapters.stage_state` 가 `na` 를 내고 게이트가
+   `stage_na:<id>` 로 기록한다. 결정 2 의 NON_DEMOTING 선례를 **접두로** 넓힌 것이라 정확 일치 목록에
+   넣을 수 없고, 그래서 판정을 `report.is_non_demoting(gap)` 하나로 모아 게이트 등급·precheck demote 가
+   같이 쓴다(부르는 곳마다 접두 검사를 따로 적으면 한 곳이 빠져 갈라진다). PR 본문·승인 프롬프트의
+   「건너뛴 게이트」 에는 남는다 — 표시는 하고 등급만 안 내린다. nextjs-ts·self-python 의 docs 에
+   적용했고 e2e 는 `cmd: null` 그대로다(진짜 부재).
+5. **08 보고서가 `verify-adapter` 기준 충족을 말한다.** banana 는 완주 15런(기준 3)인데 명령을 안 돌려
+   `verified: false` 였다. 결정 3 의 셈을 `harness.qualified_runs` 로 뽑아 `run_report` 가 같은 수를
+   보고서 캘리브레이션 절에 싣는다 — 사람이 명령 한 번만 치면 된다는 것이 보인다. 올리는 것은 여전히
+   사람이다(파일에 굳는 판정이라서).
+
 관련: [[ADR-H007]](상수는 재고 정한다) · [[ADR-H039]](템플릿 자신의 캘리브레이션은 영구 미측정)
 
 ---

@@ -22,7 +22,7 @@
     "full": {"cmd": ["-m", "pytest", "scripts/"], "timeout_sec": 1800, "once_after_loop": true},
     "e2e": {"cmd": null, "_note": "E2E 개념이 없다. cmd:null 은 '없는 것'이고 게이트는 스킵됨으로 기록한다 — 통과가 아니다."},
     "build": {"cmd": null, "_note": "빌드 산출물이 없다."},
-    "docs": {"cmd": null, "_note": "문서 빌드 산출물이 없다."}
+    "docs": {"cmd": null, "not_applicable": "문서 빌드 산출물이 없다."}
   },
 
   "_test_report": "pytest 는 --junitxml 을 줘야 리포트를 쓴다. 지금은 안 주므로 셀 수 없고, 그 사실이 doctor 에 드러나야 한다.",
