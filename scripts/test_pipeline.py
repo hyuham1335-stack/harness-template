@@ -5590,6 +5590,89 @@ class TestPrecheckInfra:
         assert "sk-비밀값-12345" not in json.dumps(got, ensure_ascii=False)
 
 
+def _done_run(repo, run_id, closed_at, adapter="nextjs-ts", phases=None,
+              statuses=None):
+    """완주 런 하나를 `_workspace/runs/` 에 상태로 세운다.
+
+    `phases` 는 페이즈 id 목록이고 전부 `passed` 다 — `statuses` 로 일부를
+    덮는다. 완주 판정(`run_status: done`)과 페이즈 상태는 다른 사실이다.
+    """
+    d = repo / "_workspace" / "runs" / run_id
+    d.mkdir(parents=True, exist_ok=True)
+    ph = {pid: {"status": (statuses or {}).get(pid, "passed")}
+          for pid in (phases or [])}
+    (d / "state.json").write_text(json.dumps({
+        "run_id": run_id, "run_status": "done", "closed_at": closed_at,
+        "adapter": {"id": adapter}, "phases": ph}, ensure_ascii=False),
+        encoding="utf-8")
+    return d
+
+
+class TestPrecheckCalibrationStale:
+    """[[ADR-H047]] 결정 2 — 캘리브레이션 뒤 완주 런이 쌓이면 `precheck` 가 말한다.
+
+    `calibration.json` 은 2026-09-13 에 한 번 측정됐고 그 뒤 15런 동안 테스트가
+    113 → 652 개로 늘었는데 아무도 재측정을 권하지 않았다. 표시다 — 등급은
+    내리지 않는다. 그래서 `GAP_REASONS` 에 있되 `NON_DEMOTING_GAPS` 다.
+    """
+
+    AFTER = "2026-02-%02dT00:00:00+0900"     # 픽스처 measured_at 은 2026-01-01
+    BEFORE = "2025-12-%02dT00:00:00+0900"
+
+    def _runs(self, repo, n, fmt=None):
+        for i in range(n):
+            _done_run(repo, "r%d" % i, (fmt or self.AFTER) % (i + 1))
+
+    def test_기준_미만이면_조용하다(self, repo):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS - 1)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" not in got["gaps"], got["gaps"]
+
+    def test_기준_이상이면_gap_이고_등급은_그대로다(self, repo, request_file):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" in got["gaps"], got["gaps"]
+        assert got["exit"] == 0, "표시이지 실패가 아니다"
+        cal = [c for c in got["checks"] if c["name"] == "캘리브레이션"]
+        assert cal and cal[0]["ok"] and cal[0]["stale_runs"] == \
+            pc.CALIBRATION_STALE_RUNS, cal
+
+        cli.run_init(repo, "x", request_file)
+        env = cli.run_precheck(repo, scope="pr")
+        _, s = st.load(repo, env["run_id"])
+        assert "calibration_stale" in s["gaps"], s["gaps"]
+        assert s.get("grade") is None, "등급을 내리지 않는다 — 표시다"
+        assert "calibrate" in env["render"], env["render"]
+
+    def test_측정_전의_런은_세지_않는다(self, repo):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS, fmt=self.BEFORE)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" not in got["gaps"], got["gaps"]
+
+    def test_미측정이면_검사하지_않는다(self, repo):
+        """템플릿 자신은 영구 미측정이다 (ADR-H039) — 거기서 이 gap 이 나면 소음이다."""
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        cal = repo / "harness" / "calibration.json"
+        data = json.loads(cal.read_text(encoding="utf-8"))
+        data["measured_at"] = None
+        cal.write_text(json.dumps(data), encoding="utf-8")
+        self._runs(repo, pc.CALIBRATION_STALE_RUNS + 2)
+        got = pc.run(repo, scope="pr")
+        assert "calibration_stale" not in got["gaps"], got["gaps"]
+
+    def test_보고서가_재측정을_권한다(self, repo):
+        s = {"gaps": ["calibration_stale"], "grade": "PASS"}
+        assert "calibrate" in rep_mod.explain_gap("calibration_stale")
+        assert "calibration_stale" in rep_mod.NON_DEMOTING_GAPS
+
+
 class TestPrecheckCli:
 
     def test_cli_emits_one_envelope(self, repo, request_file):

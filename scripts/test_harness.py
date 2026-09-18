@@ -565,6 +565,73 @@ JUNIT_FIXTURE = """<?xml version="1.0" encoding="UTF-8" ?>
 """
 
 
+class VerifyAdapterTest(DoctorTestBase):
+    """[[ADR-H047]] 결정 3 — 어댑터 `verified` 는 완주 런 수로 올린다.
+
+    15런을 완주한 뒤에도 `verified: false` 였고 그래서 `PASS` 가 구조적으로
+    나올 수 없었다(`adapter_unverified` 가 매 런 gap). 일부러 실패를 만들지
+    않는다 — 실패를 만든 것이 아니라 **완주를 셌다.**
+    """
+
+    PHASES = ["00-triage", "01-plan", "02-cross-verify", "03-implement",
+              "04-gate", "05-code-review", "06-pr", "07-pr-review", "08-report"]
+
+    def setUp(self):
+        super().setUp()
+        for pid in self.PHASES:
+            _write(self.root / "harness" / "phases" / (pid + ".md"), "---\n---\n")
+        _write(self.root / "harness" / "calibration.json", json.dumps({
+            "measured_at": "2026-01-01T00:00:00+0900", "adapter": "nextjs-ts",
+            "adapter_verified": False, "stages": {}, "derived": {}}))
+
+    def _run(self, run_id, adapter="nextjs-ts", statuses=None):
+        ph = {pid: {"status": (statuses or {}).get(pid, "passed")}
+              for pid in self.PHASES}
+        _write(self.root / "_workspace" / "runs" / run_id / "state.json",
+               json.dumps({"run_id": run_id, "run_status": "done",
+                           "closed_at": "2026-02-01T00:00:00+0900",
+                           "adapter": {"id": adapter}, "phases": ph}))
+
+    def test_완주_런이_기준을_채우면_올린다(self):
+        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
+            self._run("r%d" % i)
+        self.assertEqual(0, harness.run_verify_adapter(self.root))
+        ad = self.adapter()
+        self.assertTrue(ad["verified"])
+        self.assertIn("verify-adapter", ad["_verified_note"])
+        self.assertIn("r0", ad["_verified_note"])
+        cal = self._load("harness/calibration.json")
+        self.assertTrue(cal["adapter_verified"])
+        self.assertEqual(harness.ADAPTER_VERIFY_MIN_RUNS,
+                         len(cal["adapter_verified_source"]["runs"]))
+
+    def test_부족하면_exit_3_이고_아무것도_안_바꾼다(self):
+        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS - 1):
+            self._run("r%d" % i)
+        self.assertEqual(3, harness.run_verify_adapter(self.root))
+        self.assertFalse(self.adapter()["verified"])
+        self.assertFalse(self._load("harness/calibration.json")["adapter_verified"])
+
+    def test_skipped_페이즈가_있는_런은_세지_않는다(self):
+        """정책 생략은 관측이 없었던 것이다 — ADR 문면대로 `passed` 만 센다."""
+        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
+            self._run("r%d" % i)
+        self._run("r0", statuses={"02-cross-verify": "skipped"})
+        self.assertEqual(3, harness.run_verify_adapter(self.root))
+        self.assertFalse(self.adapter()["verified"])
+
+    def test_다른_어댑터의_런은_세지_않는다(self):
+        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
+            self._run("r%d" % i, adapter="self-python")
+        self.assertEqual(3, harness.run_verify_adapter(self.root))
+        self.assertFalse(self.adapter()["verified"])
+
+    def test_기준은_인자로_낮출_수_있다(self):
+        self._run("r0")
+        self.assertEqual(0, harness.run_verify_adapter(self.root, min_runs=1))
+        self.assertTrue(self.adapter()["verified"])
+
+
 class CalibrateTest(DoctorTestBase):
     """실측이 정책의 입력이 되므로, 재지 않은 것을 잰 척하는 경로가 하나도 없어야 한다."""
 

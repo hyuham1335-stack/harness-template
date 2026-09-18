@@ -3925,8 +3925,11 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
         # **면제된 프로브는 등급이 치른다** (M44 · §E9). 어휘는 이미 있었고
         # 소비자(`pr.build_body`·`report.GAP_REASONS`)도 있었는데 **쓰는 코드가
         # 없었다** — 선언만 있고 코드가 안 읽는 M36 과 같은 모양이다.
+        # `NON_DEMOTING_GAPS`(calibration_stale) 는 이름만 남기고 등급은 그대로다
+        # — 사람이 할 일이 밀렸다는 표시이지 이 런의 관측 결손이 아니다 (ADR-H047).
+        import report as rep
         for gap in got.get("gaps") or []:
-            st.demote(s, st.GRADES[1], gap)
+            st.demote(s, None if gap in rep.NON_DEMOTING_GAPS else st.GRADES[1], gap)
         st.append_event(paths, "check_fail" if got["exit"] else "stage_done",
                         cmd="precheck", phase=pid, exit=got["exit"])
         st.save(paths, s)
@@ -3972,6 +3975,13 @@ def _precheck_render(got):
         # **면제를 조용히 넘기지 않는다** (M44). "전부 맞다" 로만 적으면
         # 면제가 통과와 구분되지 않는다.
         for gap in got.get("gaps") or []:
+            if gap == "calibration_stale":
+                stale = [c for c in got["checks"] if c["name"] == "캘리브레이션"]
+                lines += ["", "**캘리브레이션이 낡았다** — %s. 등급은 그대로이고 "
+                              "`calibration_stale` 로 보고서에 남는다. 다음 런 전에 "
+                              "`python scripts/harness.py calibrate` 를 돌린다."
+                          % (stale[0]["message"] if stale else gap)]
+                continue
             lines += ["", "**면제된 프로브가 있다: `%s`.** 통과가 아니라 "
                           "미검증이다 — 등급이 `PASS_WITH_GAPS` 로 내려가고 "
                           "보고서·PR 본문에 이름으로 남는다." % gap]
