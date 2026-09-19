@@ -29,6 +29,7 @@ sys.path.insert(0, str(_HERE.parent))
 
 import harness  # noqa: E402
 import adapters  # noqa: E402
+import attribution  # noqa: E402
 
 
 # `--scope` 의 어휘. **셋째 값을 만들지 않는다** — 소비자 없는 어휘를 두는
@@ -67,7 +68,7 @@ def run(root, scope="pr", changed=None, config=None, adapter=None,
     if changed is None:
         changed = changed_files(root, scope, config)
 
-    budget = _check_budget(root, config, changed, checks, scope)
+    budget = _check_budget(root, config, changed, checks, scope, adapter)
     _check_branch(root, config, checks)
     _check_divergence(root, config, checks)
     infra, gaps = _check_infra(adapter, changed, checks)
@@ -184,9 +185,13 @@ def _changed_lines(root, changed, scope="worktree", config=None):
 
 # --------------------------------------------------------------------- 검사들
 
-def _check_budget(root, config, changed, checks, scope="worktree"):
+def _check_budget(root, config, changed, checks, scope="worktree", adapter=None):
     budget = config.get("budget") or {}
-    files, lines = len(changed), _changed_lines(root, changed, scope, config)
+    # **파일 수는 소스만 센다** (ADR-H066). 테스트 파일은 어댑터의 글롭이
+    # 가르고, 줄 수는 그대로 전체다 — 테스트가 과대한 PR 은 `lines_max` 가 잡는다.
+    tests = [p for p in changed if attribution.is_test_file(adapter or {}, p)]
+    files = len(changed) - len(tests)
+    lines = _changed_lines(root, changed, scope, config)
     over = []
     if budget.get("files_max") and files > budget["files_max"]:
         over.append("파일 %d > %d" % (files, budget["files_max"]))
@@ -195,8 +200,8 @@ def _check_budget(root, config, changed, checks, scope="worktree"):
     _add(checks, "예산", not over, "policy",
          ("범위가 예산을 넘었다 (%s). **자동으로 쪼개지 않는다** — 나눌지 "
           "그대로 갈지는 사람이 정한다." % ", ".join(over)) if over else
-         "파일 %d · 줄 %d" % (files, lines))
-    return {"files": files, "lines": lines,
+         "파일 %d · 줄 %d · 테스트 %d 제외" % (files, lines, len(tests)))
+    return {"files": files, "lines": lines, "test_files_excluded": len(tests),
             "files_max": budget.get("files_max"),
             "lines_max": budget.get("lines_max")}
 
