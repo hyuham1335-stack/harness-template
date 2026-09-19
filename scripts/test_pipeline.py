@@ -12998,3 +12998,76 @@ class TestJourneyOwnership:
         got = attr.clean_ownership(repo, config, _claims(
             test=["e2e/x.spec.ts", "e2e/fixtures/x.ts"]))
         assert got["ok"], got["message"]
+
+
+class TestJourneyHint:
+    """계약을 쓰라는 봉투가 e2e 부재를 말한다 — 메인이 어댑터를 추론하지 않는다."""
+
+    HINT = "e2e 가 없다"
+
+    def _at_03_without_contract(self, repo, request_file, mode="contract", plan=True):
+        init = cli.run_init(repo, "x", request_file)
+        paths, s = st.load(repo, init["run_id"])
+        for pid in ("01-plan", "02-cross-verify"):
+            st.set_phase_status(s, pid, "passed")
+        s["phase"] = "03-implement"
+        s["contract"] = {"mode": mode, "present": False,
+                         "path": "_workspace/contract_x.md"}
+        st.save(paths, s)
+        if plan:
+            (paths.run_dir / "01_plan.md").write_text(
+                "<!-- INTENT -->\n<!-- COVERAGE -->\n" + "플랜 본문. " * 40,
+                encoding="utf-8")
+        return paths
+
+    def test_next_거부_봉투가_e2e_부재를_말한다(self, repo, request_file, phases):
+        paths = self._at_03_without_contract(repo, request_file)
+        env = cli.run_next(repo, paths.run_id)
+        assert env["exit"] == 3 and "진입 거부" in env["render"], env["render"]
+        failed = [c for c in env["data"]["requires_report"] if not c["ok"]]
+        assert failed and all("contract_file" in c["message"] for c in failed), failed
+        assert self.HINT in env["render"] and "없음" in env["render"], env["render"]
+
+    def test_해당_없음_스택(self, repo, request_file, phases):
+        _set_e2e(repo, {"cmd": None, "not_applicable": "브라우저가 없다."})
+        paths = self._at_03_without_contract(repo, request_file)
+        env = cli.run_next(repo, paths.run_id)
+        assert env["exit"] == 3 and "해당 없음" in env["render"], env["render"]
+
+    def test_e2e_가_있으면_힌트가_없다(self, repo, request_file, phases):
+        _set_e2e(repo, {"cmd": ["run", "e2e"]})
+        paths = self._at_03_without_contract(repo, request_file)
+        env = cli.run_next(repo, paths.run_id)
+        assert env["exit"] == 3, env["render"]
+        assert "## 여정" not in env["render"], env["render"]
+
+    def test_전이_봉투도_말한다(self, repo, request_file, phases):
+        paths = self._at_03_without_contract(repo, request_file)
+        _p, s = st.load(repo, paths.run_id)
+        s["phase"] = "02-cross-verify"
+        s["phases"]["02-cross-verify"].pop("status", None)
+        st.save(paths, s)
+        loaded, _ = cli.load_phases(repo)
+        env = cli._advance_to_next(repo, paths, s, loaded["02-cross-verify"],
+                                   cli.build_context(repo, paths, s))
+        assert "선행 조건이 남았다" in env["render"], env["render"]
+        assert self.HINT in env["render"], env["render"]
+
+    def test_no_contract_런은_힌트가_없다(self, repo, request_file, phases):
+        paths = self._at_03_without_contract(repo, request_file, mode="no_contract",
+                                             plan=False)
+        env = cli.run_next(repo, paths.run_id)
+        assert env["exit"] == 3 and "진입 거부" in env["render"], env["render"]
+        assert self.HINT not in env["render"], env["render"]
+
+    def test_docs_예측_빗나감_봉투도_말한다(self, repo, phases):
+        paths = TestDocsLane()._at_01(repo)
+        _submit_plan(repo, paths, _plan())
+        (repo / "src" / "lib" / "match.ts").write_text("export const x = 1\n",
+                                                        encoding="utf-8")
+        claims = paths.run_dir / "03_claims.json"
+        claims.write_text('{"schema":1,"roles":[]}', encoding="utf-8")
+        env = cli.run_record(repo, phase="03", file=str(claims), reviewer=None,
+                             round_=None)
+        assert env["exit"] == 3 and "docs 예측" in env["render"], env["render"]
+        assert self.HINT in env["render"], env["render"]

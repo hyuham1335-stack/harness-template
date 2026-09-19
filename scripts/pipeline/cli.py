@@ -1166,8 +1166,9 @@ def run_next(root, run_id=None):
     if failed:
         return st.envelope(
             "next", False, 3, s, {"requires_report": checks},
-            "## %s 진입 거부\n\n선행 조건이 채워지지 않았다.\n\n%s"
-            % (pid, "\n".join("- %s" % c["message"] for c in failed)),
+            "## %s 진입 거부\n\n선행 조건이 채워지지 않았다.\n\n%s%s"
+            % (pid, "\n".join("- %s" % c["message"] for c in failed),
+               _journey_hint(root, s) if pid == "03-implement" else ""),
             None)
 
     st.set_phase_status(s, pid, "running")
@@ -1901,6 +1902,33 @@ def _tests_required_render(root, ctx, s):
     return "\n".join(lines)
 
 
+def _e2e_absent_reason(adapter):
+    """어댑터에 e2e 가 없으면 그 이유 문장, 있으면 None. 거부와 힌트가 같이 쓴다."""
+    state = adapters.stage_state(adapter, "e2e")
+    if state == "present":
+        return None
+    if state == "na":
+        return "이 스택은 e2e 가 해당 없음이라 여정을 적을 수 없다"
+    return "어댑터에 e2e 가 없다 — 도입은 ADR 로 한다"
+
+
+def _journey_hint(root, s):
+    """계약을 쓰라는 봉투에 붙는 한 줄 (ADR-H058 추기). 해당 없으면 빈 문자열.
+
+    메인은 03 패킷보다 **먼저** 계약을 쓴다 — 03 `requires` 가 계약 파일이다.
+    그 시점에 어댑터의 e2e 여부를 봉투가 말하지 않으면 메인이 추론해야 하고,
+    틀리면 `_contract_precheck_03` 에 튕긴다. e2e 가 있으면 말하지 않는다 —
+    절차 문장이 이미 조건을 말하고, 되풀이하면 여정을 과하게 쓰게 부추긴다.
+    """
+    if ((s.get("contract") or {}).get("mode")) == "no_contract":
+        return ""
+    _config, adapter, _cal = adapters.load(root)
+    why = _e2e_absent_reason(adapter)
+    if why is None:
+        return ""
+    return "\n\n%s. 계약의 `## 여정` 은 \"없음\" 으로 둔다." % why
+
+
 def _contract_precheck_refuse(root, paths, s, ctx, cmd):
     """`next`·전이가 03 패킷을 내기 전의 거부 봉투. 통과면 None — 지시를 세기 전이다."""
     refused = _contract_precheck_03(root, ctx, s)
@@ -1933,10 +1961,8 @@ def _contract_precheck_03(root, ctx, s):
         return None
     _config, adapter, _cal = adapters.load(root)
     state = adapters.stage_state(adapter, "e2e")
-    if state != "present":
-        why = ("이 스택은 e2e 가 해당 없음이라 여정을 적을 수 없다"
-               if state == "na" else
-               "어댑터에 e2e 가 없다 — 도입은 ADR 로 한다")
+    why = _e2e_absent_reason(adapter)
+    if why is not None:
         files = harness.list_files_with_untracked(root)
         written = [src for src in (contract_mod._source_for_container(
                        j.get("container"), files) for j in parsed["journeys"]) if src]
@@ -2377,10 +2403,11 @@ def _advance_to_next(root, paths, s, phase_item, ctx, cmd="record",
     if [c for c in nxt_checks if not c["ok"]]:
         return st.envelope(cmd, True, 0, s, {"next_phase": nxt,
                                              "requires_report": nxt_checks},
-                           "`%s` 통과. 다음은 `%s` 이고 아직 선행 조건이 남았다:\n\n%s"
+                           "`%s` 통과. 다음은 `%s` 이고 아직 선행 조건이 남았다:\n\n%s%s"
                            % (pid, nxt,
                               "\n".join("- %s" % c["message"]
-                                        for c in nxt_checks if not c["ok"])),
+                                        for c in nxt_checks if not c["ok"]),
+                              _journey_hint(root, s) if nxt == "03-implement" else ""),
                            "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
     st.set_phase_status(s, nxt, "running")
     st.append_event(paths, "phase_enter", cmd=cmd, phase=nxt)
@@ -3028,7 +3055,7 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
             "소유 경로가 바뀌었다. 프로파일을 `normal` 로 올렸고 `triage_miss` "
             "가 gap 으로 남았다 — 01 리뷰어·02·역할을 건너뛴 채 여기까지 왔기 "
             "때문이다.\n\n계약 파일을 쓰고 `next` 로 역할 패킷을 받는다. "
-            "이미 고친 소스는 그 역할이 claim 한다.",
+            "이미 고친 소스는 그 역할이 claim 한다." + _journey_hint(root, s),
             "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
 
     got = attribution.clean_ownership(root, ctx["config"], claims)
