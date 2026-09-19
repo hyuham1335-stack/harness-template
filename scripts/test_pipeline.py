@@ -13521,3 +13521,114 @@ class TestGateTestsByFile:
         assert env["exit"] == 0, env["render"]
         _, after = st.load(repo, paths.run_id)
         assert after["tests"]["by_file"] == {"src/lib/match.test.ts": 2}, after["tests"]
+
+
+class TestFixLane:
+    """`fix` 레인 (ADR-H053). 기계 신호는 내지 않고 사람·모델만 정한다.
+
+    절차: 01 1라운드 → 02 `fix_profile` 스킵(gap 아님) → 03 impl·test →
+    05 cap 1(`gen`) → 07 `fix_profile` 스킵(지적 0건이면 low, ADR-H050).
+    """
+
+    def test_machine_decide_never_yields_fix(self):
+        cfg = _cfg()
+        assert "fix" in triage_mod.PROFILES
+        assert triage_mod.RANK["docs"] < triage_mod.RANK["fix"] < triage_mod.RANK["small"]
+        for text in (SOURCE_REQUEST, DOCS_REQUEST, REQUEST_TEXT,
+                     "src/lib/match.ts 의 버그를 고쳐 줘",
+                     "fix the bug in src/lib/match.ts"):
+            got = triage_mod.decide(triage_mod.signals(text, cfg), cfg)
+            assert got is None or got["profile"] != "fix", (text, got)
+
+    def test_a_user_fix_profile_is_kept_through_00(self, repo, phases):
+        paths, s = _init(repo, SOURCE_REQUEST, profile="fix")
+        env = cli.run_next(repo, run_id=paths.run_id)
+        assert env["exit"] == 0 and env["phase"] == "01-plan", env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["profile"]["name"] == "fix"
+        assert after["profile"]["source"] == "user"
+        assert after["contract"].get("mode") != "no_contract"
+
+    def test_a_model_may_submit_fix(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT)
+        cli.run_next(repo, run_id=paths.run_id)
+        env = _submit_triage(repo, paths, {
+            "profile": "fix", "expected_paths": [], "touches_source": True,
+            "reasons": ["재현 가능한 버그 하나"]})
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["profile"]["name"] == "fix"
+        assert after["profile"]["source"] == "triage"
+
+    def test_unclear_offers_fix_as_an_option(self, repo, phases):
+        paths, s = _init(repo, REQUEST_TEXT)
+        cli.run_next(repo, run_id=paths.run_id)
+        env = _submit_triage(repo, paths, {"profile": "unclear",
+                                           "expected_paths": [], "reasons": []})
+        assert env["exit"] == 9
+        assert any(o.startswith("fix") for o in env["data"]["options"]), env["data"]
+
+    def test_01_converges_in_one_round_and_02_is_skipped(self, repo, phases):
+        paths, s = _init(repo, SOURCE_REQUEST, profile="fix")
+        cli.run_next(repo, run_id=paths.run_id)
+        assert _submit_plan(repo, paths, _plan())["exit"] == 0
+        env = _submit_review(repo, paths, _review("plan"))
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["phases"]["01-plan"]["converged_at_round"] == 1
+        assert after["counters"]["round"]["max"] == 1
+        assert st.phase_status(after, "02-cross-verify") == "skipped"
+        assert after["cross_verify"]["skip_reason"] == "fix_profile"
+        assert after["phase"] == "03-implement", after["phase"]
+        assert "01:max_rounds=1" in after["profile"]["applied"]
+        assert "02:skipped" in after["profile"]["applied"]
+        assert after.get("grade") in (None, "PASS"), after.get("gaps")
+
+    def test_a_fix_prediction_beaten_upward_at_05_is_a_miss(self, gated, phases):
+        repo, paths, s = gated
+        s["profile"] = {"name": "fix", "source": "triage",
+                        "predicted": {"profile": "fix"},
+                        "applied": ["01:max_rounds=1", "02:skipped"]}
+        s["contract"]["sha256"] = "낡은값"
+        st.set_phase_status(s, "04-gate", "passed")
+        s["phase"] = "05-code-review"
+        st.save(paths, s)
+        (repo / "_workspace" / "contract_sim.md").write_text(
+            FIVE_UNIT_CONTRACT, encoding="utf-8")
+        cli.run_next(repo, run_id=paths.run_id)
+        _, after = st.load(repo, paths.run_id)
+        prof = after["profile"]
+        assert prof["name"] == "normal", prof
+        assert prof["triage_miss"]["was"] == "fix"
+        assert "triage_miss:01:max_rounds=1;02:skipped" in after["gaps"]
+
+    def test_05_cap_routes_gen_only(self):
+        cfg = _cfg()
+        assert cfg["review"]["profile_caps"]["fix"] == 1
+        routed = rv.route(cfg, ["src/lib/schemas.ts", "src/app/api/x/route.ts"], "fix")
+        assert [r["code"] for r in routed["reviewers"]] == ["gen"], routed
+        assert routed["capped"] is True
+        assert rv.DEFAULT_CAPS["fix"] == 1
+
+    def test_07_skips_fix_unless_05_saw_nothing(self):
+        cfg = _cfg()
+        ext = {"status": "disabled", "major": 0}
+        got = rv7_mod.decide({"review05": {"status": "ok", "major": 1,
+                                           "findings_total": 3},
+                              "profile": {"name": "fix"}}, ext, cfg)
+        assert got["skip"] is True and got["skip_reason"] == "fix_profile", got
+        assert got["gaps"] == []
+        got = rv7_mod.decide({"review05": {"status": "ok", "major": 0,
+                                           "findings_total": 0},
+                              "profile": {"name": "fix"}}, ext, cfg)
+        assert got["skip"] is False and got["effort"] == "low", got
+        # 05 결손은 레인보다 앞선다.
+        got = rv7_mod.decide({"review05": {"status": "degraded", "major": 0,
+                                           "findings_total": 1},
+                              "profile": {"name": "fix"}}, ext, cfg)
+        assert got["effort"] == "medium", got
+
+    def test_model_slots_accept_fix(self):
+        cfg = _cfg()
+        for slot in ("plan", "roles", "reviewers"):
+            assert cfg["models"][slot]["fix"] == "sonnet", slot

@@ -111,6 +111,9 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
 생략한다. gen 이 빠진 채 05 가 `ok` 가 되는 경로는 없다 — 계획된 리뷰어가
 실패하면 `review05.status` 가 `degraded` 이고 07 이 `medium` 으로 메운다.
 
+**`fix` 레인은 상한이 1 이라 `gen` 만 라우팅된다** (`review.profile_caps.fix`,
+ADR-H053). 다른 관점이 매칭됐으면 `dropped` 에 남고 보고서가 그것을 적는다.
+
 각 리뷰어에게 주는 것:
 
 - **인라인 diff · 계약 · `05_trace.json`**. 그게 전부다

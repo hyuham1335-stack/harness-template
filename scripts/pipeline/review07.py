@@ -51,6 +51,10 @@ SKIP_CLEAN_05 = "clean_05"
 # 바뀌었으면) 프로파일이 이미 `normal` 이라 이 분기에 오지 않는다.
 SKIP_DOCS_PROFILE = "docs_profile"
 
+# `fix` 레인 — 05 의 `gen` 하나가 수리 하나를 봤다. 지적이 0건이면 ADR-H050
+# 그대로 low 로 한 번 돈다 (ADR-H053).
+SKIP_FIX_PROFILE = "fix_profile"
+
 
 def repaired_before_07(state):
     """04·05 에서 코드를 고친 적이 있는가. `spent[].reason` 으로 센다.
@@ -187,6 +191,14 @@ def decide(state, external, config, audit=False):
         skip, effort, skip_reason = True, "skipped", SKIP_DOCS_PROFILE
         reasons.append("docs 레인이다 — 소스 변경이 없고 05 의 docs 리뷰어가 봤다. "
                        "내장 코드 리뷰가 볼 코드가 없다 (ADR-H044).")
+    elif profile == "fix" and r05.get("findings_total") == 0:
+        effort = "low"
+        reasons.append("fix 레인인데 05 의 지적이 0건이다 — 0 은 \"봤는데 "
+                       "없었다\" 의 증거가 아니라 low 로 한 번 돈다 (ADR-H050).")
+    elif profile == "fix":
+        skip, effort, skip_reason = True, "skipped", SKIP_FIX_PROFILE
+        reasons.append("fix 레인이다 — 05 의 gen 이 수리 하나를 봤다. 내장 리뷰를 "
+                       "생략한다 (ADR-H053).")
     elif reviewed and profile == "small":
         # **`small` 은 Major 가 있어도 생략한다** — 명세가 그렇게 정했다. 작은
         # 변경이고 외부가 실제로 봤다면 내장 리뷰를 또 태우지 않는다는 판단이고,

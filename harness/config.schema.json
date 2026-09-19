@@ -207,6 +207,7 @@
           "additionalProperties": false,
           "properties": {
             "docs": {"type": "integer", "minimum": 1},
+            "fix": {"type": "integer", "minimum": 1},
             "small": {"type": "integer", "minimum": 1},
             "normal": {"type": "integer", "minimum": 1}
           }
@@ -294,6 +295,7 @@
       "properties": {
         "default": {"$ref": "#/definitions/model_tier"},
         "docs": {"$ref": "#/definitions/model_tier"},
+        "fix": {"$ref": "#/definitions/model_tier"},
         "small": {"$ref": "#/definitions/model_tier"},
         "normal": {"$ref": "#/definitions/model_tier"}
       }

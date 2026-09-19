@@ -2506,7 +2506,8 @@ def _skip_policy(root, paths, s, phase_item, ctx, cmd):
         st.set_phase_status(s, pid, status, skip_reason=reason)
         if pid == "02-cross-verify":
             s.setdefault("cross_verify", {})["skip_reason"] = reason
-        if reason == "docs_profile":
+        if reason in ("docs_profile", "fix_profile"):
+            # 레인의 양보다 — 예측이 빗나가면 `triage_miss` gap 이름에 들어간다.
             _note_applied(s, "%s:skipped" % pid.split("-")[0])
         st.append_event(paths, "phase_skip", cmd=cmd, phase=pid, reason=reason)
         st.save(paths, s)
@@ -2542,6 +2543,8 @@ def _record_00(root, paths, s, phase_item, ctx, file, reviewer, round_):
     node = s.setdefault("phases", {}).setdefault("00-triage", {})
     if payload.get("profile") == "unclear":
         options = ["docs — 문서·설정만 바뀐다 (리뷰어·역할 없이 메인이 직접 고친다)",
+                   "fix — 재현 가능한 버그 하나의 수리 (01 1라운드 · 02 생략 · "
+                   "리뷰어 1명)",
                    "small — 역할 소유 경로 셋 이하의 작은 변경",
                    "normal — 그 밖 전부"]
         st.save(paths, s)
@@ -6122,7 +6125,7 @@ def build_parser():
     sp.add_argument("--feature", dest="feature", default=None)
     sp.add_argument("--request-file", dest="request_file", default=None)
     sp.add_argument("--profile", dest="profile", default=None,
-                    choices=["docs", "small", "normal"])
+                    choices=["docs", "fix", "small", "normal"])
 
     sp = sub.add_parser("next", add_help=False)
     sp.add_argument("--run-id", dest="run_id", default=None)

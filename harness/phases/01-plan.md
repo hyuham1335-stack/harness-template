@@ -27,7 +27,7 @@
   },
   "converge": {
     "counter": "round",
-    "max_by_profile": {"small": 2, "normal": 3},
+    "max_by_profile": {"fix": 1, "small": 2, "normal": 3},
     "blocking_severities": ["critical"],
     "one_round_allowed_when": "blocking_free",
     "focus_round_2": "불변식 커버리지 · 범위 밖 항목 · 인수 조건의 검증 가능성",
@@ -44,7 +44,7 @@
     {"id": "drift_score_zero", "on_fail": 4}
   ],
   "gate": {"runner": "none"},
-  "loop": {"counter": "round", "max_by_profile": {"small": 2, "normal": 3},
+  "loop": {"counter": "round", "max_by_profile": {"fix": 1, "small": 2, "normal": 3},
            "stuck_after_identical": 2, "on_exceed": "escalate"},
   "allow": {"agents": []},
   "on_success": "02-cross-verify"

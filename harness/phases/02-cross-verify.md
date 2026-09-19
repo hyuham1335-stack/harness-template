@@ -17,7 +17,9 @@
               "gap": "cross_verify_unavailable"},
   "skip_policy": [
     {"when": "state.profile.name == \"docs\"",
-     "status": "skipped", "reason": "docs_profile"}
+     "status": "skipped", "reason": "docs_profile"},
+    {"when": "state.profile.name == \"fix\"",
+     "status": "skipped", "reason": "fix_profile"}
   ],
   "submit_checks": [
     {"id": "reviewer_not_main", "on_fail": 8},

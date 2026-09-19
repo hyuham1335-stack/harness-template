@@ -2513,9 +2513,11 @@ skip 으로 우회됐다). `40dc` 의 보고서는 「승격 판정 시한 — �
 
 ---
 
-### ADR-H053: `fix` 레인 — 파이프라인 우회는 신호다 (설계 초안)
+### ADR-H053: `fix` 레인 — 파이프라인 우회는 신호다
 
-**날짜**: 2026-09-18 · **상태**: 제안됨 · **구현 상태**: 미구현 (코드 없음)
+**날짜**: 2026-09-18 · **상태**: 채택됨 · **구현 상태**: 구현됨 (2026-09-19 — `triage.PROFILES`·`RANK` 에
+`fix`, `review.profile_caps.fix: 1`, `models.*.fix`, 01 `max_by_profile.fix: 1`, 02 `skip_policy` `fix_profile`,
+`review07.SKIP_FIX_PROFILE`, `init --profile fix`, `unclear` 4지선다. 아래 초안과 다른 점은 **추기**에)
 
 **맥락**: 2026-09-17 09:54 에 마지막 Must(PR #19)가 머지된 뒤 **11:49~13:14 사이 1h25m 동안 PR
 #20~#26 일곱 건**이 파이프라인 없이 머지됐다 — 전부 1커밋짜리 UI · 버그 수정(`feat-content-
@@ -2537,7 +2539,19 @@ regenerate-to-write` · `fix-write-regenerate-button` · `fix-publish-url-unreac
 그대로 적용되므로 틀린 예측은 gap 으로 드러난다. 02 를 건너뛰는 것은 [[ADR-H045]] 의 "런당 정확히
 1회 교차검증" 에 예외를 만든다 — 그래서 코드 없이 초안으로만 남긴다.
 
-관련: [[ADR-H044]] · [[ADR-H045]] · [[ADR-H041]]
+**추기 (2026-09-19) — 구현하며 초안에서 바꾼 것 셋.**
+- **기계 신호는 `fix` 를 내지 않는다.** 초안의 "요청 원문에 버그·수정 신호" 는 언어 키워드라 00 의 원칙
+  (`triage.py` — 경로 토큰·글자 수·개수만 본다, 같은 경로를 어느 언어로 적어도 판정이 같아야 한다)에
+  어긋난다. `fix` 는 사람(`init --profile fix` · `unclear` 응답)과 모델 제출 두 경로다. `RANK` 는
+  `docs 0 · fix 1 · small 2 · normal 3` 이라 03·05 의 유닛 수 재판정이 `fix` 를 올리면 기존 `triage_miss`
+  가 gap 을 남긴다 — 초안의 "≤ 20분 넘기면 상향" 은 시간을 기계가 못 재서 유닛 수로 대신한다.
+- **03 은 impl·test 둘 다 부른다.** 초안의 `primary_role` 1명은 test 역할 생략을 뜻했는데, impl 의
+  `excludes` 가 테스트 파일을 막고([[ADR-H058]] 의 `tests_required` 가 03 제출에서 테스트를 요구한다)
+  CLAUDE.md 의 TDD 규칙이 버그 수정에도 재현 테스트를 요구한다. 재현 테스트는 test 역할이 쓴다.
+- **02 생략은 [[ADR-H060]] 의 "최대 1회" 안에서 성립한다** — 예외가 아니라 `risk` 없는 런과 같은 부류다.
+  05 는 cap 1 이라 `gen` 만 돈다. 07 은 `fix_profile` 로 생략하되 05 지적 0건이면 [[ADR-H050]] 대로 low.
+
+관련: [[ADR-H044]] · [[ADR-H045]] · [[ADR-H041]] · [[ADR-H058]] · [[ADR-H060]]
 
 ---
 
