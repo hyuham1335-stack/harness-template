@@ -57,6 +57,9 @@ GAP_REASONS = {
     "local_only": "원격이 없어 로컬 커밋까지만 했다",
     "promotion_baseline_unverified":
         "어댑터에 `baseline_cmd` 가 없어 lint 승격이 무엇을 막는지 재지 못했다",
+    "promotion_selfgate_unverified":
+        ("어댑터에 `lint` 또는 `check` 명령이 없어 승격 자체 게이트를 돌리지 "
+         "못했다 — 규칙이 기존 코드를 깨는지 재지 못한 채 적용했다"),
     "triage_miss": ("00 의 레인 예측이 빗나가 앞 페이즈가 그 양보(콜론 뒤)를 "
                     "적용한 채 지나갔다 — 03·05 의 실물이 상향으로 재판정했다"),
     # 아래 다섯은 gate.py 가 처음부터 만들던 사유인데 어휘에 없었다 — 파일럿

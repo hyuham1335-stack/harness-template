@@ -46,7 +46,7 @@
 | [[ADR-H018]] | 원장 신원 `(run, phase, key)` | 수용됨 | 구현 | **`repaired_by` null 은 닫힘**(본문 추기). 임계 여섯은 [[ADR-H033]]·[[ADR-H034]]·[[ADR-H056]] 으로 이어짐 |
 | [[ADR-H019]] | 계약 삭제는 push 뒤 | 수용됨 | 구현 | — |
 | [[ADR-H020]] | 관측 단위는 지시 | 수용됨 | 구현 | [[ADR-H042]] 결정 2 가 "낸 자리에서 전부" 로 개정. `PreToolUse(Task)` 실측은 미착수 → 백로그 16 |
-| [[ADR-H021]] | 승격 베이스라인은 기계 측정 | 수용됨 | 부분 승계 | **§E11 자체 게이트(lint+check 재실행)는 여전히 실행기가 강제하지 않는다** → 백로그 3 |
+| [[ADR-H021]] | 승격 베이스라인은 기계 측정 | 수용됨 | 구현 | §E11 자체 게이트는 [[ADR-H065]] 가 실행기로 옮김(브랜치 생성은 밖) |
 | [[ADR-H022]] | xv 부재와 일시 실패를 가른다 | 수용됨 | 구현 | — |
 | [[ADR-H023]] | 정체 단위는 (소유자, 시그니처) | 수용됨 | 구현 | deferred flip 되돌림은 2026-09-19 구현(백로그 9 닫힘, 본문 추기). 사다리에 `ui` 는 [[ADR-H057]] 이 추가 |
 | [[ADR-H024]] | 왕복은 지급 | 수용됨 | 구현 | **값은 [[ADR-H041]] 이 개정**(normal 5→3 · small 3→2). [[ADR-H048]] 이 `review_repair` 로 확장 |
@@ -105,6 +105,7 @@
 | [[ADR-H062]] | `test` 리뷰어가 `arch` 보다 먼저 | 채택됨 | 구현 | 백로그 1 닫음 |
 | [[ADR-H063]] | 프로필 시드는 템플릿 키를 전부 갖는다 | 채택됨 | 구현 | 백로그 12 닫음 |
 | [[ADR-H064]] | 05 수리 작성자도 지시 키를 받는다 | 채택됨 | 구현 | 백로그 6 닫음. 등급 값은 표본 대기(백로그 19) |
+| [[ADR-H065]] | 승격 자체 게이트는 실행기가 | 채택됨 | 구현 | 백로그 3 닫음. 브랜치 생성·폐기는 실행기 밖 |
 
 ---
 
@@ -126,14 +127,14 @@
 | 4 | 코드 | `02-cross-verify.md` 프론트매터에 `review.reviewers[{code:"xv", kind:"cross_verify", raw, json}]` 4줄. 읽는 코드는 `_cross_verify_render` 뿐이라 파급이 없다(`_record_02`·`_instruction_keys` 는 02 를 하드코딩). `test_pipeline.py` 1881~1893 에 주석으로 남은 테스트 둘을 02 기준으로 복원. 도구 고유명사는 쓰지 않는다(`test_no_stack_proper_noun_reaches_the_core`) | **닫힘 2026-09-19** — `test_the_02_packet_names_the_cross_verifier` · `test_the_02_packet_says_when_it_is_only_a_fallback` |
 | 2(a) | 코드 | `general-reviewer/SKILL.md` 표에 「재사용 심볼의 정의를 열어 전제를 확인한다」 행 1개 + 입력 절 1줄. 보고 채널 `CONTRACT_DEFECT` 는 이미 있다 | **닫힘 2026-09-19** — 표 「재사용 전제」 행 + 입력 절. 기계 검증 없음을 SKILL 에 적었다 |
 
-**파동 1 — 결정 하나가 앞에 있고 코드는 작다. 새 ADR 한 건씩**
+**파동 1 — 결정 하나가 앞에 있고 코드는 작다. 새 ADR 한 건씩** — **전부 닫힘 2026-09-19** ([[ADR-H062]]~[[ADR-H065]])
 
 | # | 성격 | 선행 | 권장안 · 규모 |
 |---|---|---|---|
 | 1 | 결정 | [[ADR-H054]] 표 | **닫힘 2026-09-19 · [[ADR-H062]]** — **(b) priority 교환**(test 4→3 · arch 3→4, `_reviewers_note` 가 "우선순위는 배열 순서" 라 배열 위치도 옮긴다). 코드 0줄, 테스트는 config 에서 읽어 자동 적응. (a) 는 단독으로 못 닫는다 — `when_role_owned` 는 매칭만 바꾸고 절단은 `matched[:cap]` 이 priority 순으로 한다. (c) 는 `test_normal_profile_respects_the_cap`·`test_dropped_reviewers_are_named_not_silently_lost` 둘을 다시 써야 한다 |
 | 12 | 코드 | **1 뒤** (같은 블록을 복사하므로) | **닫힘 2026-09-19 · [[ADR-H063]]** — `harness/config.json` 의 `reviewers`+`review` 를 프로필에 복사 · `config.schema.json` `required` 에 `reviewers`·`review` 추가 · 프로필↔템플릿 키 일치 테스트 1개(지금 없다 — 이 결함이 안 잡힌 이유) |
 | 6 | 코드 | 없음 | **닫힘 2026-09-19 · [[ADR-H064]]** (배선만 — 등급 값은 파동 3) — `_review_repair_render` 직전에 `_instruct(s, "05-code-review", ["05:r{n}:repair:{owner}"])` + `_slot_of` 의 05 분기에서 `repair` 면 `roles`. 3~5줄, 04 와 대칭. 등급 **값**은 파동 3 의 표본이 정하고, 배선은 지금 해야 표본이 쌓인다 |
-| 3 | 결정 | 브랜치 격리 범위 | `run_promote` 의 `apply` 직전에 `adapters.run_stage(root, adapter, "lint")`·`"check"` 를 돌려 exit≠0 이면 `applied` 행을 `rejected`+사유로. `promote.py` 에 `reject_applied` 헬퍼(종단 상태 보호와 같은 층). 07 페이즈 148~151·259행 문구 교체. ~50줄. **함정 둘**: `cmd:null` 스테이지의 `skipped` 는 통과가 아니라 갭(`promotion_baseline_unverified` 와 같은 모양으로 남긴다) · 브랜치 생성은 실행기 밖 그대로 두고 그 사실을 07 에 적는다(권장 — 격리까지 실행기가 하면 파동 4 규모) |
+| 3 | 결정 | 브랜치 격리 범위 | **닫힘 2026-09-19 · [[ADR-H065]]** (브랜치는 실행기 밖) — `run_promote` 의 `apply` 직전에 `adapters.run_stage(root, adapter, "lint")`·`"check"` 를 돌려 exit≠0 이면 `applied` 행을 `rejected`+사유로. `promote.py` 에 `reject_applied` 헬퍼(종단 상태 보호와 같은 층). 07 페이즈 148~151·259행 문구 교체. ~50줄. **함정 둘**: `cmd:null` 스테이지의 `skipped` 는 통과가 아니라 갭(`promotion_baseline_unverified` 와 같은 모양으로 남긴다) · 브랜치 생성은 실행기 밖 그대로 두고 그 사실을 07 에 적는다(권장 — 격리까지 실행기가 하면 파동 4 규모) |
 
 **파동 2 — 사람 결정이 곧 작업**
 
@@ -155,7 +156,7 @@
 
 1. **닫힘 (2026-09-19 · [[ADR-H062]], (b))** — **test 리뷰어 보장** — [[ADR-H050]] 결정 4. `config.reviewers` 의 `test` 는 priority 4 이고 `review.profile_caps.normal` 이 4 라 테스트 파일이 바뀌어도 `routing.dropped` 로 떨어진다(파일럿 5런). 세 안: (a) `when_role_owned` 를 role `test` 로 확장 (b) priority 를 `arch` 위로 (c) cap 4 → 5. **(a) 는 단독으로 닫지 못한다** — `when_role_owned` 는 매칭을 넓힐 뿐이고 `test` 는 이미 자기 글롭으로 매칭되며, 절단은 `review.route()` 의 `matched[:cap]` 이 priority 순으로 한다. 닫힘: [[ADR-H054]] 의 표를 근거로 새 ADR 이 (b) 또는 (c) 를 고른다.
 2. **계약 자체의 결함을 보는 눈** — (a) 닫힘 (2026-09-19 · [[ADR-H050]] 추기) · (b) 열림. [[ADR-H050]] 결정 5. (a) gen 체크리스트 「계약이 지시한 재사용 심볼의 정의를 열어 전제를 확인한다」— [[ADR-H059]] 가 넣은 「기존 코드와의 상호작용」이 절반이다. (b) 02 에 계약 초안을 함께 넘기기 — 미착수. 둘 다 모델 판단이라 기계 검증이 없다.
-3. **승격 자체 게이트 강제** — [[ADR-H021]] 이 "같이 하지 않은 것" 으로 적은 §E11. `promote --apply` 뒤 `lint`+`check` 재실행을 실행기가 돌리지 않고 07 페이즈 파일이 "네가 그 브랜치에서 돌린다" 고 지시만 한다(team-spec §E11 「아직 실행기가 강제하지 않는다」). 닫힘: `promote --apply` 가 어댑터의 lint·check 스테이지를 돌리고 실패면 `rejected` 를 쓴다. 손잡이는 `adapters.run_stage` 가 이미 있고 `run_promote` 는 `runner` 주입점을 갖고 있다. **열린 설계 결정 하나**: 규칙 전용 브랜치 생성까지 실행기가 할 것인가 — 안 하면 게이트가 현재 워크트리에서 돌아 07 의 "기능 PR 무영향" 약속과 어긋나는 사실을 07 에 적어야 한다.
+3. **닫힘 (2026-09-19 · [[ADR-H065]])** — **승격 자체 게이트 강제** — [[ADR-H021]] 이 "같이 하지 않은 것" 으로 적은 §E11. `promote --apply` 뒤 `lint`+`check` 재실행을 실행기가 돌리지 않고 07 페이즈 파일이 "네가 그 브랜치에서 돌린다" 고 지시만 한다(team-spec §E11 「아직 실행기가 강제하지 않는다」). 닫힘: `promote --apply` 가 어댑터의 lint·check 스테이지를 돌리고 실패면 `rejected` 를 쓴다. 손잡이는 `adapters.run_stage` 가 이미 있고 `run_promote` 는 `runner` 주입점을 갖고 있다. **열린 설계 결정 하나**: 규칙 전용 브랜치 생성까지 실행기가 할 것인가 — 안 하면 게이트가 현재 워크트리에서 돌아 07 의 "기능 PR 무영향" 약속과 어긋나는 사실을 07 에 적어야 한다.
 4. **닫힘 (2026-09-19 · [[ADR-H045]] 추기)** — **02 봉투가 교차검증기를 말하지 않는다** — [[ADR-H045]] 의 부수 결함. `cli._cross_verify_render` 는 페이즈 프론트매터 `review.reviewers` 에서 교차검증기를 찾는데 `02-cross-verify.md` 에는 `review` 선언이 없어 02 에서 빈 문자열을 낸다. 01 이 xv 를 안 부르는 지금은 primary/fallback·재시도 안내를 어느 봉투도 하지 않는다. 닫힘: 02 전용 프로스펙티브 렌더, 또는 02 프론트매터에 xv 리뷰어 선언.
 
 **P1 — 관측 공백**
@@ -772,6 +773,8 @@
 **같이 하지 않은 것 — 자체 게이트(`lint`+`check` 재실행).** 명세 §E11 이 요구하고 07 페이즈 파일이 지시하지만 **여전히 실행기가 강제하지 않는다.** 브랜치 상태·인프라 실패 구분이 얽혀 경우의 수가 크고, 07 이 실물로 한 번도 안 돈 상태에서 한 증분에 둘을 넓히지 않았다. **미구현이라는 사실을 §E11 에 행으로 남겼다** — 재지 못한 것을 잰 것처럼 적지 않는다.
 
 **아직 실물로 안 돌았다.** 지금 원장은 P2 런 하나뿐이라 `distinct_runs` 가 1 이고 승격 후보가 0 이다. 이 증분의 검증은 유닛 테스트와 정적 검사까지다 — **배선이 섰다는 것과 흐름이 돈다는 것은 다르다.**
+
+**추기 (2026-09-19, 백로그 3 닫힘)**: "같이 하지 않은 것" 의 자체 게이트는 [[ADR-H065]] 가 실행기로 옮겼다 — `--apply` 가 `lint` · `check` 를 돌리고 실패면 `rejected` 를 쓴다. 규칙 전용 브랜치 생성은 여전히 실행기 밖이다.
 
 관련: [[ADR-H005]] · [[ADR-H016]]
 
@@ -3273,6 +3276,39 @@ effort 는 07 의 `/code-review --effort` 하나만 결정론으로 정했고 �
 라운드를 더 쓰면 05 수리만 따로 올릴지 본다.
 
 관련: [[ADR-H061]](트레이드오프 닫음) · [[ADR-H042]] · [[ADR-H044]]
+
+---
+
+### ADR-H065: 승격 자체 게이트는 실행기가 돌린다 — 브랜치 생성은 밖에 둔다
+
+**날짜**: 2026-09-19 · **상태**: 채택됨 · **구현 상태**: 구현됨 (2026-09-19 — `promote.self_gate` · `reject_applied` ·
+`wants_self_gate` · `run_promote` 배선 · gap `promotion_selfgate_unverified` · 07 페이즈 · team-spec §E11)
+
+**맥락**: 백로그 3. [[ADR-H021]] 이 "같이 하지 않은 것" 으로 남긴 §E11 — `promote --apply` 뒤 `lint` + `check` 재실행을
+07 이 "네가 그 브랜치에서 돌린다" 고 지시만 했다. 규칙이 기존 코드를 대량 위반시키면 다음 런 전체가 깨지는데 그것이
+`applied` 로 changelog 에 들어갈 수 있었다. 손잡이(`adapters.run_stage`, `run_promote` 의 `runner` 주입점)는 이미 있었다.
+
+**결정**:
+1. `--apply` 가 판정을 적용한 뒤 changelog 를 쓰기 **전에**, 기계 강제(`lint` · `check`) 승격이 하나라도 `applied` 면
+   어댑터의 `lint` · `check` 스테이지를 돌린다. 문서 승격 · `retire` · `skip` 만이면 돌리지 않는다.
+2. **여기서는 종료 코드가 성패다** — 베이스라인(종료 코드를 읽지 않는다)과 다르다. 하나라도 0 이 아니면 기계 강제
+   `applied` 를 **전부** `rejected` + 사유로 돌린다(`reject_applied`). 한 브랜치에 같이 쓰인 규칙 중 어느 것이 깨뜨렸는지
+   게이트는 가르지 못한다. 종단 상태(`skipped` · `retired`)는 건드리지 않는다.
+3. 127 · 124 는 `infra` — exit 10, 상태도 changelog 도 안 쓴다. 베이스라인과 같은 규율이다.
+4. 명령이 없는 스테이지(`cmd: null`)는 통과가 아니라 갭 `promotion_selfgate_unverified` 이고 `PASS_WITH_GAPS` 로 내린다.
+   `promotion_baseline_unverified` 와 같은 모양이다.
+5. **규칙 전용 브랜치의 생성 · 폐기는 실행기 밖에 둔다**(사용자 결정). 게이트는 현재 워크트리에서 돈다 — 07 이 그 사실과
+   "규칙 전용 브랜치가 아닌 곳에서 부르면 기능 코드와 규칙을 함께 잰다" 를 적는다. 격리까지 실행기가 하면 git 조작 ·
+   실패 복구가 붙어 백로그 파동 4 규모다.
+
+**트레이드오프**: 한 규칙의 실패가 같은 런의 다른 기계 강제 승격까지 `rejected` 로 만든다 — 다음 런에서 임계가 다시
+충족되면 재후보다. `self-python` 어댑터는 `lint` · `check` 가 둘 다 `null` 이라 이 리포 자신은 언제나 갭이다.
+테스트: 러너를 주입하지 않던 승격 테스트 다섯 클래스는 `stub_stage_runner` 로 실물 스테이지를 막았다.
+
+**재검토 시점**: 첫 실물 `applied` 승격이 나는 런. 자체 게이트 `failed` 가 규칙 결함이 아니라 기능 브랜치에서 부른
+탓으로 드러나면 브랜치 격리를 실행기로 옮긴다.
+
+관련: [[ADR-H021]](§E11 닫음) · [[ADR-H056]] · [[ADR-H051]]
 
 ---
 

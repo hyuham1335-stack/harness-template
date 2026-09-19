@@ -5396,6 +5396,23 @@ def run_promote(root, scan=False, stage=False, apply=False, flush=False,
 
     promos = staged_now
     promos, rows = pm.apply(root, s["run_id"], promos, verdicts, baseline)
+    # 자체 게이트는 **실행기가 돌린다** (ADR-H065). changelog 를 쓰기 전이라
+    # infra 면 아무것도 남지 않는다 — 베이스라인과 같은 규율이다.
+    gate = None
+    if pm.wants_self_gate(promos):
+        _config, adapter, _cal = adapters.load(root)
+        gate = pm.self_gate(root, adapter, runner=runner)
+        if gate["state"] == "infra":
+            return st.envelope("promote", False, 10, s, {"self_gate": gate},
+                               "\n".join(["## 승격 자체 게이트를 돌리지 못했다", "",
+                                          gate["reason"], "",
+                                          "**인프라 실패다.** 승격은 하나도 "
+                                          "쓰이지 않았고 다시 치면 된다."]),
+                               None)
+        if gate["state"] == "failed":
+            promos, rows = pm.reject_applied(promos, rows, gate["reason"])
+        elif gate["state"] == "unverified":
+            st.demote(s, "PASS_WITH_GAPS", "promotion_selfgate_unverified")
     s["promotions"] = promos
     if baseline is not None and baseline["state"] == "unavailable":
         # 재지 못한 것을 잰 것처럼 적지 않는다 (§E12 가 나열을 요구한다).
