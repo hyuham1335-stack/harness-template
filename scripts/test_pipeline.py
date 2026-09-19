@@ -11436,7 +11436,9 @@ class TestDoctorExternalBot:
         config = harness._read_json(repo / harness.CONFIG_REL)
         got = cli._check_external_bot(config)
         assert got["status"] == "PASS"
-        assert "생략" in got["message"] and "수리" in got["message"]
+        # 트리거 목록은 ADR-H059 의 것이다 — 수리·Major 잔여는 더는 트리거가 아니다.
+        assert "생략" in got["message"] and "0건" in got["message"]
+        assert "수리" not in got["message"]
 
     def test_켜_놓고_대상이_없으면_FAIL(self, repo):
         _enable_bot(repo, bot_logins=[])
@@ -11642,7 +11644,7 @@ class TestConvergenceThreshold:
         """미검증 상속값 5 → 3 (ADR-H041). 값의 회귀 방지다."""
         repo, paths, s = run01
         front = _front(_phase_file(repo, "01-plan.md"))
-        assert front["converge"]["max_by_profile"] == {"small": 2, "normal": 3}
+        assert front["converge"]["max_by_profile"] == {"fix": 1, "small": 2, "normal": 3}
         assert front["loop"]["max_by_profile"] == front["converge"]["max_by_profile"]
 
     def test_missing_blocking_severities_is_exit_2(self, run01):
