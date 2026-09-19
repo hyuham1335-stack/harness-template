@@ -21,6 +21,8 @@
      "schema": "claims"}
   ],
   "submit_checks": [
+    {"id": "dispatched_roles", "from": "config.roles[].when_contract_section",
+     "claims": "${run.dir}/03_claims.json", "on_fail": 8},
     {"id": "rules_read_sha", "from": "config.project.instruction_file",
      "and": "config.project.rules_dir", "claims": "${run.dir}/03_claims.json",
      "on_fail": 8},
@@ -76,10 +78,17 @@
    슬러그` 이고 들여쓴 줄에 진입점 절의 `METHOD /path` 를 글자 그대로 `→` 로 잇는다.
    e2e 가 없으면 계약을 쓰라는 봉투가 그렇게 말하고, 그래도 적으면 패킷을 내기 전에
    exit 8 이다 (ADR-H058 추기).
-2. 계약의 유닛·진입점 항목 수를 세어 프로파일을 확정한다.
-3. **역할 전원을 한 메시지 안에서 동시 호출한다.** 각 역할에게 지시문 패킷을
-   준다 — 패킷에 **소유권 표**가 들어 있고, 그 표가 소유 경계의 유일한 출처다.
-4. 각 역할의 제출물을 받아 `03_claims.json` 으로 합친다.
+   **`## 화면` 은 이 런이 화면 컴포넌트를 새로 만들거나 고칠 때만 적는다.** 그 밖에는
+   "없음" 이다. 형식은 유닛과 같은 `컨테이너 · 컴포넌트` 이고, 항목이 있어야 `ui` 역할이
+   불린다 (ADR-H057).
+2. 계약의 유닛·진입점·화면 항목 수를 세어 프로파일을 확정한다.
+3. **패킷의 「이 런에 부르는 역할」 전원을 한 메시지 안에서 동시 호출한다.** 목록은
+   계약이 정한다 — `when_contract_section` 이 있는 역할은 계약의 그 절에 항목이 있을
+   때만 들어간다. 각 역할에게 지시문 패킷을 준다 — 패킷에 **소유권 표**가 들어 있고,
+   그 표가 소유 경계의 유일한 출처다.
+4. 각 역할의 제출물을 받아 `03_claims.json` 으로 합친다. 역할은 **정확히 디스패치
+   목록**이다 — 빠지거나 더해지면 exit 8. 패킷을 받은 뒤 계약의 그 절을 고쳤으면
+   제출이 exit 8 이고 `next` 로 패킷을 다시 받는다 (ADR-H057).
 5. 소유 검사와 컴파일 게이트를 돌린다. 이어서 **테스트 존재 검사**(`tests_required` —
    진입점·오류 어휘·`[역할]` 태그의 테스트)를 05 계약 대조와 같은 함수로 돌린다.
    빠지면 첫 런부터 exit 8 이다 — 유예가 없다 (ADR-H058). 05 의 Major 는
@@ -141,8 +150,16 @@
    "rules_read":[{"path":"CLAUDE.md","sha256":"…"}],
    "claimed_files":["…"],
    "contract_symbols_covered":["…"],
+   "blocked":[]},
+  {"role":"ui","agent":"…","status":"ok|blocked",
+   "rules_read":[{"path":"CLAUDE.md","sha256":"…"}],
+   "claimed_files":["…"],
+   "contract_symbols_implemented":["…"],
+   "ui_guide_checked":["…"],
    "blocked":[]}]}
 ```
+
+`ui` 항목은 디스패치된 런에만 넣는다 — 계약 `## 화면` 이 "없음" 이면 빼야 한다.
 
 `claimed_files` 에 **실제로 쓴 파일 전부**를 적는다. 빠뜨리면 그 파일이
 orphan(아무도 claim 하지 않은 변경)으로 잡혀 03 전체가 거부된다.
@@ -173,6 +190,8 @@ orphan(아무도 claim 하지 않은 변경)으로 잡혀 03 전체가 거부된
 | 무엇 | 어떻게 |
 |---|---|
 | `rules_read` 누락·불일치 | exit 8 — 어느 역할의 어느 파일이 빠졌거나 낡았는지 봉투에 나온다. 해시는 안 준다 |
+| claims 역할 ≠ 디스패치 목록 | exit 8 — 빠진 역할·부르지 않은 역할이 봉투에 나온다 |
+| 패킷 뒤 계약의 조건부 절 변경 | exit 8 — `next` 로 패킷을 다시 받는다 |
 | 소유 경계 침범 | exit 8 — 어느 파일을 어느 역할이 되돌릴지 봉투에 나온다 |
 | orphan 파일 | exit 8 — claim 에 없는 변경이다. 적었거나 지웠어야 한다 |
 | 컴파일 실패 | 04 의 귀속 규칙으로 소유자를 정해 그 역할에게만 되돌린다 |

@@ -1207,6 +1207,7 @@ def run_next(root, run_id=None):
         refused = _contract_precheck_refuse(root, paths, s, ctx, "next")
         if refused is not None:
             return refused
+        _store_dispatch(root, ctx, s, phase["front"])
     # **지시를 낸 자리에서 센다** (M26). `next` 는 같은 페이즈에서 여러 번
     # 불릴 수 있으므로 키로 멱등을 만든다.
     _t, _m, exhausted = _instruct(
@@ -1386,6 +1387,55 @@ def _roles_for(front, ctx, s):
     if unless and eval_condition(unless, s):
         return []
     return list((ctx["config"].get("roles") or []) if ctx else [])
+
+
+def _dispatched_roles(root, ctx, s, front):
+    """03 이 이 런에 **실제로 부르는** 역할 id 와 걸러진 역할 (ADR-H057).
+
+    `when_contract_section` 이 있는 역할은 계약의 그 절에 항목이 있을 때만 부른다.
+    자진신고가 아니라 계약 파서가 정한다 — 03 의 `requires` 가 계약 파일을
+    요구하므로 패킷을 낼 때 계약은 있고, 03 제출이 같은 계산을 다시 해 대조한다.
+    반환: (ids, [{"id", "heading"}])
+    """
+    import contract as contract_mod
+
+    roles = _roles_for(front, ctx, s)
+    if not any(r.get("when_contract_section") for r in roles):
+        return [r["id"] for r in roles], []
+    parsed = {}
+    full = Path(root) / resolve("${run.contract_file}", ctx)
+    if ((s.get("contract") or {}).get("mode")) != "no_contract" and full.exists():
+        parsed = contract_mod.parse(full.read_text(encoding="utf-8"), ctx["config"])
+    sections = (ctx["config"].get("contract") or {}).get("sections") or {}
+    ids, omitted = [], []
+    for r in roles:
+        key = r.get("when_contract_section")
+        if key and not parsed.get(key):
+            omitted.append({"id": r["id"], "heading": sections.get(key) or key})
+        else:
+            ids.append(r["id"])
+    return ids, omitted
+
+
+def _store_dispatch(root, ctx, s, front):
+    """03 패킷을 내는 두 자리(`next`·전이)가 부른다. 귀속 사다리와 03 제출이 읽는다."""
+    ids, _omitted = _dispatched_roles(root, ctx, s, front)
+    s.setdefault("phases", {}).setdefault("03-implement", {})["dispatched_roles"] = ids
+
+
+def _dispatch_render(root, ctx, s, front):
+    """03 패킷 — 이 런에 부르는 역할과 걸러진 역할. 조건부 역할이 없으면 빈 문자열."""
+    ids, omitted = _dispatched_roles(root, ctx, s, front)
+    if not omitted and not any(r.get("when_contract_section")
+                               for r in _roles_for(front, ctx, s)):
+        return ""
+    lines = ["## 이 런에 부르는 역할", "",
+             "계약이 정한다 — 이 목록 전부를 한 메시지에서 부르고, `03_claims.json` 의 "
+             "역할도 정확히 이 목록이어야 한다.", "",
+             "- " + " · ".join("`%s`" % i for i in ids)]
+    lines += ["- `%s` — 계약에 `%s` 항목이 없다, 미호출" % (o["id"], o["heading"])
+              for o in omitted]
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------- 모델 등급
@@ -1825,6 +1875,7 @@ def render_packet(root, phase, ctx, s, checks=None):
     elif role_tpl:
         parts.append(role_tpl)
         if pid == "03-implement":
+            parts.append(_dispatch_render(root, ctx, s, front))
             parts.append(_tests_required_render(root, ctx, s))
     parts.append(_section(body, "## 제출 형식"))
     parts.append(_section(body, "## 금지"))
@@ -2272,8 +2323,13 @@ def _instruction_keys(s, pid, ctx, front=None):
         return ["02:r%d:xv" % used("xverify_return")]
     if pid == "03-implement":
         r = used("repair")
-        return ["03:r%d:%s" % (r, role.get("id"))
-                for role in _roles_for(front, ctx, s)]
+        # 디스패치는 계약이 정하고 03 패킷을 내는 자리가 저장한다 (ADR-H057).
+        # 기록이 없으면(옛 런) 조건부 역할을 빼고 센다.
+        ids = ((s.get("phases") or {}).get("03-implement") or {}).get("dispatched_roles")
+        if ids is None:
+            ids = [role.get("id") for role in _roles_for(front, ctx, s)
+                   if not role.get("when_contract_section")]
+        return ["03:r%d:%s" % (r, i) for i in ids]
     if pid == "05-code-review":
         node = (s.get("phases") or {}).get("05-code-review") or {}
         r = used("review_repair") + 1
@@ -2418,6 +2474,7 @@ def _advance_to_next(root, paths, s, phase_item, ctx, cmd="record",
         refused = _contract_precheck_refuse(root, paths, s, ctx, cmd)
         if refused is not None:
             return refused
+        _store_dispatch(root, ctx, s, nxt_item["front"])
     # **지시를 낸 자리에서 센다.** 전이가 다음 패킷을 바로 내므로 `next` 의
     # 계수를 지나친다 — 02 의 교차검증기가 그렇게 예산 밖에 있었다 (ADR-H042).
     _t, _m, exhausted = _instruct(
@@ -3058,6 +3115,15 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
             "이미 고친 소스는 그 역할이 claim 한다." + _journey_hint(root, s),
             "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
 
+    bad = _dispatch_problem(root, ctx, s, phase_item["front"], claims)
+    if bad is not None:
+        st.set_phase_status(s, "03-implement", "failed")
+        st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
+                        **bad["data"])
+        st.save(paths, s)
+        return st.envelope("record", False, 8, s, bad["data"], bad["render"],
+                           bad["next"] or _same_command(s, "03"))
+
     got = attribution.clean_ownership(root, ctx["config"], claims)
     if not got["ok"]:
         st.set_phase_status(s, "03-implement", "failed")
@@ -3112,6 +3178,44 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
     st.set_phase_status(s, "03-implement", "passed",
                         claims=file.name)
     return _advance_to_next(root, paths, s, phase_item, ctx)
+
+
+def _dispatch_problem(root, ctx, s, front, claims):
+    """03 제출이 **디스패치된 역할 전부의** 것인가 (ADR-H057). 문제가 없으면 None.
+
+    필터를 다시 계산해 패킷을 낼 때 저장한 값과 대조한다 — 다르면 패킷 뒤에
+    메인이 계약의 조건부 절을 고친 것이고, 그 제출은 옛 패킷을 따른 것이다.
+    저장값이 없는 옛 런은 다시 계산한 값을 쓰고 그 사실을 state 에 남긴다.
+    반환: {"data", "render", "next"}
+    """
+    ids, _omitted = _dispatched_roles(root, ctx, s, front)
+    node = s.setdefault("phases", {}).setdefault("03-implement", {})
+    stored = node.get("dispatched_roles")
+    if stored is None:
+        node["dispatched_roles"] = ids
+        node["dispatch_record"] = "recomputed_at_record"
+    elif stored != ids:
+        return {"data": {"dispatch": "contract_changed", "packet": stored,
+                         "contract": ids},
+                "render": "## 계약이 바뀌었다 — `next` 로 패킷을 다시 받아라\n\n패킷은 "
+                          "%s 를 불렀는데 지금 계약으로는 %s 다. 패킷을 낸 뒤 계약의 "
+                          "조건부 절(예: 화면)을 고쳤다 — 그 제출은 옛 패킷을 따른 것이다."
+                          % (" · ".join("`%s`" % i for i in stored) or "(없음)",
+                             " · ".join("`%s`" % i for i in ids) or "(없음)"),
+                "next": "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"]}
+    got = [r.get("role") for r in (claims or {}).get("roles") or []]
+    missing = [i for i in ids if i not in got]
+    extra = [g for g in got if g not in ids]
+    if not missing and not extra:
+        return None
+    lines = ["- `%s` — 디스패치됐는데 claims 에 없다" % i for i in missing]
+    lines += ["- `%s` — 이 런에 부르지 않은 역할인데 claims 에 있다" % g for g in extra]
+    return {"data": {"dispatch": "claims_mismatch", "missing": missing, "extra": extra},
+            "render": "## claims 의 역할이 디스패치 목록과 다르다\n\n%s\n\n`03_claims.json` "
+                      "의 역할은 패킷의 「이 런에 부르는 역할」과 정확히 같아야 한다 "
+                      "(ADR-H057). 빠진 역할을 불러 제출을 합치거나, 부르지 않은 역할의 "
+                      "변경을 되돌린다." % "\n".join(lines),
+            "next": None}
 
 
 def _tests_required(root, s, ctx, adapter):
@@ -3265,8 +3369,9 @@ def _refresh_profile(root, paths, s, ctx):
 
 
 def _confirm_profile(s, config, parsed):
-    """계약이 생겼으니 프로파일을 실제로 센다."""
-    n = len(parsed.get("units") or []) + len(parsed.get("entrypoints") or [])
+    """계약이 생겼으니 프로파일을 실제로 센다. 화면도 작업량이다 (ADR-H057)."""
+    n = (len(parsed.get("units") or []) + len(parsed.get("entrypoints") or [])
+         + len(parsed.get("screens") or []))
     limit = (config.get("profile") or {}).get("small_max_units") or 3
     if (s.get("profile") or {}).get("source") == "user":
         return s["profile"]

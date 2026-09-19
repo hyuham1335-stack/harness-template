@@ -299,4 +299,8 @@ def attribute(root, config, adapter, report, state, replay=None, log_text="",
     # **쌍이다.** `sig_chain` 은 `owner|sig` 를 쌓는다 — 시그니처만 세면 flip 이
     # 값을 낼 바로 그 라운드에 정체 감지가 먼저 멈춘다 (M33).
     prev = (state or {}).get("sig_chain") or []
-    return attr.dispatch(failures, config, prev, flip, stuck_after=stuck_after)
+    # 사다리는 03 이 실제로 부른 역할로만 만든다 (ADR-H057).
+    roles = (((state or {}).get("phases") or {}).get("03-implement") or {}).get(
+        "dispatched_roles")
+    return attr.dispatch(failures, config, prev, flip, stuck_after=stuck_after,
+                         roles=roles)

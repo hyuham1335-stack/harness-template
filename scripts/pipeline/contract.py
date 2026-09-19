@@ -64,9 +64,13 @@ def parse(text, config):
     sections = (config.get("contract") or {}).get("sections") or {}
     units, dropped = _units(section(text, sections.get("units")))
     journeys, journeys_dropped = _journeys(section(text, sections.get("journeys")))
+    # 화면은 유닛과 같은 형식이다 — 항목이 있어야 ui 역할이 디스패치된다 (ADR-H057).
+    screens, screens_dropped = _units(section(text, sections.get("screens")))
     return {
         "units": units,
         "dropped": dropped,
+        "screens": screens,
+        "screens_dropped": screens_dropped,
         "entrypoints": _entrypoints(section(text, sections.get("entrypoints"))),
         "errors": _errors(section(text, sections.get("errors"))),
         "data_shapes": _data_shapes(section(text, sections.get("data_shapes"))),
@@ -84,7 +88,7 @@ def symbols(parsed):
     `out_of_contract` · `gate` 의 실패 귀속)이 함께 낫는다.
     """
     out = set()
-    for u in parsed.get("units") or []:
+    for u in (parsed.get("units") or []) + (parsed.get("screens") or []):
         if u.get("symbol"):
             out.add(u["symbol"])
     for e in parsed.get("errors") or []:
