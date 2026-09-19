@@ -368,6 +368,68 @@ def measure_baseline(root, adapter, runner=None):
             "`%s` 이 그대로다 — 규칙은 추가했는데 아무것도 안 막는다는 뜻이다" % rel}
 
 
+SELF_GATE_STAGES = ("lint", "check")
+
+
+def wants_self_gate(promotions):
+    """기계 강제로 `applied` 된 승격이 있는가. 문서 승격과 `retire` 는 게이트를
+    바꾸지 않으므로 돌리지 않는다."""
+    return any(p.get("status") == "applied"
+               and p.get("enforceable") in SELF_GATE_STAGES
+               for p in promotions or [])
+
+
+def self_gate(root, adapter, runner=None):
+    """승격 자체 게이트 — 어댑터의 `lint` · `check` 를 **실행기가** 돌린다 (ADR-H065).
+
+    반환: {"state", "stages", "reason"}. `state` 는 `passed` · `failed` ·
+    `unverified` · `infra` 넷이다. 베이스라인과 달리 **여기서는 종료 코드가
+    성패다** — 규칙이 기존 코드를 위반시키면 다음 런 전체가 깨진다.
+
+    **현재 워크트리에서 돈다.** 규칙 전용 브랜치 생성은 실행기 밖이다 — 07 이
+    그 사실을 적는다. 명령이 없는 스테이지는 통과가 아니라 `unverified` 다.
+    """
+    stages, failed, missing = [], [], []
+    for name in SELF_GATE_STAGES:
+        r = adapters.run_stage(root, adapter, name, runner=runner)
+        stages.append({k: r.get(k) for k in ("id", "state", "exit", "reason")})
+        if r["state"] != "ran":
+            missing.append(name)
+        elif r["exit"] in _INFRA_EXITS:
+            return {"state": "infra", "stages": stages,
+                    "reason": "`%s` 를 실행하지 못했다 (exit %s) — 시스템 "
+                              "문제이지 규칙의 결함이 아니다: %s"
+                              % (name, r["exit"], (r.get("output") or "")[:200])}
+        elif r["exit"] != 0:
+            failed.append("%s exit %s" % (name, r["exit"]))
+    if failed:
+        return {"state": "failed", "stages": stages,
+                "reason": "승격 자체 게이트 실패 (%s) — 규칙이 기존 코드를 "
+                          "통과시키지 못한다" % ", ".join(failed)}
+    if missing:
+        return {"state": "unverified", "stages": stages,
+                "reason": "어댑터에 %s 명령이 없다" % " · ".join(missing)}
+    return {"state": "passed", "stages": stages, "reason": None}
+
+
+def reject_applied(promotions, rows, reason):
+    """자체 게이트가 실패하면 기계 강제 `applied` 를 전부 `rejected` 로 돌린다.
+
+    어느 규칙이 깨뜨렸는지 게이트는 가르지 못한다 — 한 브랜치에 같이 쓰였다.
+    changelog 행도 같이 고친다. 종단 상태(`skipped` · `retired`)는 건드리지 않는다.
+    """
+    hit = set()
+    for p in promotions or []:
+        if p.get("status") == "applied" and p.get("enforceable") in SELF_GATE_STAGES:
+            p["status"] = "rejected"
+            p["reason"] = reason
+            hit.add(p.get("rule_id"))
+    for r in rows or []:
+        if r.get("action") == "applied" and r.get("rule_id") in hit:
+            r["action"] = "rejected"
+    return promotions, rows
+
+
 def _baseline_delta(root, rel):
     """(바뀌었는가, diff 텍스트).
 

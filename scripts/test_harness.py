@@ -1073,6 +1073,35 @@ class RetryBudgetTest(unittest.TestCase):
         self.assertIsNone(harness._derive_policy({}, {})["retry_budget"])
 
 
+class ProfileParityTest(unittest.TestCase):
+    """프로필 시드가 템플릿 config 의 키를 빠뜨리면 클론에서 그 기능이 조용히
+    꺼진다 — `reviewers` 가 없어 05 가 통째로 비활성이던 결함이다 (ADR-H063)."""
+
+    def _load(self, rel):
+        return json.loads((ROOT / rel).read_text(encoding="utf-8"))
+
+    def test_profiles_declare_every_template_key(self):
+        tmpl = {k for k in self._load("harness/config.json") if not k.startswith("_")}
+        for prof in sorted((ROOT / "harness" / "profiles").glob("*/config.json")):
+            got = {k for k in json.loads(prof.read_text(encoding="utf-8"))
+                   if not k.startswith("_")}
+            self.assertEqual(tmpl, got, prof)
+
+    def test_profiles_carry_the_template_review_blocks(self):
+        tmpl = self._load("harness/config.json")
+        prof = self._load("harness/profiles/nextjs-ts/config.json")
+        for key in ("reviewers", "review"):
+            self.assertEqual(tmpl[key], prof[key], key)
+
+    def test_schema_requires_the_review_blocks(self):
+        schema = self._load("harness/config.schema.json")
+        for key in ("reviewers", "review"):
+            self.assertIn(key, schema["required"])
+        prof = self._load("harness/profiles/nextjs-ts/config.json")
+        prof["project"]["name"] = "fixture"  # `{{name}}` 은 init 이 채운다
+        self.assertEqual([], harness.validate(prof, schema))
+
+
 class RealRepoTest(unittest.TestCase):
     """실물 리포에서도 통과해야 한다 — 픽스처만 통과하는 것은 의미가 없다."""
 

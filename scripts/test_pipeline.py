@@ -6513,6 +6513,16 @@ class TestReviewerRouting:
         got = rv.route(_config(repo), changed, "normal")
         assert got["dropped"], "상한으로 빠진 리뷰어가 이름으로 남아야 한다"
 
+    def test_a_test_change_keeps_the_test_reviewer_under_the_normal_cap(self, repo):
+        """테스트 파일이 바뀌면 `test` 가 cap 에 잘리지 않는다 — 잘리는 것은
+        `arch` 다 (ADR-H062). 파일럿 5런이 `test` 를 `dropped` 로 잃었다."""
+        changed = ["src/lib/schemas.ts", "src/app/api/x/route.ts",
+                   "src/lib/a.test.ts"]
+        got = rv.route(_config(repo), changed, "normal")
+        codes = [r["code"] for r in got["reviewers"]]
+        assert "test" in codes, got
+        assert "arch" not in codes, got
+
     def test_docs_reviewer_only_when_no_source_change(self, repo):
         with_src = rv.route(_config(repo), ["docs/x.md", "src/lib/a.ts"], "normal")
         assert "docs" not in [r["code"] for r in with_src["reviewers"]]
@@ -8044,6 +8054,20 @@ class TestPhase05Ledgering:
         assert "수리가 필요하다" in env["render"]
         assert "Minor 는 고치지 않는다" in env["render"]
 
+    def test_the_repair_writer_gets_a_model_tier(self, repo, request_file, phases):
+        """05 수리 작성자도 지시 키를 받는다 — 04 와 대칭 (ADR-H064).
+        없으면 메인 세션 모델로 돌아 `config.models` 밖이다."""
+        run_id, paths = self._prepare(repo, request_file, phases)
+        f = _reviewer_files(paths, "arch", [
+            {"id": "F-1", "category": "AUTHZ_MISSING_RULE", "severity": "major",
+             "target_role": "impl", "title": "인가 누락", "quote": "인가 누락"}])
+        env = cli.run_record(repo, "05", str(f), reviewer="arch", round_=1,
+                             run_id=run_id)
+        assert env["exit"] == 4, env["render"]
+        assert "`05:r1:repair:impl` → model: `sonnet`" in env["render"], env["render"]
+        _p, s = st.load(repo, run_id)
+        assert s["models"]["instructed"].get("05:r1:repair:impl") == "sonnet",             s["models"]
+
     def test_minor_finding_does_not_block(self, repo, request_file, phases):
         run_id, paths = self._prepare(repo, request_file, phases)
         f = _reviewer_files(paths, "arch", [
@@ -9354,6 +9378,14 @@ def _fill_ledger(repo, key_title, category, severity, runs):
              "reported_by": ["arch"], "source": "reviewer"}])
 
 
+@pytest.fixture
+def stub_stage_runner(monkeypatch):
+    """`--apply` 는 이제 자체 게이트로 어댑터 스테이지를 돌린다 (ADR-H065).
+    러너를 주입하지 않는 승격 테스트가 픽스처에서 실물 `npm` 을 부르지 않게
+    통과 러너로 막는다."""
+    monkeypatch.setattr(adapters, "_default_runner", _stage_runner())
+
+
 def _verdict_file(paths, verdicts):
     p = paths.run_dir / "07_promo_verdict.json"
     p.write_text(json.dumps({"verdicts": verdicts}, ensure_ascii=False),
@@ -9437,6 +9469,7 @@ def _one_verdict(**kw):
     return d
 
 
+@pytest.mark.usefixtures("stub_stage_runner")
 class TestPromoteVerdict:
 
     def test_duplicate_에서_create_는_금지다(self, repo, request_file, phases):
@@ -9482,6 +9515,7 @@ class TestPromoteVerdict:
         assert "3" in json.dumps(env["data"], ensure_ascii=False)
 
 
+@pytest.mark.usefixtures("stub_stage_runner")
 class TestPromoteSkipNeedsWhy:
     """**skip 판정은 사유가 필수다** (ADR-H051).
 
@@ -9546,6 +9580,7 @@ class TestPromotionOverdue:
         assert "어휘에 없는 사유" not in rep_mod.explain_gap("promotion_overdue")
 
 
+@pytest.mark.usefixtures("stub_stage_runner")
 class TestPromoteApply:
 
     def _ready(self, repo, request_file, phases):
@@ -9605,10 +9640,13 @@ class TestPromoteApply:
 
 
 def _baseline_runner(repo, content='{"rules": 1}', code=0, seen=None):
-    """`baseline_cmd` 를 흉내낸다 — 베이스라인 파일을 **실제로 쓴다.**"""
+    """`baseline_cmd` 를 흉내낸다 — 베이스라인 파일을 **실제로 쓴다.**
+    `code` 는 베이스라인 명령의 것이다. 자체 게이트 스테이지는 통과한다 (ADR-H065)."""
     def run(name, argv, cwd, timeout_sec):
         if seen is not None:
             seen.append((name, list(argv)))
+        if name != "lint-baseline":
+            return 0, "%s 출력" % name
         p = Path(repo) / "harness" / "lint-baseline.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
@@ -9666,7 +9704,7 @@ class TestPromoteBaseline:
         env = cli.run_promote(repo, apply=True, verdict_file=str(f),
                               run_id=run_id, runner=_silent_runner(seen=seen))
         assert env["exit"] == 0
-        assert seen == []
+        assert "lint-baseline" not in [n for n, _ in seen], seen
 
     def test_베이스라인이_안_바뀌면_rejected(self, repo, request_file, phases):
         run_id, paths = self._ready(repo, request_file, phases)
@@ -9763,6 +9801,90 @@ class TestPromoteBaseline:
     def test_갭_어휘가_보고서에서_설명된다(self):
         """어휘에 없으면 보고서가 '설명하지 못한다' 고 적는다 — 그러지 않게 한다."""
         line = rep_mod.explain_gap("promotion_baseline_unverified")
+        assert "어휘에 없는" not in line
+
+
+def _stage_runner(codes=None, seen=None):
+    """스테이지 이름별 종료 코드. 없는 이름은 0 이다."""
+    def run(name, argv, cwd, timeout_sec):
+        if seen is not None:
+            seen.append((name, list(argv)))
+        return (codes or {}).get(name, 0), "%s 출력" % name
+    return run
+
+
+class TestPromoteSelfGate:
+    """승격 자체 게이트를 **실행기가 돌린다** (ADR-H065, 백로그 3).
+
+    07 이 "네가 그 브랜치에서 돌린다" 고 지시만 했고 §E11 이 "아직 실행기가
+    강제하지 않는다" 고 적었다. 규칙이 기존 코드를 대량 위반시키면 다음 런
+    전체가 깨진다 — 그것을 `applied` 로 적으면 안 된다.
+    """
+
+    def _apply(self, repo, request_file, phases, runner, verdicts=None):
+        run_id, paths = _staged_authz(repo, request_file, phases)
+        f = _verdict_file(paths, verdicts or [_one_verdict()])
+        env = cli.run_promote(repo, apply=True, verdict_file=str(f),
+                              run_id=run_id, runner=runner)
+        _pp, s = st.load(repo, run_id)
+        return env, s
+
+    def _changelog(self, repo):
+        p = repo / "docs" / "harness" / "pipeline" / "ledger" / "rules_changelog.md"
+        return p.read_text(encoding="utf-8") if p.exists() else ""
+
+    def test_lint_and_check_both_run_and_pass(self, repo, request_file, phases):
+        seen = []
+        env, s = self._apply(repo, request_file, phases, _stage_runner(seen=seen))
+        assert env["exit"] == 0, env["render"]
+        assert [n for n, _ in seen] == ["lint", "check"], seen
+        assert any(p["status"] == "applied" for p in s["promotions"])
+
+    def test_a_failing_lint_rejects_the_promotion(self, repo, request_file, phases):
+        env, s = self._apply(repo, request_file, phases,
+                             _stage_runner({"lint": 1}))
+        assert env["exit"] == 0, env["render"]
+        assert not any(p["status"] == "applied" for p in s["promotions"])
+        rej = [p for p in s["promotions"] if p["status"] == "rejected"]
+        assert rej and "자체 게이트" in rej[0]["reason"], s["promotions"]
+        assert "applied" not in self._changelog(repo).split("migration-guard")[-1]
+
+    def test_a_failing_check_rejects_the_promotion(self, repo, request_file, phases):
+        env, s = self._apply(repo, request_file, phases,
+                             _stage_runner({"check": 2}))
+        rej = [p for p in s["promotions"] if p["status"] == "rejected"]
+        assert rej and "check" in rej[0]["reason"], s["promotions"]
+
+    def test_an_absent_stage_is_a_gap_not_a_pass(self, repo, request_file, phases):
+        ad_p = repo / "harness" / "adapters" / "nextjs-ts.json"
+        ad = json.loads(ad_p.read_text(encoding="utf-8"))
+        ad["stages"]["check"]["cmd"] = None
+        ad_p.write_text(json.dumps(ad, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+        env, s = self._apply(repo, request_file, phases, _stage_runner())
+        assert env["exit"] == 0, env["render"]
+        assert any(p["status"] == "applied" for p in s["promotions"])
+        assert s["grade"] == "PASS_WITH_GAPS"
+        assert "promotion_selfgate_unverified" in s["gaps"]
+
+    def test_infra_failure_writes_nothing(self, repo, request_file, phases):
+        env, s = self._apply(repo, request_file, phases,
+                             _stage_runner({"check": 127}))
+        assert env["exit"] == 10, env["render"]
+        assert all(p["status"] == "staged" for p in s["promotions"])
+        assert "migration-guard" not in self._changelog(repo)
+
+    def test_skip_only_verdicts_do_not_run_the_gate(self, repo, request_file,
+                                                    phases):
+        seen = []
+        env, s = self._apply(
+            repo, request_file, phases, _stage_runner(seen=seen),
+            [_one_verdict(action="skip", rationale="표본이 아직 적다")])
+        assert env["exit"] == 0, env["render"]
+        assert seen == []
+
+    def test_the_gap_is_explained_in_the_report(self):
+        line = rep_mod.explain_gap("promotion_selfgate_unverified")
         assert "어휘에 없는" not in line
 
 
@@ -9900,6 +10022,7 @@ class TestPromoteRuleKey:
         assert errors == [], errors
 
 
+@pytest.mark.usefixtures("stub_stage_runner")
 class TestPromoteStatePreservation:
     """`--scan` 은 읽기다 (G-3).
 
@@ -12031,6 +12154,7 @@ class TestLedgerRetire:
             ldg.retire(repo, "r1", "k", "  ")
 
 
+@pytest.mark.usefixtures("stub_stage_runner")
 class TestPromoteRetire:
     """07 판정 어휘 `retire` — lint 베이스라인 경로를 타지 않는다 (ADR-H056)."""
 
@@ -12871,6 +12995,7 @@ class TestModelTierRouting:
         "03:r0:impl":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
         "04:r1:impl":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
         "05:r1:gen":      {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "opus"},
+        "05:r1:repair:impl": {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
     }
 
     def test_slot_and_profile_fallback(self):
