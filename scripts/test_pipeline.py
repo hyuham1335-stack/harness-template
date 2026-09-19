@@ -17,6 +17,7 @@ test_harness.py 가 unittest 인 것은 더 오래된 층이라 그렇고, 새 �
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -3924,6 +3925,32 @@ class TestRunCost:
         assert out["data"]["output_tokens"] == 2
 
 
+
+    def test_worktree_런도_main_원장에서_찾는다(self, repo, tmp_path_factory,
+                                             tmp_path):
+        """런은 worktree 의 `_workspace/runs` 에 있고 원장은 main 체크아웃 하나다.
+
+        FR-025 런(`2342-9258`)이 그 모양이다 — worktree 에서 `cost` 를 부르면
+        `root/docs/…` 를 읽어 원장이 없다고 나왔다.
+        """
+        wt = tmp_path_factory.mktemp("wtc") / "feat-cost"
+        _git(repo, "worktree", "add", "-q", "-b", "feat-cost", str(wt))
+        req = wt / "_workspace" / "requests" / "req.md"
+        req.parent.mkdir(parents=True, exist_ok=True)
+        req.write_text("요청\n", encoding="utf-8")
+        rid = self._run(wt, req, "2026-09-09T01:08:15+0900")
+        self._ledger(repo, [
+            {"ts": "2026-09-09T09:05:38+0900", "session_id": "s1",
+             "run": {"run_id": "다른-런"},
+             "worktrees": [{"path": str(wt), "run": {"run_id": rid}}]},
+        ])
+        troot = tmp_path / "projects"
+        self._transcript(troot, "s1", 4.34)
+        out = cli.run_cost(wt, run_id=rid, transcript_root=troot)
+        assert out["ok"] is True, out.get("render")
+        assert out["data"]["cost_usd"] == 4.34
+
+
 class TestSessionLedger:
     """훅은 셸이라 해석을 못 쓴다. **그래서 사실만 쌓는다.**
 
@@ -4154,6 +4181,222 @@ class TestSessionLedger:
         out = capsys.readouterr().out
         assert out == "미승격 세션 2개 — /log\n"
         assert len(_ledger_lines(repo)) == 2
+
+    # -- worktree 귀속 -------------------------------------------------------
+    # 세션 `cwd` 는 끝까지 main 이고 worktree 작업은 Bash 의 `cd <wt> && …` 로만
+    # 일어난다 (2026-09-19 실물 트랜스크립트 dc46c3a1 · b91b99a6 전부).
+    # 그래서 훅 입력 `cwd` 로는 못 찾고, 트랜스크립트가 그 경로를 말했는지 본다.
+
+    def _wt(self, repo, factory, name="feat-x"):
+        _git(repo, "branch", "-M", "main")     # base_branch 기준이 서도록
+        wt = factory.mktemp("wt") / name
+        _git(repo, "worktree", "add", "-q", "-b", name, str(wt))
+        return wt
+
+    def _say(self, troot, *texts, sid="sid-1", start=None):
+        (troot / "slug").mkdir(parents=True, exist_ok=True)
+        head = ([json.dumps({"type": "last-prompt"}) + "\n",
+                 json.dumps({"type": "user", "timestamp": start}) + "\n"]
+                if start else [])
+        (troot / "slug" / ("%s.jsonl" % sid)).write_text("".join(head) + "".join(
+            json.dumps({"message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command": t}}]}},
+                ensure_ascii=False) + "\n" for t in texts), encoding="utf-8")
+
+    def _commit_in(self, wt, subject):
+        (wt / "src" / "lib" / "wt.ts").write_text(subject + "\n", encoding="utf-8")
+        _git(wt, "add", "-A")
+        _git(wt, "commit", "-qm", subject)
+        return _git(wt, "rev-parse", "--short", "HEAD").stdout.strip()
+
+    def test_worktree_commits_are_recorded_when_transcript_names_it(
+            self, repo, tmp_path_factory, tmp_path):
+        wt = self._wt(repo, tmp_path_factory)
+        sha = self._commit_in(wt, "feat: worktree 커밋")
+        troot = tmp_path / "projects"
+        self._say(troot, "cd %s && git commit -q" % wt)
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        [w] = rec["worktrees"]
+        assert w["branch"] == "feat-x"
+        assert [c["sha"] for c in w["commits"]] == [sha]
+        assert w["commits_since"]["kind"] == "base_branch"
+        # main 쪽은 그대로 main 의 사실이다 — worktree 커밋이 섞이지 않는다.
+        assert sha not in [c["sha"] for c in rec.get("commits", [])]
+
+    def test_commits_before_session_start_are_not_its(self, repo, tmp_path_factory,
+                                                      tmp_path):
+        """들여다보기만 한 세션에 **남이 전에 만든 커밋**이 붙으면 안 된다.
+
+        dc46c3a1 · b91b99a6 은 fr022 worktree 를 `git status` 로만 봤다. 그
+        브랜치를 처음 적는 줄이면 `base_branch` 기준으로 브랜치 전체가 붙는다.
+        """
+        wt = self._wt(repo, tmp_path_factory)
+        self._commit_in(wt, "feat: 남의 커밋")
+        troot = tmp_path / "projects"
+        self._say(troot, "cd %s && git status" % wt, start="2100-01-01T00:00:00.000Z")
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        [w] = rec["worktrees"]
+        assert w["commits"] == []
+        assert w["commits_since"]["session_start"].startswith("2100-01-01")
+
+    def test_merges_before_session_start_are_not_its(self, repo, tmp_path_factory,
+                                                     tmp_path):
+        """머지 칸도 커밋 칸과 **같은 구간**이다 — 세션 전에 난 머지는 안 붙는다."""
+        wt = self._wt(repo, tmp_path_factory)
+        _git(wt, "checkout", "-q", "-b", "side")
+        self._commit_in(wt, "feat: 곁가지")
+        _git(wt, "checkout", "-q", "feat-x")
+        _git(wt, "merge", "-q", "--no-ff", "side", "-m", "Merge side")
+        troot = tmp_path / "projects"
+        self._say(troot, "cd %s" % wt, start="2100-01-01T00:00:00.000Z")
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        [w] = rec["worktrees"]
+        assert w["merges"] == []
+
+    def test_commits_after_session_start_are_its(self, repo, tmp_path_factory,
+                                                 tmp_path):
+        wt = self._wt(repo, tmp_path_factory)
+        sha = self._commit_in(wt, "feat: 내 커밋")
+        troot = tmp_path / "projects"
+        self._say(troot, "cd %s" % wt, start="2000-01-01T00:00:00.000Z")
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        [w] = rec["worktrees"]
+        assert [c["sha"] for c in w["commits"]] == [sha]
+        assert "session_start" in w["commits_since"]
+
+    def test_unknown_session_start_does_not_filter(self, repo, tmp_path_factory,
+                                                   tmp_path):
+        """시작을 모르면 거르지 않고, 거르지 않았다는 것이 칸의 부재로 드러난다."""
+        wt = self._wt(repo, tmp_path_factory)
+        sha = self._commit_in(wt, "feat: 커밋")
+        troot = tmp_path / "projects"
+        self._say(troot, "cd %s" % wt)
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        [w] = rec["worktrees"]
+        assert [c["sha"] for c in w["commits"]] == [sha]
+        assert "session_start" not in w["commits_since"]
+
+    def test_untouched_worktree_is_not_recorded(self, repo, tmp_path_factory,
+                                                tmp_path):
+        """동시에 도는 다른 세션의 worktree 를 이 세션에 붙이면 안 된다.
+
+        main 경로는 늘 말해진다 — main 자신은 worktree 칸에 들어가면 안 된다.
+        """
+        self._wt(repo, tmp_path_factory)
+        troot = tmp_path / "projects"
+        self._say(troot, "cd %s && git status" % repo)
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        assert rec["worktrees"] == []
+
+    def test_path_prefix_is_not_a_match(self, repo, tmp_path_factory, tmp_path):
+        """main 경로는 `…-fr024` 의 접두어다. 경계를 안 보면 전부 매치된다."""
+        wt = self._wt(repo, tmp_path_factory)
+        troot = tmp_path / "projects"
+        self._say(troot, "cd %s-2 && ls" % wt)
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        assert rec["worktrees"] == []
+
+    def test_relative_path_is_a_match(self, repo, tmp_path_factory, tmp_path):
+        """`git worktree add ../x` 처럼 상대 경로로만 말한 세션도 만진 것이다."""
+        wt = self._wt(repo, tmp_path_factory)
+        rel = os.path.relpath(str(wt), str(repo))
+        troot = tmp_path / "projects"
+        self._say(troot, "cd %s && ls" % rel)
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        assert [w["branch"] for w in rec["worktrees"]] == ["feat-x"]
+
+    def test_subagent_transcript_counts(self, repo, tmp_path_factory, tmp_path):
+        """impl-writer 같은 서브에이전트가 worktree 에서 일한다."""
+        wt = self._wt(repo, tmp_path_factory)
+        troot = tmp_path / "projects"
+        self._say(troot, "git status")
+        sub = troot / "slug" / "sid-1" / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-a.jsonl").write_text(
+            json.dumps({"input": {"file_path": str(wt / "src" / "a.ts")}}) + "\n",
+            encoding="utf-8")
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        assert [w["branch"] for w in rec["worktrees"]] == ["feat-x"]
+
+    def test_no_transcript_omits_worktrees_key(self, repo, tmp_path_factory):
+        """못 읽었으면 `[]` 이 아니라 키가 없다 — `[]` 은 "안 만졌다" 는 주장이다."""
+        self._wt(repo, tmp_path_factory)
+        rec = sl.collect(repo, HOOK_IN, transcript_root=repo / "없는곳")
+        assert "worktrees" not in rec
+
+    def test_oversized_transcript_says_so(self, repo, tmp_path_factory, tmp_path,
+                                          monkeypatch):
+        self._wt(repo, tmp_path_factory)
+        troot = tmp_path / "projects"
+        self._say(troot, "git status")
+        monkeypatch.setattr(sl, "TRANSCRIPT_MAX_BYTES", 1)
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        assert "worktrees" not in rec
+        assert rec["worktrees_skipped"] == "transcript_too_large"
+
+    def test_worktree_prev_entry_chain(self, repo, tmp_path_factory, tmp_path):
+        """worktree 브랜치도 **자기 직전 줄** 이후만 센다."""
+        wt = self._wt(repo, tmp_path_factory)
+        first = self._commit_in(wt, "feat: 첫째")
+        head = _git(wt, "rev-parse", "HEAD").stdout.strip()
+        sl.append(repo, {"ts": "2026-09-10T10:00:00+0900", "branch": "main-x",
+                         "worktrees": [{"branch": "feat-x", "head": head}]})
+        second = self._commit_in(wt, "feat: 둘째")
+        troot = tmp_path / "projects"
+        self._say(troot, "cd %s" % wt)
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot)
+        [w] = rec["worktrees"]
+        assert w["commits_since"] == {"kind": "prev_entry", "head": head}
+        assert [c["sha"] for c in w["commits"]] == [second]
+        assert first not in [c["sha"] for c in w["commits"]]
+
+    def test_worktree_run_is_judged_on_its_own_runs(self, repo, tmp_path_factory,
+                                                    tmp_path):
+        """main 의 `_workspace/runs` 가 아니라 worktree 의 것을 본다."""
+        wt = self._wt(repo, tmp_path_factory)
+        d = wt / "_workspace" / "runs" / "20260919-2342-9258"
+        d.mkdir(parents=True)
+        (d / "state.json").write_text(json.dumps({
+            "run_id": "20260919-2342-9258", "run_status": "done",
+            "created_at": "2026-09-19T23:42:00+0900",
+            "updated_at": "2026-09-20T00:30:00+0900"}), encoding="utf-8")
+        troot = tmp_path / "projects"
+        self._say(troot, "cd %s" % wt)
+        rec = sl.collect(repo, HOOK_IN, transcript_root=troot,
+                         now=st._parse_stamp("2026-09-20T00:36:17+0900"))
+        [w] = rec["worktrees"]
+        assert w["run"]["run_id"] == "20260919-2342-9258"
+        assert w["run"]["basis"] == "touched"
+        assert "run" not in rec
+
+    def test_merge_is_not_counted_as_commits(self, repo):
+        """머지한 세션은 머지를 했지 브랜치 커밋을 한 게 아니다.
+
+        dc46c3a1 이 PR #31 을 머지·풀하자 FR-025 커밋 둘이 이 세션의
+        `commits` 로 들어왔다. worktree 쪽에서도 세면 같은 sha 가 두 번 잡힌다.
+        """
+        base = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        before = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        sl.append(repo, {"ts": "2026-09-10T10:00:00+0900", "branch": base,
+                         "head": before})
+        _git(repo, "checkout", "-q", "-b", "feat-m")
+        (repo / "src" / "lib" / "m.ts").write_text("m\n", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "feat: 브랜치 커밋")
+        _git(repo, "checkout", "-q", base)
+        _git(repo, "merge", "-q", "--no-ff", "feat-m", "-m", "Merge pull request #31")
+        merge_sha = _git(repo, "rev-parse", "--short", "HEAD").stdout.strip()
+        rec = sl.collect(repo, HOOK_IN)
+        assert rec["commits"] == []
+        assert rec["merges"] == [{"sha": merge_sha,
+                                  "subject": "Merge pull request #31"}]
+
+    def test_norm_matches_windows_and_msys_forms(self):
+        """트랜스크립트에는 JSON 이스케이프된 `C:\\\\Users…` 와 `/c/Users/…` 가 섞인다."""
+        a = sl._norm_path_text('"C:\\\\Users\\\\hyu\\\\project\\\\x"')
+        b = sl._norm_path_text("cd /c/Users/hyu/PROJECT/x")
+        assert "/c/users/hyu/project/x" in a
+        assert "/c/users/hyu/project/x" in b
 
     def test_pending_and_from_hook_are_exclusive(self, repo):
         with pytest.raises(SystemExit):

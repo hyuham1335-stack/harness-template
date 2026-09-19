@@ -24,7 +24,9 @@
 import argparse
 import json
 import os
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -134,6 +136,7 @@ def _last_entry_head(root, branch):
 
     이것이 있어야 "이 세션의 커밋"을 정직하게 셀 수 있다. 세션 **시작**을
     아무도 기록하지 않으므로, 세션의 경계는 **직전 기록 이후**로 정의한다.
+    worktree 브랜치는 `worktrees[]` 칸에 남으므로 거기도 본다.
     """
     path = root / LEDGER_REL
     if not path.exists():
@@ -152,31 +155,56 @@ def _last_entry_head(root, branch):
             continue
         if rec.get("branch") == branch and rec.get("head"):
             return rec["head"]
+        for wt in rec.get("worktrees") or []:
+            if isinstance(wt, dict) and wt.get("branch") == branch and wt.get("head"):
+                return wt["head"]
     return None
 
 
-def _log(root, *args):
-    r = harness._git(root, "log", "--format=%h\t%s", "--no-merges", *args)
+def _log(root, *args, merges=False, after=None):
+    """`--first-parent` 로 센다 — 머지로 들어온 브랜치 커밋은 **머지한 세션의
+    커밋이 아니다.** 그 커밋은 만든 세션의 `worktrees[]` 칸에 이미 있고, 여기서
+    또 세면 같은 sha 가 두 세션에 붙는다. 머지 자체는 `merges=True` 로 따로 읽는다.
+
+    `after`(epoch 초)보다 이른 커밋은 뺀다. git 의 `--since` 를 쓰지 않는 것은
+    같은 명령이 실행마다 다른 결과를 냈기 때문이다 (2026-09-20 실측).
+    """
+    r = harness._git(root, "log", "--format=%h\t%ct\t%s", "--first-parent",
+                     "--merges" if merges else "--no-merges", *args)
     if r is None or r.returncode != 0:
         return None
     rows = []
     for line in r.stdout.splitlines():
-        sha, _, subject = line.partition("\t")
-        if sha:
-            rows.append({"sha": sha, "subject": subject})
+        sha, _, rest = line.partition("\t")
+        ct, _, subject = rest.partition("\t")
+        if not sha:
+            continue
+        if after is not None and ct.isdigit() and int(ct) < after:
+            continue
+        rows.append({"sha": sha, "subject": subject})
     return rows
 
 
-def _commits(root, branch):
+def _after(since):
+    start = st._parse_stamp(since.get("session_start"))
+    return int(start.timestamp()) if start else None
+
+
+def _commits(root, branch, ledger_root=None, after=None):
     """직전 기록 이후의 커밋. 없으면 base 브랜치 이후, 그것도 안 되면 최근 것.
 
     **어느 기준으로 셌는지를 함께 적는다** — 기준을 안 적으면 두 세션의 숫자가
-    같은 뜻인 줄 알고 비교하게 된다.
+    같은 뜻인 줄 알고 비교하게 된다. `ledger_root` 는 원장이 있는 곳이다 —
+    worktree 를 셀 때도 원장은 main 체크아웃 하나다.
+
+    `after`(세션 시작)가 있으면 그 뒤 커밋만 센다 — 들여다보기만 한 worktree
+    에 남이 전에 만든 커밋이 붙지 않게. 거른 사실은 `session_start` 칸이 말한다.
     """
     rows = since = None
-    head = _last_entry_head(root, branch)
+    cut = int(after.timestamp()) if after is not None else None
+    head = _last_entry_head(ledger_root or root, branch)
     if head:
-        rows = _log(root, "%s..HEAD" % head)
+        rows = _log(root, "%s..HEAD" % head, after=cut)
         if rows is not None:
             since = {"kind": "prev_entry", "head": head}
     if rows is None:
@@ -184,20 +212,174 @@ def _commits(root, branch):
         # **base 브랜치 위에 있으면 그 기준은 무의미하다** — `main..HEAD` 가
         # 정당하게 비므로, 커밋이 있는데도 없는 것처럼 적히게 된다.
         if base and base != branch:
-            rows = _log(root, "%s..HEAD" % base)
+            rows = _log(root, "%s..HEAD" % base, after=cut)
             if rows is not None:
                 since = {"kind": "base_branch", "ref": base}
     if rows is None:
         # base 브랜치가 없는 리포도 있다. 그때는 **최근 것**이라고 적는다 —
         # 이 세션의 것이라고 적으면 거짓이 된다.
-        rows = _log(root, "--max-count=%d" % COMMIT_CAP, "HEAD")
+        rows = _log(root, "--max-count=%d" % COMMIT_CAP, "HEAD", after=cut)
         if rows is None:
             return None, None
         since = {"kind": "head_recent", "max_count": COMMIT_CAP}
+    if cut is not None:
+        since["session_start"] = st.stamp(after.astimezone(st.TZ))
     if len(rows) > COMMIT_CAP:
         since["truncated_from"] = len(rows)
         rows = rows[:COMMIT_CAP]
     return rows, since
+
+
+def _merges(root, since):
+    """`_commits` 와 **같은 범위**의 머지 커밋. 범위가 다르면 두 칸이 서로 다른
+    구간을 말하게 된다."""
+    kind = since.get("kind")
+    if kind == "prev_entry":
+        args = ("%s..HEAD" % since["head"],)
+    elif kind == "base_branch":
+        args = ("%s..HEAD" % since["ref"],)
+    else:
+        args = ("--max-count=%d" % COMMIT_CAP, "HEAD")
+    rows = _log(root, *args, merges=True, after=_after(since))
+    return None if rows is None else rows[:COMMIT_CAP]
+
+
+def _git_facts(root, ledger_root, after=None):
+    """한 체크아웃의 HEAD · 브랜치 · 커밋 · 머지. main 과 worktree 가 같은 함수를 쓴다."""
+    out = {}
+    base = st._vcs_baseline(root)
+    for key in ("head", "branch", "dirty"):
+        if base.get(key) is not None:
+            out[key] = base[key]
+    if out.get("branch"):
+        commits, since = _commits(root, out["branch"], ledger_root, after)
+        if commits is not None:
+            out["commits"] = commits
+            out["commits_since"] = since
+            merges = _merges(root, since)
+            if merges is not None:
+                out["merges"] = merges
+    return out
+
+
+# ------------------------------------------------------------------ worktree
+
+# 경로 뒤에 이 글자가 오면 **이름이 이어지는 것**이다. main 경로는
+# `…-fr024` 의 접두어라서, 경계를 안 보면 모든 worktree 가 main 으로 매치된다.
+_NAME_CHAR = re.compile(r"[a-z0-9_.\-]")
+_DRIVE = re.compile(r"\b([a-z]):/")
+
+
+def _norm_path_text(text):
+    """경로 비교용 정규화. 트랜스크립트에는 JSON 이스케이프된 `C:\\\\Users\\\\…` 와
+    Git Bash 의 `/c/Users/…` 가 섞이고, 대소문자도 섞인다(`project`·`PROJECT`)."""
+    t = text.lower().replace("\\\\", "/").replace("\\", "/")
+    return _DRIVE.sub(r"/\1/", t)
+
+
+def _mentions(text, needle):
+    start = 0
+    while True:
+        i = text.find(needle, start)
+        if i < 0:
+            return False
+        j = i + len(needle)
+        if j >= len(text) or not _NAME_CHAR.match(text[j]):
+            return True
+        start = i + 1
+
+
+def _worktrees(root):
+    """`root` 자신을 뺀 worktree 목록. git 이 못 답하면 `None`."""
+    r = harness._git(root, "worktree", "list", "--porcelain")
+    if r is None or r.returncode != 0:
+        return None
+    me = _norm_path_text(str(Path(root).resolve()))
+    out, cur = [], {}
+    for line in r.stdout.splitlines() + [""]:
+        if not line.strip():
+            path = cur.get("path")
+            if path and _norm_path_text(path) != me and Path(path).is_dir():
+                out.append(cur)
+            cur = {}
+            continue
+        key, _, val = line.partition(" ")
+        if key == "worktree":
+            cur["path"] = val
+    return out
+
+
+def _session_files(hook_input, transcript_root):
+    """세션 트랜스크립트와 그 서브에이전트 트랜스크립트. 못 찾으면 `None`."""
+    sid = (hook_input or {}).get("session_id")
+    if not sid:
+        return None
+    root = Path(_transcript_root(hook_input, transcript_root))
+    try:
+        found = sorted(root.glob("*/%s.jsonl" % sid))
+        if not found:
+            return None
+        return [found[0]] + sorted(found[0].parent.glob("%s/subagents/*.jsonl" % sid))
+    except OSError:
+        return None
+
+
+def _session_start(path):
+    """트랜스크립트에서 처음 나오는 `timestamp`. 첫 몇 줄은 시각이 없는 메타 줄이다."""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for n, line in enumerate(fh):
+                if n >= 200:
+                    return None
+                try:
+                    ts = json.loads(line).get("timestamp")
+                except (ValueError, AttributeError):
+                    continue
+                if isinstance(ts, str) and ts:
+                    try:
+                        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    except ValueError:
+                        return None
+    except OSError:
+        return None
+    return None
+
+
+def _touched_worktrees(root, hook_input, transcript_root):
+    """이 세션이 **경로를 말한** worktree. `(목록, 건너뛴 이유, 세션 시작)`.
+
+    세션 `cwd` 는 끝까지 main 이고 worktree 작업은 Bash 의 `cd <wt> && …`
+    로만 일어난다 — 훅 입력 `cwd` 로는 못 찾는다. 동시에 도는 다른 세션의
+    worktree 를 붙이지 않으려면 **이 세션이 그 경로를 말했는가**를 봐야 한다.
+    못 읽었으면 `(None, …)` 이다 — `[]` 은 "안 만졌다" 는 주장이다.
+    """
+    wts = _worktrees(root)
+    if wts is None:
+        return None, None, None
+    if not wts:
+        return [], None, None
+    files = _session_files(hook_input, transcript_root)
+    if not files:
+        return None, None, None
+    try:
+        if any(f.stat().st_size > TRANSCRIPT_MAX_BYTES for f in files):
+            return None, "transcript_too_large", None
+        text = "\n".join(_norm_path_text(f.read_text(encoding="utf-8", errors="replace"))
+                         for f in files)
+    except OSError:
+        return None, None, None
+    out = []
+    for wt in wts:
+        needles = [_norm_path_text(wt["path"])]
+        try:
+            rel = _norm_path_text(os.path.relpath(wt["path"], str(root)))
+        except ValueError:            # 다른 드라이브
+            rel = ""
+        if "/" in rel:                # 한 토막짜리 상대 경로는 아무 데서나 매치된다
+            needles.append(rel)
+        if any(_mentions(text, n) for n in needles):
+            out.append(wt)
+    return out, None, _session_start(files[0])
 
 
 # --------------------------------------------------------------- 런 · 테스트
@@ -294,6 +476,13 @@ def _tests(root, run_state):
 
 # --------------------------------------------------------------- 트랜스크립트
 
+def _transcript_root(hook_input, transcript_root):
+    if transcript_root is not None:
+        return transcript_root
+    tp = (hook_input or {}).get("transcript_path")
+    return Path(tp).parent.parent if tp else runtime.TRANSCRIPT_ROOT
+
+
 def _session_metrics(hook_input, transcript_root):
     """세션이 접두부 **밖에서** 끌어온 양. 실행기의 집계를 그대로 쓴다.
 
@@ -303,11 +492,7 @@ def _session_metrics(hook_input, transcript_root):
     sid = (hook_input or {}).get("session_id")
     if not sid:
         return None
-    root = transcript_root
-    if root is None:
-        tp = (hook_input or {}).get("transcript_path")
-        root = Path(tp).parent.parent if tp else runtime.TRANSCRIPT_ROOT
-    root = Path(root)
+    root = Path(_transcript_root(hook_input, transcript_root))
     try:
         found = sorted(root.glob("*/%s.jsonl" % sid))
     except OSError:
@@ -334,16 +519,7 @@ def collect(root, hook_input, *, transcript_root=None, now=None):
         if (hook_input or {}).get(key):
             rec[key] = hook_input[key]
 
-    base = st._vcs_baseline(root)
-    for key in ("head", "branch", "dirty"):
-        if base.get(key) is not None:
-            rec[key] = base[key]
-
-    if rec.get("branch"):
-        commits, since = _commits(root, rec["branch"])
-        if commits is not None:
-            rec["commits"] = commits
-            rec["commits_since"] = since
+    rec.update(_git_facts(root, root))
 
     uncommitted = _numstat(root, "HEAD") or {}
     untracked = _untracked(root)
@@ -364,6 +540,24 @@ def collect(root, hook_input, *, transcript_root=None, now=None):
     tests = _tests(root, None if touched is False else run_state)
     if tests:
         rec["tests"] = tests
+
+    # worktree 마다 같은 사실을 따로 적는다. 원장은 여기(main) 하나다.
+    wts, skipped, started = _touched_worktrees(root, hook_input, transcript_root)
+    if wts is not None:
+        cells = []
+        for wt in wts:
+            wt_root = Path(wt["path"])
+            cell = {"path": wt["path"]}
+            cell.update(_git_facts(wt_root, root, started))
+            wt_run = _latest_run(wt_root)
+            if wt_run:
+                summary = _run_summary(wt_run, _touched(root, wt_run, rec["ts"]))
+                if summary:
+                    cell["run"] = summary
+            cells.append(cell)
+        rec["worktrees"] = cells
+    elif skipped:
+        rec["worktrees_skipped"] = skipped
 
     metrics = _session_metrics(hook_input, transcript_root)
     if metrics:
