@@ -2682,6 +2682,51 @@ ADR 을 인용한 새 ADR 로 한다.
 
 ---
 
+### ADR-H057: 화면은 `ui` 역할이 만든다 — 계약 `## 화면` 이 있을 때만 부른다
+
+**날짜**: 2026-09-19 · **상태**: 제안됨 · **구현 상태**: 구현됨 (2026-09-19 — `config.roles[].when_contract_section` ·
+`cli._dispatched_roles` · `phases.03-implement.dispatched_roles` · `_dispatch_problem` · `attribution.resolve_ambiguous(roles=)` ·
+`trace_contract` 의 `missing_screen` · `.claude/agents/ui-writer.md`)
+
+**맥락**: banana 15런 회고에서 게이트 밖으로 샌 결함 셋 중 하나가 **UI 표시**였다(`737bb72`). 프론트 런(FR-010/011)은
+05 지적이 0건이었고, UI 수정 7건은 파이프라인을 우회해 사람이 직접 고쳤다. 03 의 역할은 impl·test 둘뿐이라
+화면은 impl-writer 가 서버 로직과 같이 썼다 — `docs/UI_GUIDE.md` 를 읽으라는 지시도, 화면을 계약에 적는 자리도 없었다.
+
+**결정**:
+1. **`ui` 역할을 둔다.** `owns: [src/components/**, src/app/**/*.tsx]`, `excludes: [src/app/api/**, **/*.test.tsx]`.
+   impl 은 `src/components/**` 를 내려놓고 `src/app/**/*.tsx` 를 제외한다. 에이전트 정의는 impl-writer 골격에
+   「읽을 곳」 `docs/UI_GUIDE.md` 와 제출 `ui_guide_checked` 를 더한다.
+2. **계약 `## 화면`** (`contract.sections.screens`) — 유닛과 같은 `컨테이너 · 컴포넌트` 형식. `symbols()` 에 들어가
+   `out_of_contract` 에서 빠지고, 프로파일 계수에 든다. **템플릿 본문은 "없음" + 주석**이다 — 파싱되는 예시는 첫 런에
+   베껴져 백엔드 런에 ui 가 불린다(ADR-H058 결정 9 의 여정과 같은 이유).
+3. **디스패치는 결정론이다.** `when_contract_section` 이 있는 역할은 계약의 그 절에 항목이 있을 때만 부른다.
+   03 패킷을 내는 두 자리(`next`·전이 — G 의 `_contract_precheck_03` 을 지나는 곳)가 계약 파서로 목록을 정해
+   `phases.03-implement.dispatched_roles` 에 저장하고, 지시 계수·패킷·04 귀속이 그 값을 쓴다. `not_dispatched`
+   같은 자진신고 상태는 두지 않는다.
+4. **claims 완전성.** `record --phase 03` 은 필터를 다시 계산해 저장값과 다르면(패킷 뒤 계약 변경) exit 8 +
+   `next`, claims 의 역할 집합이 목록과 다르면 exit 8 이다. 저장값이 없는 옛 런은 다시 계산한 값을 쓰고
+   `dispatch_record: recomputed_at_record` 를 남긴다.
+5. **귀속 사다리는 디스패치된 역할로만.** 단언 실패(`kind: test`)는 조건부 역할을 건너뛴다(테스트를 소유하지
+   않는다). 기록이 없으면 조건부 역할을 뺀다. ui 가 디스패치된 런의 사다리는 impl → test → ui → contract 라
+   `loop.max: 3` 안에서 contract 에 못 닿을 수 있다 — 예산 우선 종료를 이미 허용하므로(M33) 값을 올리지 않는다.
+6. **contract-trace `missing_screen`**(critical, 화면 역할) — `missing_impl` 본체를 재사용한다. 화면의 테스트는
+   묻지 않고 `untested_screen` 을 `skipped` 에 남긴다 — 통과가 아니라 미수행이다.
+7. doctor 는 `when_contract_section` 이 `contract.sections` 의 키가 아니면 거부한다 — 그 역할이 조용히 영영 안 불린다.
+
+**UI 단위테스트를 두지 않는 이유**: 이 스택의 테스트 환경은 DOM 이 없고(환경 `node`), UI 파일 30개에 테스트가
+0개였다. DOM 환경 도입은 새 의존성이라 프로젝트 ADR 의 몫이고, 화면 동작은 e2e 여정(ADR-H058 결정 9~12)이 더
+싼 관측기다. **재검토 조건**: 프로젝트가 e2e 러너를 도입하고(어댑터 `e2e.cmd`) 여정이 화면을 밟기 시작하면,
+`untested_screen` 을 여정 커버리지로 대체할지 본다.
+
+**트레이드오프**: `src/app/api/**/*.tsx` 는 impl·ui 양쪽에서 제외돼 무주다 — 실물에 그런 파일이 생기면 doctor 의
+무주 WARN 이 드러낸다. 역할이 셋이 되면 03 지시가 하나 늘고, 계약에 화면을 적을지는 메인의 판단으로 남는다
+(적지 않으면 ui 는 안 불리고 impl 은 화면 파일을 소유하지 않아 `clean_ownership` 이 orphan 으로 거부한다 — 적지 않고
+화면을 고치는 경로는 없다).
+
+관련: [[ADR-H044]](역할 0명 레인) · [[ADR-H055]](`rules_read`) · [[ADR-H058]](여정·03 계약 훅)
+
+---
+
 ### ADR-H058: 계약·인가 테스트는 존재했지만 요구되지 않았다 — contract-trace 가 센다
 
 **날짜**: 2026-09-19 · **상태**: 제안됨 · **구현 상태**: 구현됨 (2026-09-19 — `trace_contract` 의

@@ -70,14 +70,15 @@
             "data_shapes": {"type": "string"},
             "schema": {"type": "string"},
             "boundaries": {"type": "string"},
-            "journeys": {"type": "string"}
+            "journeys": {"type": "string"},
+            "screens": {"type": "string"}
           }
         },
         "required": {
           "description": "계약 문서에 반드시 있어야 하는 절의 키.",
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string", "enum": ["units", "entrypoints", "errors", "data_shapes", "schema", "boundaries", "journeys"]}
+          "items": {"type": "string", "enum": ["units", "entrypoints", "errors", "data_shapes", "schema", "boundaries", "journeys", "screens"]}
         }
       }
     },
@@ -310,7 +311,11 @@
           "pattern": "^[a-z][a-z0-9]{0,7}$"
         },
         "owns": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-        "excludes": {"type": "array", "items": {"type": "string"}}
+        "excludes": {"type": "array", "items": {"type": "string"}},
+        "when_contract_section": {
+          "description": "이 역할은 계약의 이 절(contract.sections 의 키)에 항목이 있는 런에서만 03 에 디스패치된다. 없으면 늘 디스패치된다. 03 이 계약 파서로 정하고 제출이 다시 계산해 대조한다 (ADR-H057).",
+          "type": "string"
+        }
       }
     }
   }

@@ -4,11 +4,12 @@
 **05 에서 두 번째로 도는 검사이고 무료다.** 리뷰어를 부르기 전에 여기서 잡으면
 뒤에서 되돌릴 일이 없다. 모델을 한 번도 부르지 않는다.
 
-검사는 아홉이다:
+검사는 열이다:
 
 | 코드 | 무엇 | 심각도 |
 |---|---|---|
 | `missing_impl`            | 계약의 유닛이 소스에 있는가        | critical |
+| `missing_screen`          | 계약의 화면이 소스에 있는가 (ui 역할) | critical |
 | `missing_error_symbol`    | 오류 어휘 상수가 실재하는가        | critical |
 | `missing_entrypoint`      | 진입점이 실재하는가                | critical |
 | `untested_contract_item`  | 그 유닛을 참조하는 테스트가 있는가 | major (첫 3런 warn_only) |
@@ -30,6 +31,7 @@
 
 **스킵을 통과로 적지 않는다.** `entrypoint_resolver` 가 없으면 진입점을 푸는 검사만 빠지고
 그 사실과 사유가 `skipped`·`skip_reasons` 에 남는다. `no_contract` 런은 `skipped_no_contract` 다.
+화면의 테스트는 묻지 않는다 — 계약에 화면이 있으면 `untested_screen` 이 `skipped` 에 남는다 (ADR-H057).
 """
 
 import posixpath
@@ -45,7 +47,7 @@ import harness  # noqa: E402
 import contract as contract_mod  # noqa: E402
 import ledger  # noqa: E402
 
-CHECKS = ("missing_impl", "missing_error_symbol", "missing_entrypoint",
+CHECKS = ("missing_impl", "missing_screen", "missing_error_symbol", "missing_entrypoint",
           "untested_contract_item", "untested_entrypoint", "untested_error_symbol",
           "authz_untested", "missing_journey_spec", "out_of_contract")
 
@@ -75,6 +77,7 @@ DEFAULT_BASELINE_RUNS = 3
 # 아직 안 지킨 것이고, 계약 자체가 틀렸다는 판정은 리뷰어·사람의 몫이다.
 CATEGORY = {
     "missing_impl": "BOUNDARY_VIOLATION",
+    "missing_screen": "BOUNDARY_VIOLATION",
     "missing_error_symbol": "BOUNDARY_VIOLATION",
     "missing_entrypoint": "BOUNDARY_VIOLATION",
     "untested_contract_item": "TEST_MISSING_FAILURE_PATH",
@@ -98,7 +101,7 @@ _DEFAULT_PUBLIC = (r"^\s*export\s+(?:async\s+)?(?:function|const|class|type|"
 
 def run(root, config, adapter, contract_path, no_contract=False, changed=None,
         baseline_runs=None):
-    """아홉 검사를 돌린다. 반환은 그대로 `05_trace.json` 이 된다."""
+    """열 검사를 돌린다. 반환은 그대로 `05_trace.json` 이 된다."""
     root = Path(root)
     if no_contract or not contract_path:
         # §E3. 계약이 없는 런은 정상 경로다. 다만 **통과가 아니다** —
@@ -126,6 +129,14 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
 
     checks_run.append("missing_impl")
     findings += _missing_impl(root, parsed, files, primary)
+
+    checks_run.append("missing_screen")
+    findings += _missing_impl(root, parsed, files, _screen_role(config),
+                              key="screens", code="missing_screen", noun="화면")
+    if parsed.get("screens"):
+        skipped.append("untested_screen")
+        skip_reasons["untested_screen"] = (
+            "화면의 단위테스트는 두지 않는다 — 통과가 아니라 미수행이다 (ADR-H057)")
 
     checks_run.append("missing_error_symbol")
     findings += _missing_error_symbol(root, parsed, config, files, primary)
@@ -170,6 +181,7 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
         # 04 의 `contract.scope.repo_files` 와 같아야 한다 (M50).
         "repo_files": len(files),
         "contract": {"units": len(parsed.get("units") or []),
+                     "screens": len(parsed.get("screens") or []),
                      "entrypoints": len(parsed.get("entrypoints") or []),
                      "errors": len(parsed.get("errors") or []),
                      "journeys": len(parsed.get("journeys") or []),
@@ -271,6 +283,14 @@ def _test_role(config):
     return config.get("primary_role") or "impl"
 
 
+def _screen_role(config):
+    """화면을 소유하는 역할 — `when_contract_section` 이 `screens` 인 역할. 없으면 primary."""
+    for role in config.get("roles") or []:
+        if role.get("when_contract_section") == "screens":
+            return role.get("id")
+    return config.get("primary_role") or "impl"
+
+
 def _finding(code, severity, role, title, **kw):
     """`rule_slug` 를 여기서 단다 — **승격 집계의 축**이다 (ADR-H034).
 
@@ -291,21 +311,24 @@ def _finding(code, severity, role, title, **kw):
 
 # ------------------------------------------------------------- missing_impl
 
-def _missing_impl(root, parsed, files, primary):
+def _missing_impl(root, parsed, files, primary, key="units", code="missing_impl",
+                  noun="유닛"):
     """**컨테이너명 + 심볼명 쌍**으로 찾는다.
 
     심볼명만 보면 흔한 이름이 다른 파일에 있어 거짓 통과한다. 컨테이너를 리포의
     파일과 맞추지 못하면 통과가 아니라 `container_resolved: false` 로 낙하한다 —
     "못 찾았다"가 "없다"보다 약한 판정이지만 **침묵보다는 강하다.**
+
+    계약 `## 화면`(`missing_screen`)도 같은 형식이라 같은 본체를 쓴다 (ADR-H057).
     """
     out = []
-    for unit in parsed.get("units") or []:
+    for unit in parsed.get(key) or []:
         symbol = unit.get("symbol")
         src = contract_mod._source_for_container(unit.get("container"), files)
         if src is None:
             out.append(_finding(
-                "missing_impl", "critical", primary,
-                "계약의 유닛 %s 를 담을 파일을 찾지 못했다" % unit.get("raw"),
+                code, "critical", primary,
+                "계약의 %s %s 를 담을 파일을 찾지 못했다" % (noun, unit.get("raw")),
                 container=unit.get("container"), symbol=symbol,
                 container_resolved=False,
                 evidence="컨테이너 %r 이 리포의 어느 파일과도 맞지 않는다"
@@ -313,8 +336,8 @@ def _missing_impl(root, parsed, files, primary):
             continue
         if not _has_symbol(root / src, symbol):
             out.append(_finding(
-                "missing_impl", "critical", primary,
-                "계약의 유닛 %s 가 소스에 없다" % unit.get("raw"),
+                code, "critical", primary,
+                "계약의 %s %s 가 소스에 없다" % (noun, unit.get("raw")),
                 container=unit.get("container"), symbol=symbol, path=src,
                 container_resolved=True,
                 evidence="%s 에 %r 이 없다" % (src, symbol)))

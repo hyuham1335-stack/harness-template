@@ -1033,7 +1033,7 @@ def phases(repo):
         (d / ("%s.md" % pid)).write_text(
             (ROOT / "harness" / "phases" / ("%s.md" % pid)).read_text(encoding="utf-8"),
             encoding="utf-8")
-    for role in ("impl-writer", "test-writer"):
+    for role in ("impl-writer", "test-writer", "ui-writer"):
         agent = repo / ".claude" / "agents" / ("%s.md" % role)
         agent.parent.mkdir(parents=True, exist_ok=True)
         agent.write_text("# %s\n" % role, encoding="utf-8")
@@ -2618,7 +2618,7 @@ class TestRecord03RulesRead:
         p03 = (ROOT / "harness" / "phases" / "03-implement.md").read_text(encoding="utf-8")
         assert "rules_read_sha" in p03 and "rules_read" in p03
         assert "증명이 아니" in p03, "한계를 적는다 (결정 2)"
-        for name in ("impl-writer", "test-writer"):
+        for name in ("impl-writer", "test-writer", "ui-writer"):
             text = (ROOT / ".claude" / "agents" / (name + ".md")).read_text(encoding="utf-8")
             assert "rules_read" in text and "sha256" in text, name
             assert "증명이 아니" in text, name
@@ -2791,13 +2791,18 @@ class TestTestsRequiredAt03:
 # F. clean_ownership — 소유 경계 · orphan
 # ---------------------------------------------------------------------------
 
-def _claims(impl=None, test=None, rules_read=None):
-    """`rules_read` 는 [{path, sha256}] — 없으면 안 싣는다 (ADR-H055 이전 모양)."""
+def _claims(impl=None, test=None, rules_read=None, ui=None):
+    """`rules_read` 는 [{path, sha256}] — 없으면 안 싣는다 (ADR-H055 이전 모양).
+    `ui` 는 주면(빈 목록 포함) ui 역할을 싣는다 (ADR-H057)."""
     roles = [
         {"role": "impl", "agent": "impl-writer", "status": "ok",
          "claimed_files": impl or [], "contract_symbols_implemented": []},
         {"role": "test", "agent": "test-writer", "status": "ok",
          "claimed_files": test or [], "contract_symbols_covered": []}]
+    if ui is not None:
+        roles.append({"role": "ui", "agent": "ui-writer", "status": "ok",
+                      "claimed_files": ui, "contract_symbols_implemented": [],
+                      "ui_guide_checked": []})
     if rules_read is not None:
         for r in roles:
             r["rules_read"] = list(rules_read)
@@ -5314,10 +5319,10 @@ class TestContractTraceErrorsAndEntrypoints:
         assert [f for f in got["findings"] if f["code"] == "missing_entrypoint"] == []
         # 오류 어휘 검사는 그대로 돌아야 한다.
         assert any(f["code"] == "missing_error_symbol" for f in got["findings"])
-        # 진입점 해석에 기대는 셋만 빠지고 나머지 여섯은 돈다.
+        # 진입점 해석에 기대는 셋만 빠지고 나머지 일곱은 돈다.
         assert set(got["skipped"]) == {"missing_entrypoint", "untested_entrypoint",
                                        "authz_untested"}
-        assert len(got["checks_run"]) == 6
+        assert len(got["checks_run"]) == 7
 
 
 class TestContractTraceAdapterConventions:
@@ -13071,3 +13076,254 @@ class TestJourneyHint:
                              round_=None)
         assert env["exit"] == 3 and "docs 예측" in env["render"], env["render"]
         assert self.HINT in env["render"], env["render"]
+
+
+# ---------------------------------------------------------------------------
+# C. ui 역할 — 계약 `## 화면` 이 있을 때만 디스패치한다 (ADR-H057)
+# ---------------------------------------------------------------------------
+
+import gate as gate_mod  # noqa: E402
+
+SCREENS = """
+## 화면
+
+- `components/analyze/AnalyzeForm.tsx · AnalyzeForm`
+  - 정상: 파일을 고르면 분석 버튼이 켜진다
+"""
+
+SCREEN_CONTRACT = TESTS_REQUIRED_CONTRACT + SCREENS
+
+SCREEN_FILE = "src/components/analyze/AnalyzeForm.tsx"
+
+
+def _screen(repo, body="export function AnalyzeForm() { return null }\n"):
+    p = repo / SCREEN_FILE
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+class TestContractScreens:
+
+    def _parse(self, repo, text):
+        cfg = json.loads((repo / "harness" / "config.json").read_text(encoding="utf-8"))
+        return contract_mod.parse(text, cfg)
+
+    def test_화면은_유닛과_같은_형식이고_들여쓴_줄은_세지_않는다(self, repo):
+        got = self._parse(repo, SCREEN_CONTRACT)["screens"]
+        assert [(s["container"], s["symbol"]) for s in got] == [
+            ("components/analyze/AnalyzeForm.tsx", "AnalyzeForm")]
+
+    def test_화면_심볼은_계약이_이름_붙인_것이다(self, repo):
+        p = self._parse(repo, SCREEN_CONTRACT)
+        assert "AnalyzeForm" in contract_mod.symbols(p)
+
+    def test_템플릿의_기본_본문은_화면이_없다(self, repo):
+        """파싱되는 예시는 첫 런에 베껴져 백엔드 런에 ui 가 불린다 (G2 와 같다)."""
+        text = (repo / "harness" / "templates" / "contract.md").read_text(encoding="utf-8")
+        assert "## 화면" in text
+        p = self._parse(repo, text)
+        assert p["screens"] == [] and p["screens_dropped"] == []
+
+
+class TestUiRoleOwnership:
+
+    def test_화면은_ui_소유이고_api_는_impl_소유다(self, repo, config):
+        roles = {r["id"]: r for r in config["roles"]}
+        assert harness.owns_file(roles["ui"], "src/components/a/B.tsx")
+        assert harness.owns_file(roles["ui"], "src/app/page.tsx")
+        assert not harness.owns_file(roles["ui"], "src/app/api/x/route.ts")
+        assert not harness.owns_file(roles["ui"], "src/components/a/B.test.tsx")
+        assert harness.owns_file(roles["impl"], "src/app/api/x/route.ts")
+        assert not harness.owns_file(roles["impl"], "src/components/a/B.tsx")
+        assert not harness.owns_file(roles["impl"], "src/app/page.tsx")
+
+    def test_ui_가_claim_하면_소유_검사를_지난다(self, repo, config):
+        _screen(repo)
+        got = attr.clean_ownership(repo, config, _claims(ui=[SCREEN_FILE]))
+        assert got["ok"], got["message"]
+
+    def test_impl_이_화면을_claim_하면_위반이다(self, repo, config):
+        _screen(repo)
+        got = attr.clean_ownership(repo, config, _claims(impl=[SCREEN_FILE]))
+        assert not got["ok"]
+
+
+class TestUiDispatch:
+    """**디스패치는 결정론이다** — 계약에 화면이 있을 때만 ui 를 부른다.
+
+    자진신고(`not_dispatched`)가 아니라 계약 파서가 정한다. 03 제출은 같은
+    필터를 다시 계산해 저장값과 대조하고, claims 가 디스패치 목록과 같은지 본다.
+    """
+
+    def _enter(self, repo, request_file, monkeypatch, text=SCREEN_CONTRACT):
+        monkeypatch.setattr(adapters, "run_stage",
+                            lambda *a, **k: {"id": "compile", "state": "ran",
+                                             "exit": 0, "sec": 0.1})
+        return TestRecord03ContractUnitsZero()._enter_03(repo, request_file, text)
+
+    def _dispatched(self, repo, run_id):
+        _p, s = st.load(repo, run_id)
+        return ((s.get("phases") or {}).get("03-implement") or {}).get("dispatched_roles")
+
+    def _passing_tests(self, repo):
+        _route(repo, "analyze", "expect(body.code).toBe('MATCH_EMPTY')\n"
+                                "expect(res.status).toBe(403)\n")
+
+    def _submit(self, repo, run_id, claims, ui=None):
+        d = "src/app/api/analyze/"
+        claims.write_text(json.dumps(_claims(
+            impl=[d + "route.ts"], test=[d + "route.test.ts"], ui=ui,
+            rules_read=_rules_read(repo))), encoding="utf-8")
+        return cli.run_record(repo, "03", str(claims), run_id=run_id)
+
+    # --- 패킷 ---------------------------------------------------------------
+
+    def test_화면이_없으면_ui_를_부르지_않고_그렇게_말한다(self, repo, request_file,
+                                                        phases, monkeypatch):
+        run_id, _p, _c = self._enter(repo, request_file, monkeypatch,
+                                     TESTS_REQUIRED_CONTRACT)
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 0, env["render"]
+        assert self._dispatched(repo, run_id) == ["impl", "test"]
+        assert "미호출" in env["render"] and "`ui`" in env["render"], env["render"]
+        paths, s = st.load(repo, run_id)
+        front = cli.load_phases(repo)[0]["03-implement"]["front"]
+        keys = cli._instruction_keys(s, "03-implement",
+                                     cli.build_context(repo, paths, s), front)
+        assert keys == ["03:r0:impl", "03:r0:test"], keys
+
+    def test_화면이_있으면_ui_를_지시한다(self, repo, request_file, phases,
+                                        monkeypatch):
+        run_id, _p, _c = self._enter(repo, request_file, monkeypatch)
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 0, env["render"]
+        assert self._dispatched(repo, run_id) == ["impl", "test", "ui"]
+        assert "03:r0:ui" in env["render"], env["render"]
+        assert "미호출" not in env["render"], env["render"]
+
+    # --- 제출 ---------------------------------------------------------------
+
+    def test_디스패치된_ui_가_claims_에_없으면_exit_8(self, repo, request_file,
+                                                    phases, monkeypatch):
+        run_id, _p, claims = self._enter(repo, request_file, monkeypatch)
+        cli.run_next(repo, run_id)
+        self._passing_tests(repo)
+        env = self._submit(repo, run_id, claims)
+        assert env["exit"] == 8, env["render"]
+        assert "`ui`" in env["render"] and "claims" in env["render"], env["render"]
+        _p, s = st.load(repo, run_id)
+        assert st.phase_status(s, "03-implement") != "passed"
+
+    def test_디스패치되지_않은_ui_가_claims_에_있으면_exit_8(
+            self, repo, request_file, phases, monkeypatch):
+        run_id, _p, claims = self._enter(repo, request_file, monkeypatch,
+                                         TESTS_REQUIRED_CONTRACT)
+        cli.run_next(repo, run_id)
+        self._passing_tests(repo)
+        env = self._submit(repo, run_id, claims, ui=[])
+        assert env["exit"] == 8, env["render"]
+        assert "`ui`" in env["render"], env["render"]
+
+    def test_패킷_뒤에_계약이_바뀌면_next_를_다시_받으라고_한다(
+            self, repo, request_file, phases, monkeypatch):
+        run_id, _p, claims = self._enter(repo, request_file, monkeypatch,
+                                         TESTS_REQUIRED_CONTRACT)
+        cli.run_next(repo, run_id)
+        (repo / "_workspace" / "contract_x.md").write_text(SCREEN_CONTRACT,
+                                                          encoding="utf-8")
+        _screen(repo)
+        self._passing_tests(repo)
+        env = self._submit(repo, run_id, claims, ui=[SCREEN_FILE])
+        assert env["exit"] == 8, env["render"]
+        assert "계약이 바뀌었다" in env["render"], env["render"]
+        assert "next" in (env["next_command"] or "")
+        again = cli.run_next(repo, run_id)
+        assert again["exit"] == 0, again["render"]
+        assert self._dispatched(repo, run_id) == ["impl", "test", "ui"]
+
+    def test_ui_를_포함한_제출이_지난다(self, repo, request_file, phases,
+                                      monkeypatch):
+        run_id, _p, claims = self._enter(repo, request_file, monkeypatch)
+        cli.run_next(repo, run_id)
+        _screen(repo)
+        self._passing_tests(repo)
+        env = self._submit(repo, run_id, claims, ui=[SCREEN_FILE])
+        assert env["exit"] != 8, env["render"]
+        _p, s = st.load(repo, run_id)
+        assert st.phase_status(s, "03-implement") == "passed"
+
+    def test_디스패치_기록이_없으면_다시_계산해_진행한다(
+            self, repo, request_file, phases, monkeypatch):
+        """`next` 를 거치지 않은 옛 런 — 계약에서 다시 계산한다."""
+        run_id, _p, claims = self._enter(repo, request_file, monkeypatch,
+                                         TESTS_REQUIRED_CONTRACT)
+        self._passing_tests(repo)
+        env = self._submit(repo, run_id, claims)
+        assert env["exit"] != 8, env["render"]
+
+
+class TestUiAttribution:
+    """귀속 사다리는 **이 런에 디스패치된 역할**로만 만든다."""
+
+    F = {"id": "F-1", "owner": "ambiguous", "sig": "abc", "kind": "stage",
+         "file": "src/lib/match.ts"}
+
+    def _ladder(self, config, failure, roles):
+        flip, out = {}, []
+        for _ in range(4):
+            out.append(attr.resolve_ambiguous([dict(failure)], config, flip,
+                                              roles=roles)[0]["owner"])
+        return out
+
+    def test_디스패치된_ui_가_사다리에_든다(self, repo, config):
+        assert self._ladder(config, self.F, ["impl", "test", "ui"]) == [
+            "impl", "test", "ui", "contract"]
+
+    def test_단언_실패는_ui_를_건너뛴다(self, repo, config):
+        """ui 는 테스트를 소유하지 않는다 — 단언 실패를 고칠 수 없다."""
+        f = dict(self.F, kind="test")
+        assert self._ladder(config, f, ["impl", "test", "ui"])[:3] == [
+            "impl", "test", "contract"]
+
+    def test_기록이_없으면_조건부_역할은_빠진다(self, repo, config):
+        assert self._ladder(config, self.F, None)[:3] == ["impl", "test", "contract"]
+
+    def test_게이트가_디스패치_기록을_넘긴다(self, repo, config):
+        _c, adapter, _cal = adapters.load(repo)
+        state = {"phases": {"03-implement": {"dispatched_roles": ["impl", "test", "ui"]}}}
+        report = {"failed": {"id": "full", "exit": 1, "output": "boom"}}
+        owners = []
+        for _ in range(3):
+            got = gate_mod.attribute(repo, config, adapter, report, state,
+                                     log_text="boom")
+            owners.append(got["failures"][0]["owner"])
+        assert owners == ["impl", "test", "ui"], owners
+
+
+class TestContractTraceScreens:
+
+    def test_화면이_없으면_critical_이고_ui_에게_간다(self, repo):
+        got = _codes(_trace(repo, _write_contract(repo, SCREEN_CONTRACT), changed=[]),
+                     "missing_screen")
+        assert got and got[0]["severity"] == "critical"
+        assert got[0]["target_role"] == "ui"
+
+    def test_화면이_있으면_지난다(self, repo):
+        _screen(repo)
+        got = _trace(repo, _write_contract(repo, SCREEN_CONTRACT), changed=[])
+        assert _codes(got, "missing_screen") == []
+        assert "missing_screen" in got["checks_run"]
+        assert got["contract"]["screens"] == 1
+
+    def test_화면의_테스트는_묻지_않고_그렇게_남긴다(self, repo):
+        """UI 단위테스트는 두지 않는다 — 통과가 아니라 미수행이다."""
+        _screen(repo)
+        got = _trace(repo, _write_contract(repo, SCREEN_CONTRACT), changed=[])
+        assert "untested_screen" in got["skipped"]
+        assert "ADR-H057" in got["skip_reasons"]["untested_screen"]
+        assert not [f for f in got["findings"] if f.get("symbol") == "AnalyzeForm"]
+
+    def test_화면이_없는_계약은_미수행을_적지_않는다(self, repo):
+        got = _trace(repo, _write_contract(repo, TESTS_REQUIRED_CONTRACT), changed=[])
+        assert "untested_screen" not in got["skipped"]

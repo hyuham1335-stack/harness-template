@@ -741,6 +741,10 @@ def _check_contract_sections(root, config, report):
     sections = config["contract"]["sections"]
     missing = [(key, value) for key, value in sorted(sections.items()) if value not in headings]
     unknown_required = [k for k in config["contract"]["required"] if k not in sections]
+    # 조건부 역할이 없는 절을 가리키면 그 역할은 조용히 영영 미호출이다 (ADR-H057).
+    unknown_when = [(r["id"], r["when_contract_section"]) for r in config.get("roles") or []
+                    if r.get("when_contract_section")
+                    and r["when_contract_section"] not in sections]
 
     problems = []
     if missing:
@@ -749,6 +753,8 @@ def _check_contract_sections(root, config, report):
     if unknown_required:
         problems.extend("contract.required 의 %r 가 sections 에 정의되지 않았다" % k
                         for k in unknown_required)
+    problems.extend("roles[%s].when_contract_section 의 %r 가 sections 에 정의되지 않았다"
+                    % (rid, key) for rid, key in unknown_when)
     if problems:
         report.add("계약 절 ↔ 템플릿", "FAIL",
                    "한쪽만 고치면 계약 추적이 아무것도 못 찾고 조용히 통과한다:\n" +

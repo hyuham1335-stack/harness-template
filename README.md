@@ -235,6 +235,7 @@ flowchart TD
 | `commands/feature.md` | `/feature` 명령입니다. `doctor` 로 열고, 사용자의 요청을 한 글자도 바꾸지 않고 동결한 다음, 종료 코드에 따라 다음 행동을 정합니다. 프로파일(레인)은 묻지 않고 00 이 정한 값과 봉투가 찍은 `model:` 을 그대로 씁니다 |
 | `commands/log.md` | `/log` 명령입니다. 세션 기록의 사실을 `docs/PIPELINE-LOG.md` 에 한 줄로 옮깁니다. 기록에 없는 것은 적지 않습니다 |
 | `agents/impl-writer.md` · `agents/test-writer.md` | 03 이 **병렬로** 부르는 구현 담당과 테스트 담당입니다. 각자 자기 경로만 건드립니다 |
+| `agents/ui-writer.md` | 03 이 계약 `## 화면` 에 항목이 있을 때만 같이 부르는 화면 담당입니다. `docs/UI_GUIDE.md` 를 따르고 서버 로직·테스트는 건드리지 않습니다 |
 | `agents/plan-reviewer.md` | 01·02 가 부르는 검토자입니다. 계획을 직접 고치지 않고 지적만 냅니다 — 02 에서는 외부 플랜 리뷰 도구가 없을 때의 폴백입니다. `docs` 레인에서는 부르지 않습니다 |
 | `skills/{general,data-layer,security,architecture,test-quality,docs}-reviewer/SKILL.md` | 05 의 리뷰어 6종입니다(일반 정합성·데이터·보안·구조·테스트 품질·문서). 일반 정합성 리뷰어는 소스 변경이 있으면 항상 켜지고, 나머지는 변경된 파일이 각자의 담당 범위에 걸리면 켜집니다. 문서 리뷰어만 소스 변경이 0인 런에서 켜집니다 |
 | `settings.json` | 훅 3개입니다 — 세션 시작 시 미승격 세션 수 알림, 세션 종료 시 기록, 위험한 셸 명령 차단 |

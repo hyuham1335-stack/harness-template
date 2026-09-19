@@ -465,6 +465,7 @@ Critical이 남아 있으면 01로 되돌린다(`loop.max`, 최대 1회 왕복) 
 - 메인이 계약 파일을 **직접** 작성한다(역할 에이전트 위임 금지). 템플릿은 `harness/templates/contract.md`.
 - `requires`의 `must_contain`이 `config.contract.required`에 적힌 필수 절을 검사한다. **절 제목과 언어를 프로젝트가 정한다** — `config.contract.sections`가 단일 출처다.
 - 사용자 승인 지점 없음. **`config.roles[]` 전원을 한 메시지 안에서 동시 호출**한다(2인 고정이 아니라 N인).
+- **조건부 역할** (ADR-H057): `when_contract_section` 이 있는 역할(`ui` → `screens`)은 계약의 그 절에 항목이 있을 때만 디스패치된다. 03 패킷을 내는 두 자리(`next`·전이)가 계약 파서로 목록을 정해 `phases.03-implement.dispatched_roles` 에 저장하고, 지시 계수·패킷 「이 런에 부르는 역할」·04 귀속 사다리가 그 목록을 쓴다. `record --phase 03` 은 같은 계산을 다시 해 저장값과 다르면(패킷 뒤 계약 변경) exit 8 + `next`, claims 의 역할이 목록과 다르면 exit 8 이다.
 - 게이트: `compile` + **`clean_ownership`** — VCS가 보고하는 실제 변경 집합을 각 역할이 보고한 `claimed_files`와 대조해 (a) 소유 경로 위반 (b) 아무도 claim 안 한 orphan 파일을 잡는다. 위반 시 exit 8 + 롤백 지시. 소유 계산은 `config.roles[].owns`/`excludes` + `config.main_owned_paths`이고, **`doctor`가 쓰는 것과 같은 glob 판정기를 쓴다** — 같은 규칙이 두 곳에서 갈라지는 것이 이 리포가 이미 겪은 실패다.
 
 #### 역할 에이전트 정의는 규약을 담지 않는다
@@ -535,6 +536,8 @@ flowchart LR
 
 **3. 못 정하면 `ambiguous` → `config.primary_role` → 동일 sig 재발 시 다음 역할로 flip.**
 
+사다리는 **이 런에 디스패치된 역할**로만 만든다 (ADR-H057) — 부르지 않은 조건부 역할에게 수리를 보내지 않고, 단언 실패(`kind: test`)는 테스트를 소유하지 않는 조건부 역할을 건너뛴다. `ui` 가 디스패치된 런의 사다리는 impl → test → ui → 계약 결함이라 `loop.max: 3` 안에서 계약 결함에 못 닿을 수 있다 — 아래 주의와 같은 이유로 값을 올리지 않는다.
+
 > **flip 과 정체 감지는 더 이상 같은 조건이 아니다.** 둘 다 "동일 sig 2회" 를 쓰던 동안 flip 은 언제나 stuck 과 같은 순간에 일어났고, ambiguous 실패는 구조적으로 두 역할 중 한쪽만 시도해 보고 멈췄다. 정체 감지가 쌍을 세면서 사다리(`primary_role` → 다음 역할 → 계약 결함)를 다 오를 수 있다. 다만 그 사다리를 오르는 동안 **수리 예산(`loop.max: 3`)이 먼저 닫는 경우가 있다** — 의도한 것이다. "예산을 다 썼다" 가 "같은 자리를 맴돈다" 보다 정직한 이유다 (M33).
 
 #### 핑퐁 방지 — 단일 소유자 + 순차 flip
@@ -603,6 +606,7 @@ stateDiagram-v2
 | 검사 | 코드 | 판정 방법 |
 |---|---|---|
 | 계약의 유닛이 소스에 존재 | `missing_impl` | **컨테이너명 + 심볼명 쌍**으로 검색. Critical, `primary_role`, **리뷰어 전 선수리** |
+| 계약의 화면이 소스에 존재 | `missing_screen` | `## 화면` 절, `missing_impl` 과 같은 방법. Critical, 화면 역할(`when_contract_section: screens`). 화면의 테스트는 묻지 않고 `untested_screen` 을 `skipped` 에 남긴다 — 통과가 아니라 미수행 (ADR-H057) |
 | 그 유닛을 참조하는 테스트가 존재 | `untested_contract_item` | 심볼 문자열 **또는** 진입점 경로. Major, 테스트 역할 — **첫 3런 `warn_only`** (§E6) |
 | 계약의 오류 어휘 상수가 실재 | `missing_error_symbol` | `config.contract.sections.errors` 절. Critical, 선수리 |
 | 진입점이 실재 | `missing_entrypoint` | `adapter.entrypoint_resolver`. Critical, 선수리 |
@@ -616,7 +620,7 @@ stateDiagram-v2
 - **컨테이너명 + 심볼명 쌍으로 검색한다.** 심볼명만 보면 흔한 이름이 다른 파일에 있어 **거짓 통과**한다. 컨테이너를 못 찾으면 `unknown`으로 낙하시킨다.
 - 파일 읽기는 전부 UTF-8 명시 (§E4).
 - 커버리지 도구가 없는 상태에서 `untested_contract_item`이 "테스트 약화" 탐지를 대신한다.
-- `adapter.entrypoint_resolver`가 미정의면 진입점을 풀어야 하는 셋(`missing_entrypoint`·`untested_entrypoint`·`authz_untested`)만 스킵하고 나머지 6종은 수행한다 + 보고서에 사유와 함께 명시.
+- `adapter.entrypoint_resolver`가 미정의면 진입점을 풀어야 하는 셋(`missing_entrypoint`·`untested_entrypoint`·`authz_untested`)만 스킵하고 나머지 7종은 수행한다 + 보고서에 사유와 함께 명시.
 - 테스트 존재 검사 넷(`untested_*`·`authz_untested`)은 **존재 검사이지 의미 검사가 아니다** — 단언이 맞는지는 test-quality 리뷰어가 본다.
 - **유닛 테스트 검사는 e2e 를 세지 않는다.** 어댑터 `attribution.e2e_file_globs` 와 계약 여정의 스펙 파일을 뺀 테스트만 본다 — e2e 가 상수를 화면 문구로 단언해도 유닛 테스트 부재를 가리지 않는다.
 - **러너 없는 여정은 디스패치 전에 거부한다.** 03 패킷을 내는 두 자리(`next`·전이)와 `record --phase 03` 이 `_contract_precheck_03` 을 부른다: 어댑터 `e2e` 가 `present` 가 아니면(없음·해당 없음) exit 8, 여정 단계가 진입점 절의 `METHOD /path` 와 글자 그대로 맞지 않아도 exit 8. 지시 계수 전이다.

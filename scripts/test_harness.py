@@ -168,6 +168,13 @@ class BrokenConfigRejectedTest(DoctorTestBase):
         self.save_config(cfg)
         self.assertRejected(self.doctor(), "## 존재하지않는절")
 
+    def test_2b_role_condition_names_an_unknown_section(self):
+        """조건부 역할이 없는 절을 가리키면 그 역할은 조용히 영영 미호출이다 (ADR-H057)."""
+        cfg = self.config()
+        next(r for r in cfg["roles"] if r["id"] == "ui")["when_contract_section"] = "screenz"
+        self.save_config(cfg)
+        self.assertRejected(self.doctor(), "screenz")
+
     def test_3_runner_bin_not_whitelisted(self):
         ad = self.adapter()
         ad["runner"]["bin"] = "sh"

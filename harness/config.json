@@ -22,7 +22,8 @@
       "data_shapes": "## 데이터 형태",
       "schema": "## 스키마·데이터 변경",
       "boundaries": "## 외부 경계",
-      "journeys": "## 여정"
+      "journeys": "## 여정",
+      "screens": "## 화면"
     },
     "required": ["units"]
   },
@@ -40,14 +41,22 @@
       "id": "impl",
       "agent": "impl-writer",
       "code": "impl",
-      "owns": ["src/app/**", "src/components/**", "src/lib/**", "src/services/**", "src/types/**"],
-      "excludes": ["**/*.test.ts", "**/*.test.tsx", "**/*.golden.test.ts"]
+      "owns": ["src/app/**", "src/lib/**", "src/services/**", "src/types/**"],
+      "excludes": ["**/*.test.ts", "**/*.test.tsx", "**/*.golden.test.ts", "src/app/**/*.tsx"]
     },
     {
       "id": "test",
       "agent": "test-writer",
       "code": "test",
       "owns": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.golden.test.ts", "e2e/**"]
+    },
+    {
+      "id": "ui",
+      "agent": "ui-writer",
+      "code": "ui",
+      "owns": ["src/components/**", "src/app/**/*.tsx"],
+      "excludes": ["src/app/api/**", "**/*.test.tsx"],
+      "when_contract_section": "screens"
     }
   ],
   "primary_role": "impl",
