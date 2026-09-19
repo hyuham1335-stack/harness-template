@@ -1537,6 +1537,16 @@ def _plan_05_review(root, paths, s, ctx):
             if c not in [r["code"] for r in routed["reviewers"]]]
     node["planned"] = [r["code"] for r in routed["reviewers"]] + kept
     node["routing"] = routed
+    # **자진신고한 위험과 라우팅을 대조한다 — 관측만** (ADR-H067). `next` 가
+    # 여러 번 불려도 원장에는 한 번만 남긴다. 등급은 치르지 않는다.
+    if "risk_undeclared" not in node:
+        risk = ((s.get("phases") or {}).get("01-plan") or {}).get("risk")
+        node["risk_undeclared"] = review_mod.undeclared_risk(
+            ctx["config"], routed, risk)
+        if node["risk_undeclared"]:
+            st.append_event(paths, "risk_undeclared", cmd="next",
+                            phase="05-code-review",
+                            reviewers=node["risk_undeclared"], declared=risk)
     node["profile_reconfirmed"] = refreshed if refreshed.get("changed") else None
     node["contract_dropped"] = refreshed.get("dropped") or []
     node["mode"] = review_mod.mode(ctx["config"],

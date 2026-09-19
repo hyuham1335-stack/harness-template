@@ -88,9 +88,9 @@
   "reviewers": [
     {"code": "gen", "skill": "general-reviewer", "priority": 0,
      "when_role_owned": true},
-    {"code": "data", "skill": "data-layer-reviewer", "priority": 1,
+    {"code": "data", "skill": "data-layer-reviewer", "priority": 1, "risk": ["schema", "boundary"],
      "when": ["src/lib/schemas.*", "src/services/**"]},
-    {"code": "sec", "skill": "security-reviewer", "priority": 2,
+    {"code": "sec", "skill": "security-reviewer", "priority": 2, "risk": ["authz", "boundary"],
      "when": ["src/app/api/**", "src/lib/env.*", "src/lib/auth.*",
               ".env*", "*.config.*"]},
     {"code": "test", "skill": "test-quality-reviewer", "priority": 3,
