@@ -1880,15 +1880,35 @@ class TestCrossVerifySource:
         _, s = st.create_run(repo, "demo", request_file)
         assert s["cross_verify"]["mode"] == "fallback"
 
-    # `test_the_packet_names_the_cross_verifier` ·
-    # `test_the_packet_says_when_it_is_only_a_fallback` 는 여기서 뺐다 — 01
-    # 이 더는 `review.reviewers` 에 xv 를 선언하지 않아 `_cross_verify_render`
-    # 가 01 진입 패킷에서 "## 교차검증" 을 내지 않는다. 이 announcement 는
-    # 이제 02 에서 나야 하는데, 02-cross-verify.md 프론트매터에는 아직
-    # `review.reviewers`(kind: cross_verify) 선언이 없다 — `_cross_verify_reviewer`
-    # 가 그 선언이 있는 페이즈에서만 이름을 낸다(cli.py:1826-1849). 그 선언이
-    # 02 에 추가되면 이 두 테스트를 02 진입(01 을 지나 02 로 전이하는 지점)
-    # 기준으로 다시 써야 한다.
+    def _enter_02(self, repo, phases, primary):
+        """primary 를 정한 뒤 런을 만들어 01 을 지나 02 진입 봉투를 받는다.
+
+        mode 는 `create_run` 이 정하므로 config 는 그 **전**에 바꾼다. 01 은 xv
+        를 부르지 않는다 — 교차검증기 안내는 02 진입 봉투가 하는 유일한 자리다."""
+        self._set_primary(repo, primary)
+        req = repo / "_workspace" / "requests" / "sim.md"
+        req.parent.mkdir(parents=True, exist_ok=True)
+        req.write_text(REQUEST_TEXT, encoding="utf-8")
+        paths, s = st.create_run(repo, "sim", req)
+        _past_00(paths, s)
+        st.set_phase_status(s, "01-plan", "running")
+        st.save(paths, s)
+        _submit_plan(repo, paths, _risky_plan("schema"))
+        env = _submit_review(repo, paths, _review("plan"))
+        assert env["phase"] == "02-cross-verify", env["render"]
+        return env
+
+    def test_the_02_packet_names_the_cross_verifier(self, repo, phases):
+        """페이즈 파일 본문은 플레이스홀더가 풀리지 않는다 — 봉투가 알려줘야 한다."""
+        env = self._enter_02(repo, phases, "some-external-reviewer")
+        assert "## 교차검증" in env["render"]
+        assert "some-external-reviewer" in env["render"]
+
+    def test_the_02_packet_says_when_it_is_only_a_fallback(self, repo, phases):
+        """폴백이라는 사실이 드러나야 1라운드 수렴이 막히는 이유를 안다."""
+        env = self._enter_02(repo, phases, None)
+        assert "## 교차검증" in env["render"]
+        assert "폴백 `plan-reviewer`" in env["render"]
 
     def test_no_stack_proper_noun_reaches_the_core(self):
         """도구 이름은 config 에만 둔다 — 코어는 읽기만 한다."""
@@ -3022,6 +3042,22 @@ class TestAttribution:
         ]
         got = attr.dispatch(failures, config, prev_sigs=[], flip_state={})
         assert got["parallel"] is True and not got["deferred"]
+
+    def test_a_deferred_flip_is_rolled_back(self, repo, config):
+        """미룬 배정은 지시로 안 나갔다 — flip 인덱스도 정체 체인도 그것을 세면
+        다음 라운드에 역할 하나를 건너뛰거나(ADR-H023 별건) 즉시 정체로 잡힌다."""
+        f1 = {"id": "F-1", "owner": "test", "sig": "a", "frames": ["src/lib/match.ts"]}
+        f2 = {"id": "F-2", "owner": "ambiguous", "sig": "b",
+              "frames": ["src/lib/match.ts"]}
+        flip = {}
+        got = attr.dispatch([f1, f2], config, prev_sigs=[], flip_state=flip)
+        assert got["owner"] == "test" and got["deferred"][0]["owner"] == "impl"
+        assert flip["b"]["assigned"] == [], "안 나간 배정이 flip 에 남았다"
+        assert "impl|b" not in got["pairs"], "안 나간 쌍이 정체 체인에 들어간다"
+        again = attr.dispatch([dict(f2)], config, prev_sigs=got["pairs"],
+                              flip_state=flip)
+        assert again["owner"] == "impl", "같은 역할이 처음으로 시도해야 한다"
+        assert again["stuck"] is False
 
     def test_same_signature_twice_is_stuck(self, repo, config):
         failures = [{"id": "F-1", "owner": "impl", "sig": "a", "frames": []}]

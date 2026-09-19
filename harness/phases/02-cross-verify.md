@@ -28,6 +28,7 @@
     {"id": "source_quote_substring", "on_fail": 8},
     {"id": "critical_zero", "on_fail": 4}
   ],
+  "review": {"reviewers": [{"code": "xv", "kind": "cross_verify"}]},
   "gate": {"runner": "none"},
   "loop": {"counter": "xverify_return", "max": 2, "on_exceed": "escalate",
            "on_fail_return_to": "01-plan"},

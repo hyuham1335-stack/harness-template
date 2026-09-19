@@ -353,6 +353,16 @@ def dispatch(failures, config, prev_sigs, flip_state, stuck_after=2, roles=None)
     deferred = [{"owner": o, "failure_count": len(by_owner[o]),
                  "reason": "동시 배정 금지 — 대상을 공유한다"}
                 for o in owners if o != chosen]
+    # **미룬 배정은 없던 일이다.** `resolve_ambiguous` 가 올린 flip 인덱스를
+    # 그대로 두면 다음 라운드에 그 실패가 한 역할을 건너뛴다. 정체 체인도
+    # 같다 — 나가지 않은 쌍을 쌓으면 다음 라운드의 첫 시도가 곧 정체다.
+    for o in (d["owner"] for d in deferred):
+        for f in by_owner[o]:
+            if (f.get("owner_reason") or "").startswith("ambiguous"):
+                node = flip_state.get(f["sig"])
+                if node and node["assigned"] and node["assigned"][-1] == o:
+                    node["assigned"].pop()
+    pairs = [owner_sig(f) for f in by_owner[chosen]]
     return {"by_owner": {chosen: by_owner[chosen]}, "owner": chosen,
             "parallel": False, "deferred": deferred, "stuck": stuck,
             "sigs": sigs, "pairs": pairs, "failures": resolved}
