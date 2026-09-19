@@ -20,6 +20,12 @@ _WS = re.compile(r"\s+")
 SEVERITIES = ("critical", "major", "minor")
 BLOCKING = ("critical", "major")
 
+# INTENT 의 `risk` 어휘 — 02 교차검증이 이 값으로 돈다 (ADR-H060). 닫힌 넷이다:
+# 파일럿에서 xv 채택이 몰린 플랜 유형(스키마 · 경계 · 동시성 · 인가)이고,
+# 어휘를 열면 "무엇이든 적어 02 를 돌린다" 와 "아무것도 안 적는다" 가 같은
+# 값이 된다. 빈 배열은 허용이고 그것이 "위험 절이 없다" 는 자진신고다.
+RISK_VOCAB = ("schema", "boundary", "concurrency", "authz")
+
 
 def normalize_ws(text):
     """공백만 정규화한다. 그 밖은 건드리지 않는다 — 다듬기와 위조를 구분해야 한다."""
@@ -59,6 +65,20 @@ def check_plan(text, request_text, inv_skip_below_chars):
                     "drift": [], "inv_skipped": True}
         return _fail(8, ["INTENT 블록이 없다. 요청이 %d자로 생략 임계값(%s)을 넘는다"
                          % (len(request_text), inv_skip_below_chars)])
+
+    # `risk` 는 필수 키다 — 없으면 "비었다" 로 읽지 않고 거부한다. 잊은 것과
+    # 없다고 판단한 것을 기계가 갈라야 02 생략이 자진신고로 성립한다.
+    risk = intent.get("risk", None)
+    if "risk" not in intent:
+        errors.append("INTENT 에 risk 가 없다 — 배열로 적는다 (빈 배열 허용). "
+                      "어휘: %s" % " | ".join(RISK_VOCAB))
+    elif not isinstance(risk, list):
+        errors.append("risk 는 배열이어야 한다: %r" % (risk,))
+    else:
+        bad = [r for r in risk if r not in RISK_VOCAB]
+        if bad:
+            errors.append("risk 가 어휘 밖이다: %s (%s)"
+                          % (", ".join(repr(b) for b in bad), " | ".join(RISK_VOCAB)))
 
     haystack = normalize_ws(request_text)
     items = list(intent.get("invariants") or []) + list(intent.get("acceptance") or [])
@@ -111,8 +131,9 @@ def check_plan(text, request_text, inv_skip_below_chars):
         return _fail(8, errors, drift_score=len(drift), drift=drift)
     if drift:
         return {"ok": False, "exit": 4, "errors": [], "drift_score": len(drift),
-                "drift": drift}
-    return {"ok": True, "exit": 0, "errors": [], "drift_score": 0, "drift": []}
+                "drift": drift, "risk": risk}
+    return {"ok": True, "exit": 0, "errors": [], "drift_score": 0, "drift": [],
+            "risk": risk}
 
 
 def _fail(code, errors, drift_score=0, drift=None):

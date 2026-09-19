@@ -31,7 +31,7 @@ import verdict  # noqa: E402
 
 SKILLS_REL = ".claude/skills"
 
-DEFAULT_CAPS = {"small": 1, "normal": 3}
+DEFAULT_CAPS = {"fix": 1, "small": 1, "normal": 3}
 DEFAULT_MERGE_BELOW = 150
 DEFAULT_FINDINGS_MAX = 50
 

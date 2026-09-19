@@ -677,6 +677,9 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
         ("05 상태", r05.get("status")),
         ("05 리뷰어", "%s / %s" % (r05.get("reviewers_ok"),
                                    r05.get("reviewers_planned"))),
+        # 레인이 정한 지시 범위다 (ADR-H059). `diff+refs` 로 05 벽시계가 늘면
+        # 이 행과 `escaped_05` 를 나란히 놓고 depth 값을 다시 정한다.
+        ("05 리뷰 범위", r05.get("depth")),
         ("검토 제외로 드롭", r05.get("dropped_by_enforcement")),
         ("절단됨", r05.get("truncated")),
         ("맥락 부족 요청", len(r05.get("need_more_context") or []) or 0),
@@ -708,8 +711,9 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
         ("01 교차검증", cv.get("mode")),
         ("폴백 회차", "%s / %s" % (cv.get("degraded_rounds") or 0,
                                    len(cv.get("rounds") or {}))),
-        # **생략과 불가는 다르다** (ADR-H042). `plan_unedited` 는 1라운드 수렴이라
-        # 같은 관측기를 같은 전문에 다시 안 부른 것이고 등급이 안 내려간다.
+        # **생략과 불가는 다르다** (ADR-H042). `no_risk` 는 01 INTENT 의 `risk`
+        # 가 비어 있고 Critical 도 없었던 것(ADR-H060), `docs_profile` ·
+        # `fix_profile` 은 레인의 양보다 — 셋 다 정책 스킵이라 등급이 안 내려간다.
         ("02 생략 사유", cv.get("skip_reason")),
         # 08 지시문 검토와 슬롯 예산 (ADR-H056 추기).
         ("지시문 검토", _instruction_review_cell(state)),

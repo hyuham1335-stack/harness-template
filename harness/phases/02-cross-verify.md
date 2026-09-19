@@ -17,7 +17,11 @@
               "gap": "cross_verify_unavailable"},
   "skip_policy": [
     {"when": "state.profile.name == \"docs\"",
-     "status": "skipped", "reason": "docs_profile"}
+     "status": "skipped", "reason": "docs_profile"},
+    {"when": "state.profile.name == \"fix\"",
+     "status": "skipped", "reason": "fix_profile"},
+    {"when": "state.phases.01-plan.has_risk == false",
+     "status": "skipped", "reason": "no_risk"}
   ],
   "submit_checks": [
     {"id": "reviewer_not_main", "on_fail": 8},
@@ -34,21 +38,29 @@
 
 ## 목적
 
-확정된 플랜 **전문**에 대한 최종 확인 1회 — **런 전체에서 외부 교차검증기(xv)를
-부르는 유일한 지점**이다(ADR-H045). 01 은 이제 내부 plan-reviewer 만 라운드마다
-반복 검토하고 xv 는 부르지 않으므로, 여기서 처음이자 마지막으로 완성된 전문을
-독립 관측기에 보인다.
+확정된 플랜 **전문**에 대한 최종 확인 **최대 1회** — **런 전체에서 외부
+교차검증기(xv)를 부르는 유일한 지점**이다(ADR-H045 · ADR-H060). 01 은 내부
+plan-reviewer 만 라운드마다 반복 검토하고 xv 는 부르지 않으므로, 여기서
+처음이자 마지막으로 완성된 전문을 독립 관측기에 보인다.
 
-**`docs` 레인은 건너뛴다** (`docs_profile`, ADR-H044). docs 레인의 01 은
-리뷰어가 0명이라 애초에 관측이 없고, 이 생략도 등급을 내리지 않는다 —
-정책 스킵이고, 예측이 빗나가면 `triage_miss` 가 그것을 gap 으로 만든다.
+**위험 절이 있을 때만 돈다** (`no_risk`, ADR-H060). 01 INTENT 의 `risk`
+(닫힌 어휘 `schema` · `boundary` · `concurrency` · `authz`)가 비어 있지 않거나,
+01 의 어느 회차든 Critical 이 있었거나, 요청이 짧아 INV 블록이 생략됐으면
+돈다 — 그 밖은 `skipped` 이고 gap 이 아니다. 파일럿에서 xv 채택 11/29 는 전부
+스키마·트랜잭션·동시성 플랜이었고 프론트 전용 런은 5/5 기각이었다 — 위험 절
+없는 플랜에 10분씩 쓰고 있었다. `risk` 는 01 의 자진신고다. 잊으면 exit 8
+(필수 키), 비웠으면 "위험 절이 없다" 는 주장이다.
+
+**`docs` · `fix` 레인은 건너뛴다** (`docs_profile` · `fix_profile`, ADR-H044 ·
+ADR-H053). docs 레인의 01 은 리뷰어가 0명이라 애초에 관측이 없고, fix 는 설계가
+아니라 수리다. 두 생략도 등급을 내리지 않는다 — 정책 스킵이고, 예측이 빗나가면
+`triage_miss` 가 그것을 gap 으로 만든다.
 
 **(구 설계) `plan_unedited` 스킵은 뺐다** (ADR-H042 가 두고 ADR-H045 가 뺐다).
 01 이 매 라운드 xv 를 부르던 시절엔 "01 이 1라운드에 수렴하면 그 교차검증기가
 본 텍스트가 곧 전문"이라는 전제가 성립해 02 를 건너뛸 수 있었다. 이제 01 은
-xv 를 전혀 안 부르므로 그 전제가 없다 — 02 를 스킵하면 이 런은 외부 교차검증을
-한 번도 받지 않는다. 그래서 01 이 몇 라운드에 수렴했든 02 는 (docs 레인 제외)
-항상 돈다.
+xv 를 전혀 안 부르므로 그 전제가 없다 — 수렴 라운드 수는 02 생략의 근거가
+아니고, 근거는 위 `risk` 하나다.
 
 ## 진입 조건
 

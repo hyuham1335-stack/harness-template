@@ -26,9 +26,16 @@
 
 ## 목적
 
-요청을 파이프라인에 넣기 **전에** 레인을 정한다 — `docs` · `small` · `normal`.
+요청을 파이프라인에 넣기 **전에** 레인을 정한다 — `docs` · `fix` · `small` · `normal`.
 그 값이 `state.profile` 이 되어 01 의 라운드 상한 · 02 의 생략 · 03 의 역할 ·
 05 의 리뷰어 상한 · 07 의 생략을 **결정론적으로** 줄인다.
+
+**`fix` 는 사람 또는 모델만 정한다** (ADR-H053) — `init --profile fix` · `unclear`
+의 응답 · 모델 제출 세 경로다. 기계 신호는 `fix` 를 내지 않는다: "버그 수정" 은
+언어 키워드이고 이 페이즈는 경로·글자 수만 본다. fix 레인은 01 1라운드 · 02
+생략(`fix_profile`, gap 아님) · 05 리뷰어 1명(`gen`) · 07 생략(지적 0건이면
+low)이고, 03 은 impl·test 둘 다 부른다 — 재현 테스트는 test 역할이 쓴다.
+계약 유닛 수가 넘치면 03·05 가 `small`/`normal` 로 올리고 `triage_miss` 가 남는다.
 
 이 페이즈가 막는 실패는 하나다 — 문서 한 줄 고치는 요청이 플랜 리뷰어 둘 ·
 교차검증 · 역할 둘 · 리뷰어 넷을 다 내는 것. 전에는 프로파일이 03 에서야
@@ -68,7 +75,7 @@
 ## 제출 형식
 
 ```json
-{"profile": "docs|small|normal|unclear",
+{"profile": "docs|fix|small|normal|unclear",
  "expected_paths": ["요청 원문의 부분문자열인 경로"],
  "touches_source": false,
  "reasons": ["…"]}
@@ -99,7 +106,7 @@
 | `profile` 이 어휘 밖 | exit 8 — 고쳐서 다시 낸다 |
 | `expected_paths` 가 원문에 없다 | exit 8 — 원문 그대로 인용해 다시 낸다 |
 | `docs` 인데 docs glob 밖 경로 | exit 8 — `small`/`normal` 로 다시 내거나 경로를 뺀다 |
-| `unclear` | exit 9 — 3지선다. 사람이 고른 값을 `decided_by: "user"` 로 재제출 |
+| `unclear` | exit 9 — 4지선다(`docs` · `fix` · `small` · `normal`). 사람이 고른 값을 `decided_by: "user"` 로 재제출 |
 | 예측이 03·05 에서 빗나감(상향) | `triage_miss` gap · `PASS_WITH_GAPS` · 07 내장 리뷰 `medium`. 03 의 docs 레인에서 소스가 바뀌었으면 exit 3 — 계약을 쓰고 `next` 로 역할 패킷을 받는다 |
 
 **`config.triage` 의 임계값 셋과 `config.models` 의 등급 표는 전부 미검증

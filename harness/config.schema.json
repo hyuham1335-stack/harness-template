@@ -207,8 +207,20 @@
           "additionalProperties": false,
           "properties": {
             "docs": {"type": "integer", "minimum": 1},
+            "fix": {"type": "integer", "minimum": 1},
             "small": {"type": "integer", "minimum": 1},
             "normal": {"type": "integer", "minimum": 1}
+          }
+        },
+        "depth": {
+          "description": "레인별 리뷰 범위. `diff` 는 diff·계약·05_trace.json 만, `diff+refs` 는 계약 `## 유닛` 이 참조하는 기존 파일까지 리뷰어 패킷에 넣는다 — diff 밖 상호작용(낙관적 잠금·상태 가드)을 보기 위해서다 (FR-007 escaped). 봉투가 결정론으로 찍고 리뷰어는 고르지 않는다.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "docs": {"$ref": "#/definitions/review_depth"},
+            "fix": {"$ref": "#/definitions/review_depth"},
+            "small": {"$ref": "#/definitions/review_depth"},
+            "normal": {"$ref": "#/definitions/review_depth"}
           }
         },
         "findings_max": {
@@ -287,6 +299,10 @@
       "type": "string",
       "enum": ["haiku", "sonnet", "opus", "inherit"]
     },
+    "review_depth": {
+      "type": "string",
+      "enum": ["diff", "diff+refs"]
+    },
     "model_slot": {
       "type": "object",
       "required": ["default"],
@@ -294,6 +310,7 @@
       "properties": {
         "default": {"$ref": "#/definitions/model_tier"},
         "docs": {"$ref": "#/definitions/model_tier"},
+        "fix": {"$ref": "#/definitions/model_tier"},
         "small": {"$ref": "#/definitions/model_tier"},
         "normal": {"$ref": "#/definitions/model_tier"}
       }

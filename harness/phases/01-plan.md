@@ -27,7 +27,7 @@
   },
   "converge": {
     "counter": "round",
-    "max_by_profile": {"small": 2, "normal": 3},
+    "max_by_profile": {"fix": 1, "small": 2, "normal": 3},
     "blocking_severities": ["critical"],
     "one_round_allowed_when": "blocking_free",
     "focus_round_2": "불변식 커버리지 · 범위 밖 항목 · 인수 조건의 검증 가능성",
@@ -41,10 +41,11 @@
     {"id": "coverage_exact_once", "on_fail": 8},
     {"id": "plan_section_exists", "on_fail": 8},
     {"id": "coverage_reason_required", "on_fail": 8},
+    {"id": "intent_risk_vocabulary", "on_fail": 8},
     {"id": "drift_score_zero", "on_fail": 4}
   ],
   "gate": {"runner": "none"},
-  "loop": {"counter": "round", "max_by_profile": {"small": 2, "normal": 3},
+  "loop": {"counter": "round", "max_by_profile": {"fix": 1, "small": 2, "normal": 3},
            "stuck_after_identical": 2, "on_exceed": "escalate"},
   "allow": {"agents": []},
   "on_success": "02-cross-verify"
@@ -80,7 +81,8 @@
 4. **커버리지 표를 채운다.** 모든 불변식을 정확히 한 번씩 덮어야 하고,
    `covered` 가 아니면 `reason` 이 필수다.
 5. **내부 plan-reviewer 만** 반복 검토한다. 외부 교차검증(xv)은 여기서 부르지
-   않는다 — 완성된 플랜 전문을 02 에서 정확히 1회 확인한다(ADR-H045). **2라운드
+   않는다 — 완성된 플랜 전문을 02 에서 최대 1회 확인한다(ADR-H045 · ADR-H060,
+   INTENT 의 `risk` 가 비어 있고 Critical 도 없었으면 02 는 돌지 않는다). **2라운드
    부터는 열린 차단 지적이 있을 때만** 다시 온다 — 봉투의 `planned` 가 누구인지
    말한다(05 의 델타 재리뷰와 같은 규율, ADR-H041).
 6. 지적을 반영할 때 **플랜을 통째로 다시 쓰지 않는다.** 부분 편집으로 고친다 —
@@ -98,6 +100,7 @@
                 "source_quote":"요청 원문의 부분문자열"}],
  "out_of_scope":["…"],
  "acceptance":[{"id":"AC-1","text":"…","source_quote":"…"}],
+ "risk":[],
  "summary":"…"}
 -->
 
@@ -113,6 +116,13 @@
 
 요청이 짧으면(`config.profile.inv_skip_below_chars` 미만) INV 블록을 생략한다.
 한 문단짜리 요청에서 의도 이탈은 물리적으로 일어나기 어렵다.
+
+`risk` 는 **필수**다 — 빈 배열도 값이다. 어휘는 닫힌 넷: `schema`(저장 스키마·
+마이그레이션) · `boundary`(외부 시스템·신뢰 경계) · `concurrency`(동시 갱신·
+잠금·상태 전이) · `authz`(인가 규칙). 요청이 이 중 하나를 건드리면 적는다 —
+**02 교차검증이 이 값으로 돈다** (ADR-H060). 비어 있고 이 페이즈에 Critical 도
+없었으면 02 는 `no_risk` 로 생략된다. 잊으면 exit 8 이고, 비운 것은 "위험 절이
+없다" 는 자진신고다 — 03·05 가 그것을 검증하지 않으니 정직하게 적는다.
 
 `summary` 는 **선택**이다 — 2~3문장, PR 본문 개요 맨 위에 그대로 실린다
 (`pr.py` 의 `_summary_block`). **이미 이 INTENT 블록에 적은 사실만 요약한다 —
