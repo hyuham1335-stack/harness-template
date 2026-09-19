@@ -189,6 +189,12 @@
           "only_when_no_source_change": {
             "description": "참이면 소스 변경이 하나도 없는 런에서만 켜진다.",
             "type": "boolean"
+          },
+          "risk": {
+            "description": "이 리뷰어가 매칭되면 함의되는 01 INTENT 위험(ADR-H067). 매칭됐는데 INTENT 의 risk 가 이 중 하나도 안 적었으면 05 가 risk_undeclared 이벤트를 남긴다 — 관측만 하고 등급은 치르지 않는다. 어휘는 verdict.RISK_VOCAB 과 같다.",
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "enum": ["schema", "boundary", "concurrency", "authz"]}
           }
         }
       }

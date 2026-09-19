@@ -14002,3 +14002,80 @@ class TestReviewDepth:
                   "counters": {}, "budget": {}, "profile": {"name": "normal"}})
         text, _missing = rep_mod.build(s, {}, {}, [])
         assert "05 리뷰 범위" in text and "diff+refs" in text, text
+
+
+class TestRiskUndeclared:
+    """01 INTENT 의 `risk` 는 자진신고다 — 05 라우팅이 그것과 대조한다 (ADR-H067).
+
+    게이트가 아니라 관측이다. 리뷰어의 `risk` 선언과 매칭 결과만 본다 —
+    오탐률을 모른 채 등급을 치르게 하지 않는다.
+    """
+
+    CFG = {"reviewers": [
+        {"code": "gen", "skill": "g", "when_role_owned": True},
+        {"code": "data", "skill": "d", "when": ["x"], "risk": ["schema", "boundary"]},
+        {"code": "sec", "skill": "s", "when": ["y"], "risk": ["authz", "boundary"]}]}
+
+    def _routed(self, kept, dropped=()):
+        return {"reviewers": [{"code": c} for c in kept],
+                "dropped": [{"code": c} for c in dropped]}
+
+    def test_a_declared_risk_covers_the_reviewer(self):
+        assert rv.undeclared_risk(self.CFG, self._routed(["gen", "data"]),
+                                  ["schema"]) == []
+
+    def test_a_matched_reviewer_without_its_risk_is_named(self):
+        assert rv.undeclared_risk(self.CFG, self._routed(["gen", "sec"]),
+                                  []) == ["sec"]
+
+    def test_inv_skipped_means_nothing_to_compare(self):
+        assert rv.undeclared_risk(self.CFG, self._routed(["sec"]), None) == []
+
+    def test_a_dropped_reviewer_still_counts_as_matched(self):
+        """상한은 리뷰 예산이지 위험의 부재가 아니다."""
+        assert rv.undeclared_risk(self.CFG, self._routed(["gen", "data"], ["sec"]),
+                                  ["schema"]) == ["sec"]
+
+    def test_config_declares_risk_only_in_the_vocabulary(self):
+        import verdict as vd
+        cfg = _cfg()
+        declared = {r["code"]: r.get("risk") for r in cfg["reviewers"]}
+        assert declared["data"] and declared["sec"], declared
+        for code, risk in declared.items():
+            assert set(risk or []) <= set(vd.RISK_VOCAB), code
+        schema = json.loads(
+            (ROOT / "harness" / "config.schema.json").read_text(encoding="utf-8"))
+        bad = json.loads(json.dumps(cfg))
+        bad["reviewers"][1]["risk"] = ["performance"]
+        assert harness.validate(bad, schema), "어휘 밖 값은 거부다"
+
+    def _at_05_with_api_change(self, repo, request_file, phases, risk):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        s["phases"]["01-plan"]["risk"] = risk
+        st.save(paths, s)
+        (repo / "src" / "app" / "api" / "x").mkdir(parents=True)
+        (repo / "src" / "app" / "api" / "x" / "route.ts").write_text(
+            "export async function POST() {}\n", encoding="utf-8")
+        return run_id, paths
+
+    def _kinds(self, paths):
+        return [e for e in st.read_events(paths) if e["kind"] == "risk_undeclared"]
+
+    def test_05_entry_records_the_event_once(self, repo, request_file, phases):
+        run_id, paths = self._at_05_with_api_change(repo, request_file, phases, [])
+        cli.run_next(repo, run_id)
+        cli.run_next(repo, run_id)
+        got = self._kinds(paths)
+        assert len(got) == 1, got
+        assert got[0]["data"]["reviewers"] == ["sec"], got
+        _p, s = st.load(repo, run_id)
+        assert s["phases"]["05-code-review"]["risk_undeclared"] == ["sec"]
+        assert not any(g.startswith("risk_undeclared") for g in s.get("gaps") or []), \
+            "관측이다 — 등급을 치르지 않는다"
+
+    def test_05_entry_is_silent_when_risk_was_declared(self, repo, request_file, phases):
+        run_id, paths = self._at_05_with_api_change(
+            repo, request_file, phases, ["authz"])
+        cli.run_next(repo, run_id)
+        assert self._kinds(paths) == []
