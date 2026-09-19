@@ -48,7 +48,7 @@
 | [[ADR-H020]] | 관측 단위는 지시 | 수용됨 | 구현 | [[ADR-H042]] 결정 2 가 "낸 자리에서 전부" 로 개정. `PreToolUse(Task)` 실측은 미착수 → 백로그 16 |
 | [[ADR-H021]] | 승격 베이스라인은 기계 측정 | 수용됨 | 부분 승계 | **§E11 자체 게이트(lint+check 재실행)는 여전히 실행기가 강제하지 않는다** → 백로그 3 |
 | [[ADR-H022]] | xv 부재와 일시 실패를 가른다 | 수용됨 | 구현 | — |
-| [[ADR-H023]] | 정체 단위는 (소유자, 시그니처) | 수용됨 | 구현 | `resolve_ambiguous` 의 deferred flip 은 "별건" 그대로 → 백로그 9. 사다리에 `ui` 는 [[ADR-H057]] 이 추가 |
+| [[ADR-H023]] | 정체 단위는 (소유자, 시그니처) | 수용됨 | 구현 | deferred flip 되돌림은 2026-09-19 구현(백로그 9 닫힘, 본문 추기). 사다리에 `ui` 는 [[ADR-H057]] 이 추가 |
 | [[ADR-H024]] | 왕복은 지급 | 수용됨 | 구현 | **값은 [[ADR-H041]] 이 개정**(normal 5→3 · small 3→2). [[ADR-H048]] 이 `review_repair` 로 확장 |
 | [[ADR-H025]] | 선언은 읽히거나 거부된다 | 수용됨 | 구현 | [[ADR-H061]] 이 예외를 명시(프론트매터 `effort` 는 Claude Code 가 읽는 선언이라 exit 2 대상 아님) |
 | [[ADR-H026]] | 승격의 축은 제목 | 수용됨 | 개정됨 | **[[ADR-H034]] 가 축을 `rule_key` 로 가름.** 이유 ①은 [[ADR-H033]] 이 정정 |
@@ -80,7 +80,7 @@
 | [[ADR-H042]] | 02 미편집 생략 · 지시는 낸 자리에서 | 수용됨 | 부분 승계 | 계수는 산다. **`plan_unedited` 는 [[ADR-H044]] 가 `skip_policy[]` 로 일반화하고 [[ADR-H045]] 가 제거.** 05·07 이중 리뷰 문단은 [[ADR-H043]] 이 대체 |
 | [[ADR-H043]] | gen 은 05 로 · 07 은 신호 있을 때만 | 수용됨 | 개정됨 | **트리거 둘("Major 잔여"·"수리 있음")은 [[ADR-H059]] 가 삭제**, `findings_total == 0` 은 [[ADR-H050]] 이 추가, audit 문구는 [[ADR-H061]] 이 대체. 재검토 조건은 [[ADR-H059]] 가 답함 |
 | [[ADR-H044]] | 00 이 레인을 나눈다 | 수용됨 | 구현 | [[ADR-H053]] 이 `fix` 레인 추가. **결정 4 등급표는 [[ADR-H061]] 이 부분 대체** |
-| [[ADR-H045]] | xv 는 02 한 곳 | 수용됨 | 구현 | **"정확히 1회" 는 [[ADR-H060]] 이 "최대 1회" 로.** "가칭 H046" 으로 미룬 후속 둘은 미이행(본문 추기) → 백로그 4 · 14 |
+| [[ADR-H045]] | xv 는 02 한 곳 | 수용됨 | 구현 | **"정확히 1회" 는 [[ADR-H060]] 이 "최대 1회" 로.** 02 봉투의 교차검증기 안내는 2026-09-19 구현(백로그 4 닫힘). `secondary` 는 여전히 미이행 → 백로그 14 |
 
 **2차 파일럿 회고 (H046~H061)** — `구현 상태` 칸이 본문에 있다. 재검토 시점이 "다음 파일럿 N런" 인 것은 백로그 19 의 표에 모았다.
 
@@ -90,7 +90,7 @@
 | [[ADR-H047]] | 하한·캘리브레이션은 런이 갱신 | 채택됨 | 구현 | `stage_na` · `verify-adapter` 포함 |
 | [[ADR-H048]] | 카운터 상한 강제 · 재상정은 지급 | 채택됨 | 구현 | — |
 | [[ADR-H049]] | contract-trace 는 어댑터 관례를 읽는다 | 채택됨 | 구현 | — |
-| [[ADR-H050]] | 0 findings 는 신호 | 채택됨 | 부분 승계 | **결정 4(test 리뷰어 보장)·5(계약 결함의 눈) 미결** → 백로그 1 · 2 |
+| [[ADR-H050]] | 0 findings 는 신호 | 채택됨 | 부분 승계 | **결정 4(test 리뷰어 보장) 미결** → 백로그 1. 결정 5 는 (a) 만 2026-09-19 구현(백로그 2(a) 닫힘) · (b) 는 백로그 2(b) |
 | [[ADR-H051]] | 미룸은 이월 · 시한은 등급이 치른다 | 채택됨 | 구현 | `promotion_overdue` 는 [[ADR-H056]] 이 prose 버킷에 무효화 |
 | [[ADR-H052]] | 08 은 대기·형식 왕복·비용을 센다 | 채택됨 | 구현 | 비용 칸은 「미계측」 → 백로그 11 |
 | [[ADR-H053]] | `fix` 레인 | 채택됨 | 구현 | 실물 `fix` 런 0(ROADMAP §7-6). 우회 측정 → 백로그 10 |
@@ -119,9 +119,9 @@
 
 | # | 성격 | 규모 | 닫힘 조건 |
 |---|---|---|---|
-| 9 | 코드 | `attribution.dispatch()` 가 deferred 를 정한 직후 그 소유자의 `flip_state[sig]["assigned"].pop()` — 2줄. deferred×flip 조합 테스트는 지금 없어 1개 신설 | 테스트 통과 |
-| 4 | 코드 | `02-cross-verify.md` 프론트매터에 `review.reviewers[{code:"xv", kind:"cross_verify", raw, json}]` 4줄. 읽는 코드는 `_cross_verify_render` 뿐이라 파급이 없다(`_record_02`·`_instruction_keys` 는 02 를 하드코딩). `test_pipeline.py` 1881~1893 에 주석으로 남은 테스트 둘을 02 기준으로 복원. 도구 고유명사는 쓰지 않는다(`test_no_stack_proper_noun_reaches_the_core`) | 두 테스트 통과 |
-| 2(a) | 코드 | `general-reviewer/SKILL.md` 표에 「재사용 심볼의 정의를 열어 전제를 확인한다」 행 1개 + 입력 절 1줄. 보고 채널 `CONTRACT_DEFECT` 는 이미 있다 | 문서 변경. 기계 검증 없음(모델 판단) — 그 사실을 SKILL 에 적는다 |
+| 9 | 코드 | `attribution.dispatch()` 가 deferred 를 정한 직후 그 소유자의 `flip_state[sig]["assigned"].pop()` — 2줄. deferred×flip 조합 테스트는 지금 없어 1개 신설 | **닫힘 2026-09-19** — `test_a_deferred_flip_is_rolled_back`. pop 만으로는 안 닫혔다: `sig_chain` 이 미룬 쌍까지 쌓아 다음 라운드가 즉시 정체였고, `pairs` 를 나간 실패로 좁혔다 |
+| 4 | 코드 | `02-cross-verify.md` 프론트매터에 `review.reviewers[{code:"xv", kind:"cross_verify", raw, json}]` 4줄. 읽는 코드는 `_cross_verify_render` 뿐이라 파급이 없다(`_record_02`·`_instruction_keys` 는 02 를 하드코딩). `test_pipeline.py` 1881~1893 에 주석으로 남은 테스트 둘을 02 기준으로 복원. 도구 고유명사는 쓰지 않는다(`test_no_stack_proper_noun_reaches_the_core`) | **닫힘 2026-09-19** — `test_the_02_packet_names_the_cross_verifier` · `test_the_02_packet_says_when_it_is_only_a_fallback` |
+| 2(a) | 코드 | `general-reviewer/SKILL.md` 표에 「재사용 심볼의 정의를 열어 전제를 확인한다」 행 1개 + 입력 절 1줄. 보고 채널 `CONTRACT_DEFECT` 는 이미 있다 | **닫힘 2026-09-19** — 표 「재사용 전제」 행 + 입력 절. 기계 검증 없음을 SKILL 에 적었다 |
 
 **파동 1 — 결정 하나가 앞에 있고 코드는 작다. 새 ADR 한 건씩**
 
@@ -151,9 +151,9 @@
 **P0 — 게이트 공백**
 
 1. **test 리뷰어 보장** — [[ADR-H050]] 결정 4. `config.reviewers` 의 `test` 는 priority 4 이고 `review.profile_caps.normal` 이 4 라 테스트 파일이 바뀌어도 `routing.dropped` 로 떨어진다(파일럿 5런). 세 안: (a) `when_role_owned` 를 role `test` 로 확장 (b) priority 를 `arch` 위로 (c) cap 4 → 5. **(a) 는 단독으로 닫지 못한다** — `when_role_owned` 는 매칭을 넓힐 뿐이고 `test` 는 이미 자기 글롭으로 매칭되며, 절단은 `review.route()` 의 `matched[:cap]` 이 priority 순으로 한다. 닫힘: [[ADR-H054]] 의 표를 근거로 새 ADR 이 (b) 또는 (c) 를 고른다.
-2. **계약 자체의 결함을 보는 눈** — [[ADR-H050]] 결정 5. (a) gen 체크리스트 「계약이 지시한 재사용 심볼의 정의를 열어 전제를 확인한다」— [[ADR-H059]] 가 넣은 「기존 코드와의 상호작용」이 절반이다. (b) 02 에 계약 초안을 함께 넘기기 — 미착수. 둘 다 모델 판단이라 기계 검증이 없다.
+2. **계약 자체의 결함을 보는 눈** — (a) 닫힘 (2026-09-19 · [[ADR-H050]] 추기) · (b) 열림. [[ADR-H050]] 결정 5. (a) gen 체크리스트 「계약이 지시한 재사용 심볼의 정의를 열어 전제를 확인한다」— [[ADR-H059]] 가 넣은 「기존 코드와의 상호작용」이 절반이다. (b) 02 에 계약 초안을 함께 넘기기 — 미착수. 둘 다 모델 판단이라 기계 검증이 없다.
 3. **승격 자체 게이트 강제** — [[ADR-H021]] 이 "같이 하지 않은 것" 으로 적은 §E11. `promote --apply` 뒤 `lint`+`check` 재실행을 실행기가 돌리지 않고 07 페이즈 파일이 "네가 그 브랜치에서 돌린다" 고 지시만 한다(team-spec §E11 「아직 실행기가 강제하지 않는다」). 닫힘: `promote --apply` 가 어댑터의 lint·check 스테이지를 돌리고 실패면 `rejected` 를 쓴다. 손잡이는 `adapters.run_stage` 가 이미 있고 `run_promote` 는 `runner` 주입점을 갖고 있다. **열린 설계 결정 하나**: 규칙 전용 브랜치 생성까지 실행기가 할 것인가 — 안 하면 게이트가 현재 워크트리에서 돌아 07 의 "기능 PR 무영향" 약속과 어긋나는 사실을 07 에 적어야 한다.
-4. **02 봉투가 교차검증기를 말하지 않는다** — [[ADR-H045]] 의 부수 결함. `cli._cross_verify_render` 는 페이즈 프론트매터 `review.reviewers` 에서 교차검증기를 찾는데 `02-cross-verify.md` 에는 `review` 선언이 없어 02 에서 빈 문자열을 낸다. 01 이 xv 를 안 부르는 지금은 primary/fallback·재시도 안내를 어느 봉투도 하지 않는다. 닫힘: 02 전용 프로스펙티브 렌더, 또는 02 프론트매터에 xv 리뷰어 선언.
+4. **닫힘 (2026-09-19 · [[ADR-H045]] 추기)** — **02 봉투가 교차검증기를 말하지 않는다** — [[ADR-H045]] 의 부수 결함. `cli._cross_verify_render` 는 페이즈 프론트매터 `review.reviewers` 에서 교차검증기를 찾는데 `02-cross-verify.md` 에는 `review` 선언이 없어 02 에서 빈 문자열을 낸다. 01 이 xv 를 안 부르는 지금은 primary/fallback·재시도 안내를 어느 봉투도 하지 않는다. 닫힘: 02 전용 프로스펙티브 렌더, 또는 02 프론트매터에 xv 리뷰어 선언.
 
 **P1 — 관측 공백**
 
@@ -161,7 +161,7 @@
 6. **05 `review_repair` 작성자의 모델 등급** — [[ADR-H061]]. `_instruct` 호출은 00·01·03·04 넷뿐이라 05 수리 작성자는 `config.models` 밖이다. 닫힘: `state.models.instructed × counters.repair` 5런 뒤 빈도를 보고 정한다.
 7. **`untested_contract_item` 을 03 이 요구하지 않는다** — [[ADR-H058]]. 원인 미규명 오탐 6/6(§E6) 이 남아 `BASELINE_CHECKS` 유예에만 있다. 닫힘: 오탐 원인 규명 뒤 `required_tests` 에 편입.
 8. **`OTHER` 26관측(폴백의 40%)** — [[ADR-H035]] 한계 4(C6). taxonomy 에 `OTHER: unpromotable` 그대로이고 군집 셋(`search_failed`·`facts_failed` 계열)도 어휘에 없다.
-9. **`resolve_ambiguous` 가 deferred 실패에도 flip 인덱스를 올린다** — [[ADR-H023]] 이 "별건" 으로 남긴 것.
+9. **닫힘 (2026-09-19 · [[ADR-H023]] 추기)** — **`resolve_ambiguous` 가 deferred 실패에도 flip 인덱스를 올린다** — [[ADR-H023]] 이 "별건" 으로 남긴 것.
 10. **파이프라인 우회 측정** — [[ADR-H053]]. 클론 리포에서 `git log --merges` 의 PR 수와 `_workspace/runs/` 의 런 수를 대조한다(ROADMAP §7-6). 하네스 밖이다.
 11. **비용 계측 0건** — [[ADR-H032]]·[[ADR-H052]]. `cli cost` 는 있으나 파일럿이 걷어냈고 08 표는 「미계측」만 찍는다. **코드는 완비다** — `runtime.read_cost_state` 가 트랜스크립트의 마지막 `cost-state` 레코드를 읽고 `run_cost` 가 세션×런 구간 겹침으로 귀속한다. 훅이 못 채우는 것은 결함이 아니라 설계다: `cost-state` 는 런타임이 트랜스크립트 마지막 줄로 쓰므로 그 세션 자신의 `SessionEnd` 훅은 볼 수 없다(`runtime.py` 주석). 닫힘: `cost-state` 가 실재하는 세션에서 `cli cost --run-id` 를 돌려 값이 나는 것을 확인 — 표본 대기.
 12. **`nextjs-ts` 프로필에 `reviewers`·`review` 블록이 없다** — 탐색 중 발견. **영향은 cap 미전달보다 크다** — `reviewers` 가 없으면 `review.route()` 가 빈 목록을 받아 클론에서 **05 코드리뷰가 통째로 비활성**이다(cap `normal: 3` 은 그 뒤 문제). 구조적 원인은 `config.schema.json` `required` 에 `reviewers`·`review` 가 없어 프로필이 검증을 통과하는 것. 프로필 시드는 `nextjs-ts` 하나뿐이라 `init --adapter self-python` 은 이미 거부된다.
@@ -821,6 +821,8 @@
 - **`resolve_ambiguous` 가 미룬(`deferred`) 실패에도 flip 인덱스를 올리는 것은 안 고쳤다.** 같은 파일의 다른 결함이고 실물에서 관측된 적이 없다. 별건으로 남긴다.
 
 **아직 실물로 안 돌았다.** P4 가 처음 확인한다 — ambiguous 실패가 두 역할을 다 시도해 보는가.
+
+**추기 (2026-09-19)**: 위의 별건을 닫았다(미구현 백로그 9). `dispatch` 가 deferred 를 정한 직후 그 소유자의 ambiguous 실패에 대해 `flip_state[sig]["assigned"]` 의 마지막 배정을 되돌린다 — 지시로 나가지 않은 배정은 없던 일이다. **pop 만으로는 안 닫혔다.** `cli.py` 가 `dispatch["pairs"]` 를 전부 `sig_chain` 에 쌓으므로, 되돌린 실패가 다음 라운드에 같은 소유자로 배정되면 그 쌍이 이미 체인에 있어 `stuck_after=2` 에서 첫 시도가 곧 정체였다 — M33 과 같은 모양이다. 그래서 `pairs` 도 **나간 실패만** 담는다(`sigs` 는 보고용이라 그대로). `test_a_deferred_flip_is_rolled_back` 이 두 라운드를 잇는다.
 
 관련: [[ADR-H014]](값은 config 에 두고 코어는 읽기만 한다 — 그 규율이 여기서는 안 지켜졌다) · [[ADR-H024]](같은 증분의 예산 결정)
 
@@ -2386,6 +2388,8 @@ Critical 이 남으면 01 로 1회 왕복(`loop.max: 1`)하며 01 에 라운드 
 
 **추기 (2026-09-19)**: "가칭 H046" 은 다른 결정([[ADR-H046]], 05 수리 게이트)이 됐고 여기서 미룬 후속 둘은 **이행되지 않았다** — `cross_verify.secondary` 는 여전히 읽는 코드가 없는 예약 필드이고, `02-cross-verify.md` 에는 `review` 선언이 없어 `_cross_verify_render` 가 02 에서 빈 문자열을 낸다. 미구현 백로그 4 · 14 에 올렸다.
 
+**추기 (2026-09-19, 백로그 4 닫힘)**: `02-cross-verify.md` 프론트매터에 `review.reviewers[{code: "xv", kind: "cross_verify"}]` 를 선언했다. 읽는 코드는 `_cross_verify_render` 뿐이고 `_record_02` · `_instruction_keys` 의 02 분기는 프론트매터를 보지 않으므로 파급이 없다. 02 진입 봉투가 이제 primary · 폴백 · 직전 실패 뒤 재시도를 말한다 — 위 본문이 "02 전용 프로스펙티브 안내" 로 다시 설계하겠다던 것은 기존 렌더가 `state.cross_verify` 로 이미 세 경우를 가르고 있어 새 코드 없이 닫혔다. 주석으로 남겨 뒀던 테스트 둘을 02 진입 기준으로 복원했다. `secondary` 는 여전히 백로그 14 다.
+
 **재검토 시점**: 첫 세 런의 `run.rounds`·`state.cross_verify.rounds` 원장.
 02→01 왕복 빈도가 실제로 늘었는지, xv 호출 총량이 실제로 줄었는지를 검사한다.
 
@@ -2587,7 +2591,7 @@ entrypoints: 0, scope.selected: 0` 인 채 게이트를 지났고, 그 결과 �
 
 ### ADR-H050: 0 findings 는 신호이고, 관측 공백은 어휘로 남는다
 
-**날짜**: 2026-09-18 · **상태**: 채택됨 · **구현 상태**: 결정 1·2·3 구현됨 · 결정 4·5 미결 (미구현 백로그 1 · 2)
+**날짜**: 2026-09-18 · **상태**: 채택됨 · **구현 상태**: 결정 1·2·3 구현됨 · 결정 5(a) 2026-09-19 구현 · 결정 4·5(b) 미결 (미구현 백로그 1 · 2(b))
 
 **맥락**: 리뷰 관측에 네 공백이 있었다.
 1. **05 지적 0건 런이 07 도 생략됐다.** `9729`(FR-002) 와 `3305`(FR-010/011 프론트)는 리뷰어 넷이 전부
@@ -2632,6 +2636,8 @@ entrypoints: 0, scope.selected: 0` 인 채 게이트를 지났고, 그 결과 �
 비용은 작다. 결정 3 은 `false_positive` 를 승격 집계에서 빼므로 리뷰어가 낸 것을 메인이 오탐으로
 적으면 그 지적은 "반복" 에 안 든다 — 그래서 07 본문이 "확인하지 않은 것을 오탐으로 적지 마라" 를
 같이 말한다.
+
+**추기 (2026-09-19, 백로그 2(a) 닫힘)**: 결정 5 의 (a) 를 넣었다 — `general-reviewer/SKILL.md` 「볼 것」 표에 「재사용 전제」 행(계약이 재사용하라고 지시한 심볼의 정의를 열어 시그니처·반환·예외의 전제를 확인하고, 틀리면 `CONTRACT_DEFECT`), 「입력」 절에 그 파일을 열어도 된다는 허용 한 줄. 기계 검증이 없다는 사실을 SKILL 에 적었다. (b) 는 02 시점에 계약 파일이 없어(03 이 처음 `produces`) 봉투 한 줄이 아니라 계약 작성 시점을 옮기는 변경이다 — 백로그 2(b) 로 남는다.
 
 관련: [[ADR-H043]](07 생략 조건) · [[ADR-H017]](리뷰 수행은 라우팅이 증언) · [[ADR-H035]](통제 어휘)
 
