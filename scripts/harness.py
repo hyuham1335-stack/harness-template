@@ -16,8 +16,8 @@ Usage:
     3  verify-adapter 의 완주 런이 기준에 못 미친다. 아무것도 바꾸지 않는다
    10  calibrate 중 스테이지가 실패했다. 잰 값을 쓰지 않는다
 
-step 실행기는 scripts/execute.py 로 분리돼 있다. 두 진입점의 통합은
-docs/harness/ROADMAP.md 3단계 몫이다 (ADR-H003).
+순차 step 실행기는 이 템플릿에 없다 (ADR-H037). 8페이즈 실행기는
+scripts/pipeline/cli.py 다.
 """
 
 import argparse

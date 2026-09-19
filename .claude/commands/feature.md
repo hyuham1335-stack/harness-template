@@ -40,7 +40,7 @@ slug 는 `^[a-z0-9][a-z0-9-]*$` 형태로 제안하고 사용자에게 확인받
 
 ```bash
 python scripts/pipeline/cli.py init --feature {slug} \
-    --request-file _workspace/requests/{slug}.md [--profile docs|small|normal]
+    --request-file _workspace/requests/{slug}.md [--profile docs|fix|small|normal]
 ```
 
 ## 2. 루프
@@ -104,9 +104,10 @@ Major·Minor 는 기록되어 보고서로 간다 — 고칠지는 네 판단이
 
 ### 02-cross-verify 에서
 
-01 이 **1라운드에 수렴했으면 02 는 기계가 건너뛴다** (`plan_unedited`). 봉투가
-03 지시문을 바로 낸다 — 교차검증기를 부르지 마라. 2라운드 이상이면 평소대로
-전문을 교차검증기에 넘긴다.
+02 는 **페이즈 파일의 `skip_policy` 로만 건너뛴다** — `docs_profile` · `fix_profile` ·
+`no_risk`(01 INTENT 의 `risk` 가 비어 있고 어느 라운드에도 Critical 이 없었을 때,
+ADR-H060). 봉투가 `skipped` 를 주면 03 지시문이 바로 나온다 — 교차검증기를
+부르지 마라. 그 밖에는 평소대로 전문을 교차검증기에 넘긴다.
 
 ### 03-implement 에서
 
@@ -255,8 +256,10 @@ python scripts/pipeline/cli.py review07 --external <07_external.json> --run-id <
 **effort 를 네가 고르지 마라.** 결정론이어야 `escaped_05` 가 근거가 된다.
 봉투가 **`skipped`** 를 주면 `/code-review` 를 부르지 않는다 — `07_pr_review.json`
 을 `code_review: "skipped"` · findings 빈 배열로 내고 바로 `record` 로 간다.
-깨끗한 런(05 ok · Major 없음 · 04·05 수리 없음)이 그렇고, 일반 정합성은 05 의
-`gen` 이 이미 봤다 (ADR-H043). 승격은 그 뒤에 그대로 돈다.
+깨끗한 런(05 ok · `triage_miss` 없음 · 외부 Major 없음 · 05 지적이 0건이 아님 ·
+감사 런 아님)이 그렇고, 일반 정합성은 05 의 `gen` 이 이미 봤다 (ADR-H043 ·
+ADR-H059). "Major 잔여" 와 "04·05 수리 있음" 은 더 이상 트리거가 아니다. 승격은 그
+뒤에 그대로 돈다.
 
 ```bash
 python scripts/pipeline/cli.py record --phase 07 --file <07_pr_review.json> --run-id <id>
