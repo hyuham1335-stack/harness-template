@@ -177,10 +177,10 @@ stdout은 **항상 단일 JSON 봉투 하나**, stderr는 원시 도구 출력. 
 | `retry --phase --counter --reason` | 카운터 증가 + 한계·stuck 강제 | 0 / 7 |
 | `escalate` / `resume --ack --answer-file` | 상태 잠금 / 사람 답변 수용 후 해제 | 10 / 0 |
 | `contract-trace --run-id` | 계약 심볼 ↔ 코드 대조. `no_contract`면 스킵 | 0 / 8 |
-| `precheck --scope pr` | 예산 · 브랜치 · base divergence · 인프라. **05 진입과 06에서 각 1회** | 0 / 9 / 10 |
+| `precheck --scope pr` | 예산 · 브랜치 · base divergence · 인프라. **05 진입과 06에서 각 1회.** `files_max` 는 어댑터 `attribution.test_file_globs` 에 걸리지 않은 **소스 파일만** 세고(제외 수는 `test_files_excluded`), `lines_max` 는 전체 줄 수다 (ADR-H066) | 0 / 9 / 10 |
 | `approve --phase 06 [--revoke] [--auto]` | 승인을 이벤트로 못박고 지문·등급 기록 | 0 / 3 |
 | `mask --file --out` | 외부로 나가는 페이로드 마스킹 | 0 / 1 |
-| `promote --scan/--stage/--apply/--flush` | 재집계 → 적재 → 실제 쓰기 + 자체 게이트 → 잔여 종결 | 0 / 4 / 6 / 8 |
+| `promote --scan/--stage/--apply/--flush` | 재집계 → 적재 → 실제 쓰기 + 자체 게이트 → 잔여 종결 | 0 / 4 / 6 / 8 / 10 (베이스라인·자체 게이트 실행 불가 — **상태를 잠그지 않고** 아무것도 안 쓴다) |
 | `report --out <p>` | 결정론 표 조립 + 필수 섹션 검사 → **08 통과 시 런 종료 전이** | 0 / 3 / 6 / 11 |
 | `status` / `lint-phases` | 현황 / 페이즈 파일 검증 | 0 / 2 |
 
@@ -243,6 +243,7 @@ docs/harness/pipeline/runs/{run_id}.md          # 08 보고서
              "mode":"merged|fanout","major":0,"need_more_context":[],
              "dropped_by_enforcement":0,"truncated":false},
  "precheck":{"at_05":{"files":7,"lines":213,"base_behind":0,"infra":{}},"at_06":{}},
+ "phases":{"05-code-review":{"risk_undeclared":["data"]}},
  "repair":{"by_main":2,"by_agent":1,"main_cap":3,"regressions_after_main":0,"escalated_to_agent":false},
  "approval":{"06":{"granted":true,"mode":"user|auto","fingerprint":"…",
                    "scope":"push+pr","grade_at_grant":"PASS"}},
@@ -256,6 +257,8 @@ docs/harness/pipeline/runs/{run_id}.md          # 08 보고서
  "budget":{"model_calls":{"total":14,"max":24,"approx":true,"by_phase":{}}},
  "calibration":{"present":true,"partial":false,"adapter_verified":false}}
 ```
+
+`precheck.at_05.files` 는 **소스 파일 수**다 — 테스트 제외 수 `test_files_excluded` 는 `phases.<pid>.precheck.budget` 에만 남는다 (ADR-H066). `phases.05-code-review.risk_undeclared` 는 관측 기록이고 등급에 들지 않는다 (ADR-H067).
 
 **컨텍스트 관리**: 게이트 로그 전문은 파일에만, stdout에는 소유자별 브리프(실패당 60줄 상한)만. 매 `next`의 `render` 헤더에 300자 이내로 재주입(INV 요약 / 소유권 표 / 남은 예산 / 금지 목록). 플랜 갱신은 **전체 재작성이 아니라 부분 편집**으로 해서 전문이 라운드마다 다시 쌓이지 않게 한다.
 
@@ -347,7 +350,8 @@ docs 레인은 계약이 없어 재판정이 조기 반환하므로 **03(claims 
 그대로 넘긴다 — 메인이 고르지 않는다. **실행기는 실제 모델을 검증할 수 없다**
 (`state.models.blind_spots`). 에이전트 프론트매터에 `model:` 을 박지 않는다 —
 레인별로 못 바꾸고 두 출처가 되면 어느 쪽이 이겼는지 볼 수 없다.
-`lint-phases` 가 그것을 WARN 으로 잡는다.
+`lint-phases` 가 그것을 WARN 으로 잡는다. 05 수리 작성자는 `05:r{n}:repair:{role}` 키로
+지시되고 04 수리(`04:r{n}:{owner}`)와 같은 `roles` 슬롯이다 (ADR-H064).
 
 **`config.triage` 의 임계값 셋과 `config.models` 의 등급 표는 전부 미검증
 초기값이다.** 첫 세 런의 `00_triage.json` 과 `triage_miss` 이벤트가 검사한다.
@@ -367,8 +371,11 @@ docs 레인은 계약이 없어 재판정이 조기 반환하므로 **03(claims 
 {"invariants":[{"id":"INV-2","kind":"must_not","text":"…",
                 "source_quote":"원문의 부분문자열"}],
  "out_of_scope":["…"],
- "acceptance":[{"id":"AC-1","text":"…","source_quote":"…"}]}
+ "acceptance":[{"id":"AC-1","text":"…","source_quote":"…"}],
+ "risk":[]}
 -->
+
+`risk` 는 필수다 — 닫힌 어휘 `schema` · `boundary` · `concurrency` · `authz`, 빈 배열도 값이다. 02 가 이 값으로 돌고(§3.2), 05 가 라우팅 결과와 대조해 빠진 신고를 `risk_undeclared` 로 남긴다(§3.5, ADR-H060 · ADR-H067).
 
 # 플랜 …본문…
 
@@ -426,7 +433,7 @@ new_keys    = keys(round k) - union(keys of rounds 1..k-1)
 
 #### 프로파일 자동 판정
 
-`config.profile`이 임계값을 갖는다. 판정 기준은 **계약의 `${config.contract.sections.units}` 항목 수 + `${config.contract.sections.entrypoints}` 항목 수**이고, `config.profile.small_max_units` 이하면 `small`(01 라운드 상한 3, 05 리뷰어 최대 1개), 넘으면 `normal`(상한 5, 라우팅된 전부). 사용자가 `--profile`로 덮어쓸 수 있다.
+`config.profile`이 임계값을 갖는다. 판정 기준은 **계약의 `${config.contract.sections.units}` 항목 수 + `${config.contract.sections.entrypoints}` 항목 수**이고, `config.profile.small_max_units` 이하면 `small`(01 라운드 상한 2, 05 리뷰어 최대 2개), 넘으면 `normal`(상한 3, 리뷰어 최대 4개) — 상한은 `config.review.profile_caps` 가 정본이다. 사용자가 `--profile`로 덮어쓸 수 있다.
 
 **판정은 계약이 바뀔 때마다 다시 한다.** 03 기록 · 04 게이트 진입 · 05 라우팅 직전 세 자리에서 계약 파일의 sha256 을 `state.contract.sha256` 과 대조하고, 다르면 다시 센다. 예전에는 03 이 한 번 정하면 끝이었고, 04 수리 중 메인이 계약 델타를 적용해도 프로파일이 낡은 값으로 굳었다 — P3 에서 유닛이 2 → 5 가 됐는데 `small` 이 남아 05 의 리뷰어가 1명이 됐다 (M34). 바뀌면 `profile.previous` 와 `profile_reconfirmed` 이벤트에 남고 보고서의 `## 리뷰` 표가 그것을 적는다. sha 가 같으면 다시 세지 않는다 — 매번 재판정하면 판정이 흔들린다.
 
@@ -446,7 +453,7 @@ new_keys    = keys(round k) - union(keys of rounds 1..k-1)
 **출력**: `02_verdict.json`
 **성공 조건**: Critical 0
 
-**런 전체에서 외부 교차검증기(xv)를 부르는 유일한 지점**이다([[ADR-H045]]). 01 은 이제 내부 plan-reviewer 만 반복 검토하고 xv 를 부르지 않으므로, 여기서 처음이자 마지막으로 완성된 전문을 독립 관측기에 보인다 — `docs` 레인 제외, 런당 정확히 1회.
+**런 전체에서 외부 교차검증기(xv)를 부르는 유일한 지점**이다([[ADR-H045]]). 01 은 이제 내부 plan-reviewer 만 반복 검토하고 xv 를 부르지 않으므로, 여기서 처음이자 마지막으로 완성된 전문을 독립 관측기에 보인다 — 런당 **최대** 1회. `docs` · `fix` 레인은 정책으로 건너뛰고(`docs_profile` · `fix_profile`), INTENT `risk` 가 비었고 01 에 Critical 도 없었으면 `no_risk` 로 건너뛴다 — 셋 다 gap 이 아니다 ([[ADR-H060]]). `risk` 가 `None`(INV 생략)이면 보수적으로 돈다.
 
 `config.cross_verify.primary`가 부재하면 **폴백 에이전트**(`fallback`)로 대체하고 `state.cross_verify.mode`에 기록한다. `primary_error` 가 있으면 일시 실패(다음 회차가 재시도), 없으면 구조적 부재다. `mode` 가 `fallback` 이면 `degraded_rounds` 가 올라 gap `cross_verify:fallback` 이 등급을 `PASS_WITH_GAPS` 로 내린다 — 약해진 관측은 통과가 아니다.
 
@@ -599,7 +606,7 @@ stateDiagram-v2
 
 **1·2번이 무료다.** 뒤에서 되돌릴 일을 여기서 먼저 잡는다.
 
-#### `contract-trace` — 검사 9종
+#### `contract-trace` — 검사 10종
 
 04의 `tests_from` 파서를 재사용해 계약의 절에서 백틱 심볼을 뽑는다.
 
@@ -628,9 +635,10 @@ stateDiagram-v2
 
 #### 리뷰어 선정 (결정론)
 
-`config.reviewers[]`의 `when` glob이 변경 파일 경로에 매칭되면 그 리뷰어가 켜진다. 우선순위는 배열 순서다.
+`config.reviewers[]`의 `when` glob이 변경 파일 경로에 매칭되면 그 리뷰어가 켜진다. 우선순위는 배열 순서다 — `gen · data · sec · test · arch · docs` ([[ADR-H062]] 가 `test` 를 `arch` 앞으로 옮겼다. 넷이 다 매칭되는 `normal` 런에서 떨어지는 쪽은 이제 `arch` 다).
 
-- `small` → 최상위 **1개**. `normal` → `config.review.profile_caps.normal`까지.
+- 레인별 상한 `config.review.profile_caps` — `docs` 1 · `fix` 1 · `small` 2 · `normal` 4. 넘치면 뒤쪽이 `routing.dropped` 로 간다.
+- **자진신고 대조** ([[ADR-H067]]). 리뷰어 항목의 선택 키 `risk` 는 그 리뷰어가 매칭되면 함의되는 위험이다(`data` → `schema`·`boundary`, `sec` → `authz`·`boundary`). 라우팅 직후 매칭된 리뷰어(`dropped` 포함 — 상한은 예산이지 위험의 부재가 아니다) 중 INTENT `risk` 가 그 위험을 하나도 안 적은 것을 이벤트 `risk_undeclared` 와 `phases.05-code-review.risk_undeclared` 에 **한 번** 남긴다. `risk` 가 `None` 이면 대조하지 않는다. **등급 · gap · exit 는 건드리지 않는다.**
 - diff가 `merge_below_diff_lines` 이하면 **통합 모드**(단일 에이전트가 체크리스트를 순차 적용). 같은 diff를 여러 번 보내지 않는다.
 - 기동 **전에** 스킬 파일 존재를 확인한다(무료, §E10). 프롬프트 첫 줄은 스킬 파일을 읽으라는 지시이고 **본문을 복사하지 않는다.**
 - 입력은 **인라인 diff + 계약 + trace**. 리포 탐색 금지, 부족하면 `need_more_context`에 적고 지적하지 않는다.
@@ -678,6 +686,7 @@ stateDiagram-v2
 
 - **Critical/Major만** 대상. Minor는 원장 적재 후 보고서로. `CONTRACT_DEFECT`는 수리가 아니라 **에스컬레이션**이다.
 - 배정은 **04의 소유자 라우팅 재사용** — 단일 소유자, `ambiguous`는 `primary_role` 우선, 동일 sig 재발 시 flip.
+- **수리 작성자도 지시 키를 받는다** ([[ADR-H064]]). blocking 으로 exit 4 를 낼 때 서로 다른 `target_role` 마다 `05:r{n}:repair:{role}` 로 지시하고(`n` 은 `review_repair` 사용 횟수), 봉투에 `## 모델 등급` 절을 붙인다. 슬롯은 `roles` 다. `target_role` 이 없는 지적(`CONTRACT_DEFECT`)은 키를 받지 않는다 — 에이전트 기동이 아니다.
 - 수리가 발생하면 지문이 바뀌어 영수증이 stale → 06이 자동으로 막는다. **"재게이트를 잊는" 실패 모드가 구조적으로 불가능**하다.
 - 수리 후: `gate --stage scoped` → **전체 회귀 1회**(인프라 확인 선행, §E9) → 승인 알림.
 
@@ -752,7 +761,7 @@ severity 상승 규칙이 의도 밖에서 발화한다.
 
 ```
 ## PR 생성 승인 요청
-{remote}  {head} → {base}      7파일 / 213라인 (예산 내)
+{remote}  {head} → {base}      7파일 / 213라인 (예산 내 — 파일 수는 테스트 제외)
 게이트: scoped PASS · 전체 회귀 PASS · {스킵된 스테이지 나열}
 05: 리뷰어 2/2 OK · Critical/Major 0 · Minor 2건(본문 명시)
 완료 등급 예상: PASS_WITH_GAPS ({사유})
@@ -863,11 +872,13 @@ gap 은 effort 와 **따로 센다**:
                       재집계는 **병합이다** — 종단 상태(applied/rejected/skipped)를 덮지 않는다
 2. verdict            create | amend | skip | retire  (duplicate 면 create 금지, contradicts 면 차단 → 에스컬레이션.
                       후보는 lint·check 목적지뿐 — prose 는 08 검토로, retire 는 rule_key 컷오프, ADR-H056)
-3. base fetch → 규칙 전용 브랜치 분기 (있으면 체크아웃해 이어서, §E11)
-4. promote --apply    파일 쓰기 + 베이스라인 파일 스테이징 확인
-5. 자체 게이트         lint + check 스테이지
-6. 실패 → 브랜치 폐기, rejected + 사유.  push 실패도 rejected + 사유
-7. 성공 → 별도 PR      기능 PR과 섞지 않는다. 머지 순서 제약 없음(효력은 다음 런부터)
+3. base fetch → 규칙 전용 브랜치 분기 (있으면 체크아웃해 이어서, §E11)   ← 메인이 한다. 규칙 파일도 여기서 쓴다
+4. promote --apply    판정 적용 + 베이스라인 측정 → 자체 게이트(lint + check, 현재 워크트리) → changelog
+                      게이트 실패 → 기계 강제 applied 전부 rejected + 사유 (실행기가 쓴다)
+                      127·124 → exit 10, 아무것도 안 씀 / 명령 없음 → gap promotion_selfgate_unverified
+                      문서 승격 · retire · skip 만이면 게이트를 돌리지 않는다 (ADR-H065)
+5. rejected 면 브랜치 폐기 (메인).  push 실패도 브랜치 폐기 + rejected + 사유
+6. 성공 → 별도 PR      기능 PR과 섞지 않는다. 머지 순서 제약 없음(효력은 다음 런부터)
 ```
 
 ### 3.8 `08-report` — 보고서
@@ -1050,6 +1061,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 
 - **기계로 막을 수 있는 규칙을 산문으로 승격하면 exit 8.** 이것이 `config.project.instruction_slot_budget`과 맞물려서, 그 예산이 **진짜 기계가 못 잡는 규칙**에만 쓰이게 만든다.
 - **`lint` 승격의 베이스라인은 실행기가 직접 잰다** — `--apply`가 어댑터의 `baseline_cmd`를 돌리고 `baseline_file`의 VCS 변화를 본다. 안 바뀌었으면 `rejected`이고, `rules_changelog.md`에 들어가는 값도 **기계가 잰 것**이다. 모델의 자진 신고는 받되 대조하고 다르면 exit 8 — 07의 `external`과 같은 규율이다. **종료 코드를 성패로 읽지 않는다**(린터가 위반을 찾으면 0이 아니고 그것이 정상이다). 실행 자체가 불가능하면(127·124) `infra`이고 exit 10이라 아무것도 쓰지 않는다. 어댑터에 `baseline_cmd`가 없는 스택은 막지 않되 갭 `promotion_baseline_unverified` + `PASS_WITH_GAPS`다 — **스킵은 통과가 아니다.** 결정은 [ADR-H021](../DECISIONS.md).
+- **승격 자체 게이트는 실행기가 돌린다** — `--apply` 가 changelog 를 쓰기 전에 어댑터의 `lint` · `check` 를 현재 워크트리에서 돌린다. 베이스라인과 달리 **여기서는 종료 코드가 성패다**: 하나라도 0 이 아니면 기계 강제 `applied` 가 전부 `rejected` + 사유가 된다. 127·124 는 `infra` 라 exit 10 이고 아무것도 안 쓴다. 명령이 없으면 갭 `promotion_selfgate_unverified` + `PASS_WITH_GAPS`. 결정은 [ADR-H065](../DECISIONS.md).
 - **중복·충돌**: `promote --scan`이 같은 category의 active 규칙 / anchors 교집합 2개 이상 / 목적지 파일 검색 결과를 **원문과 함께** 제시한다. 판정은 모델이 하되 `verdict` 강제 기록 — `duplicate`면 `action`은 `skip`/`amend`만(**`create` 금지**), `contradicts`면 자동 쓰기 차단 + 에스컬레이션. **"일단 붙이기"를 선택지에서 없앤다.** 런당 `create` 최대 3건 — **미검증 상속값이다 (§11.1).**
 - **원장 승격은 `lint`·`check` 목적지만이다** ([ADR-H056](../DECISIONS.md)). `prose` 목적지 버킷은 `prose_candidates`로 따로 나와 staged되지 않고 08 지시문 검토의 입력이 된다. 관측이 전부 `contract-trace`인 버킷은 `trace_repeats`(검사 반복 검출)이고 후보가 아니다.
 - **철회**: 오탐 3회 이상 · 사용자 반려 · 상위 규칙 흡수. `status = retired`로 바꾸고 린트 규칙은 **삭제가 아니라 무시 표시 + 사유**. 삭제가 아니라 이동이라 감사 이력이 보존된다.
@@ -1184,7 +1196,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 | 린트 규칙은 추가됐는데 **베이스라인이 안 바뀜** | `--apply`가 `baseline_cmd`를 직접 돌려 VCS 상태로 확인한다. 안 바뀌었으면 `rejected` — 다음 런 전체가 깨지는 것을 막는다. **미추적 새 파일도 변화로 센다**(첫 승격에서 베이스라인 파일은 아직 추적되지 않고 `git diff`는 그것을 한 줄도 안 보여 준다) |
 | **승격 자체 게이트(`lint`+`check` 재실행)** | `--apply` 가 어댑터의 두 스테이지를 **현재 워크트리에서** 돌린다 (ADR-H065). 0 이 아니면 기계 강제 승격 전부 `rejected` + 사유, 127·124 는 exit 10 이고 아무것도 안 쓴다, 명령이 없으면 갭 `promotion_selfgate_unverified`. **규칙 전용 브랜치 생성·폐기는 여전히 실행기 밖이다** — 메인이 한다 |
 | 자체 게이트 통과 후 push 실패 | `rejected` + 사유. 로컬 커밋은 폐기. 임계값이 다시 충족되면 다음 런에서 재승격 |
-| 승격이 기존 코드를 대량 위반시킴 | 자체 게이트가 잡는다 → 브랜치 폐기 → `rejected`. **기능 PR은 영향받지 않는다**(별도 브랜치이므로) |
+| 승격이 기존 코드를 대량 위반시킴 | 자체 게이트가 잡는다 → `rejected`(실행기) → 브랜치 폐기(메인). **기능 PR은 영향받지 않는다** — 단 메인이 규칙 전용 브랜치에서 불렀을 때만이다. 게이트는 현재 워크트리를 재므로 기능 브랜치에서 부르면 기능 코드와 규칙을 함께 잰다 |
 | `taxonomy.json` 손상 | `lint-phases`가 검증: 코드 유니크 / `enforceable`·`status` 어휘 / `rule` 참조가 실재 |
 
 ### E12. `INCOMPLETE`면 08을 돌리지 않는다
@@ -1206,7 +1218,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 
 실행기가 모델을 직접 호출하지 않는 구성에서는 **토큰·비용을 실측할 수 없다.**
 
-- `budget.model_calls`의 관측 단위는 **지시(`instructed`)** 다 — 봉투가 에이전트 기동을 지시한 횟수를 센다(`next` 진입 · `review07` 의 내장 리뷰 · `gate` 의 수리 배정). `next` 는 같은 페이즈에서 여러 번 불릴 수 있으므로 **키로 멱등**을 만든다. 그러지 않으면 계수가 왕복 횟수를 센다.
+- `budget.model_calls`의 관측 단위는 **지시(`instructed`)** 다 — 봉투가 에이전트 기동을 지시한 횟수를 센다(`next` 진입 · `review07` 의 내장 리뷰 · `gate` 의 수리 배정 · 05 `record` 의 blocking 수리 배정 — ADR-H064). `next` 는 같은 페이즈에서 여러 번 불릴 수 있으므로 **키로 멱등**을 만든다. 그러지 않으면 계수가 왕복 횟수를 센다.
 - **제출 기준을 버린 이유** (M26): 두 방향으로 틀렸다. 02 교차검증·07 내장 리뷰·04 의 수리 배정은 `record --reviewer` 를 남기지 않아 안 세지고(과소), 리뷰어 출력의 형식만 메인이 고쳐 재제출하면 새 모델 호출 없이 세진다(과다). 그래서 **"하한"이라고 적는 것도 재지 않은 주장**이다.
 - 지시 기준의 사각은 둘이고 `budget.blind_spots` 에 **이름으로** 남는다: 모델이 스스로 낸 호출은 못 센다(과소), 지시를 메인이 대신 처리하면 센 것이 실제로 안 일어난다(과다). 보고서가 그 둘을 그대로 적는다 — `basis` 를 상태에 박아 **기준이 바뀐 것이 조용히 일어나지 않게** 한다.
 - 상한(`model_calls_max`)은 이 개정에서 건드리지 않는다. 계수를 먼저 고치고 그 위에서 다시 판단한다.
@@ -1303,7 +1315,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 
 | 페이즈 | 실패 | 분류 | 대처 |
 |---|---|---|---|
-| 05 | `precheck` 예산 초과 / base behind | 정책 | **exit 9 즉시 사용자 판단.** 자동 분할·자동 리베이스 금지 |
+| 05 | `precheck` 예산 초과(파일 수는 테스트 제외) / base behind | 정책 | **exit 9 즉시 사용자 판단.** 자동 분할·자동 리베이스 금지 |
 | 05 | `infra_preflight` 프로브 실패 | infra | 카운터 미소모, 즉시 에스컬레이션. 회귀 전량이 빨간불이 되는 것을 막는다 (§E9) |
 | 05 | 프로브 실패로 스킵된 검증 + 관련 diff 있음 | 비차단 | `PASS_WITH_GAPS` + PR·보고서 명시. `--strict-migration`이면 중단 |
 | 05 | 계약 부재 | — | `no_contract` 모드로 진행, 보고서에 명시 (§E3) |
@@ -1336,7 +1348,10 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 | 07 | 변경 요청 미해결 | 차단 | 수리 루프. 초과 시 에스컬레이션 |
 | 07 | 타임아웃 후 외부 리뷰 도착 | — | 08 직전 재확인에서 **등급 강등.** 수리 루프로 되돌아가지 않는다 |
 | 07 | 코멘트 게시 실패 | infra | 2회 재시도 → 비차단 스킵(findings는 원장에 남는다) |
-| 07 | 승격 자체 게이트 실패 / 베이스라인 미스테이징 / push 실패 | 판단 | 브랜치 폐기 + `rejected` + 사유. **기능 PR 무영향** |
+| 07 | 승격 자체 게이트 실패 | 기계 | `--apply` 가 `rejected` + 사유를 쓴다. 메인은 브랜치를 폐기한다. **기능 PR 무영향** |
+| 07 | 승격 자체 게이트 실행 불가 (127 · 124) | infra | **exit 10.** 아무것도 쓰지 않는다 — 다시 친다 |
+| 07 | 어댑터에 `lint` · `check` 명령이 없음 | — | 막지 않고 갭 `promotion_selfgate_unverified` + `PASS_WITH_GAPS` |
+| 07 | 베이스라인 미스테이징 / push 실패 | 판단 | 브랜치 폐기 + `rejected` + 사유. **기능 PR 무영향** |
 | 07 | 사람 코멘트와 계약이 충돌 | 판단 | 파이프라인이 판단하지 않는다 → 보고서에 남기고 사람에게 |
 | 08 | `grade == INCOMPLETE` | — | 08을 돌리지 않는다. `ESCALATION.md`가 보고서를 겸한다 (§E12) |
 | 08 | 원장 누락 · 손상 | — | "미측정"으로 표기하고 산출. **보고서는 파이프라인을 실패시키지 않는다** |
@@ -1361,7 +1376,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 | **M19** — 실행기가 가드레일 **지문**을 남기지 않아 런 중 변경이 장부에 드러나지 않는다 | `runs[]`에 가드레일·소스 해시 (§E13) |
 | **M11 · M17** — 커밋 범위를 `roles[].owns`에서 유도하고 소유 밖 변경은 커밋하지 않고 드러낸다. 판정은 `doctor`가 쓰는 것과 **같은 glob 엔진**으로 | `clean_ownership` 계산 (§3.3) |
 | `retry_budget`이 **50 step 무재시도**에서 유도됐다 | 이 값은 실측이 아니라 **바닥에 눌린 값**이다. 재시도가 한 번도 없는 상태에서 유도된 상한은 "안전한 상한"이 아니라 "아직 모른다"를 뜻한다 (§4) |
-| **회귀로 잠그지 않은 문서 계약은 지켜지지 않는다** — 런 #10의 보고 6건 중 넷이 문서 ↔ 코드 어긋남이었고, 그 런이 처음으로 *문서가 지켜지는지*를 검사했기 때문에 드러났다 | `02-cross-verify`가 겨누는 자리이고, `contract-trace` 9종이 05에서 같은 일을 한다 (§3.5) |
+| **회귀로 잠그지 않은 문서 계약은 지켜지지 않는다** — 런 #10의 보고 6건 중 넷이 문서 ↔ 코드 어긋남이었고, 그 런이 처음으로 *문서가 지켜지는지*를 검사했기 때문에 드러났다 | `02-cross-verify`가 겨누는 자리이고, `contract-trace` 10종이 05에서 같은 일을 한다 (§3.5) |
 
 ---
 
@@ -1386,7 +1401,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 - `harness/adapters/{id}.json`의 `stages` · `attribution` · `test_report` · `entrypoint_resolver` · `infra_failure_patterns` — `04-gate`가 **처음으로 실제 소비자가 된다.** 어댑터를 `verified: true`로 올릴 수 있는 시점이 여기다.
 - `harness/calibration.json`의 `derived` — §4의 정책이 읽는 값.
 
-**순차 실행기(`scripts/execute.py`)는 남긴다.** 01~04가 기능 1건을 완주할 때까지 회귀 안전망이고, 통합·폐기 판단은 그 뒤다 ([ADR-H003](../DECISIONS.md)).
+**순차 실행기(`scripts/execute.py`)는 이 템플릿에 없다.** 01~04 가 기능 1건을 완주할 때까지 회귀 안전망으로 남겼다가([ADR-H003](../DECISIONS.md)), 승인 우회를 물려주지 않으려고 뺐다([ADR-H005](../DECISIONS.md) · [ADR-H037](../DECISIONS.md)).
 
 ---
 

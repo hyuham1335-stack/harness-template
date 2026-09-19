@@ -21,12 +21,12 @@
 |------|------|
 | 문서 골격 | `docs/` 7종 — PRD · TRD · API_SPEC · ARCHITECTURE · ADR · UI_GUIDE · PIPELINE-LOG. **전부 빈 골격이고 프로젝트가 채운다** |
 | 가드레일 | `CLAUDE.md` — `## 작업 원칙` 넷만 채워져 있고 나머지는 플레이스홀더다. **8페이즈 코어는 이 파일을 자동 주입하지 않는다** (§4) |
-| **계약 계층** | `harness/config.json` · `config.schema.json` · `adapters/{self-python,nextjs-ts,_template}.json` + `adapter.schema.json` · `profiles/nextjs-ts/` · `templates/contract.md` |
-| 실행기 | `scripts/harness.py` — `init` · `doctor` · `calibrate`. `scripts/runtime.py` — 시각·트랜스크립트 읽기·출력 인코딩의 공유 원시요소 ([ADR-H037](DECISIONS.md)) |
-| **파이프라인 코어** | `scripts/pipeline/{cli,state,adapters,attribution,verdict,contract,gate,trace_contract,review,precheck,ledger,mask,pr,promote,review07,report,triage}.py` — 8페이즈 실행기. `doctor` · `init --feature` · `next` · `record` · `gate` · `advance` · `retry` · `escalate` · `resume` · `status` · `lint-phases` · `precheck` · `contract-trace` · `approve` · `mask` · `pr` · `promote` · `review07` · `report`. **stdout 은 언제나 단일 JSON 봉투 하나**. 모듈명이 `trace.py` 가 아닌 것은 stdlib `trace` 를 가리기 때문이다 |
-| **페이즈 파일** | `harness/phases/{00-triage,01-plan,02-cross-verify,03-implement,04-gate,05-code-review,06-pr,07-pr-review,08-report}.md` — `---` 로 감싼 JSON 프론트매터. 00 은 요청을 레인(`docs`·`small`·`normal`)으로 나누는 예측이고 03·05 가 검증한다 (ADR-H044). 여덟이 다 섰고 `lint-phases` 의 FUTURE 전이는 0건이다 |
-| **리뷰어 · 원장** | `.claude/skills/{general,data-layer,security,architecture,test-quality,docs}-reviewer/SKILL.md` — 스택 비종속 관점 6종. `general` 은 소스 변경이 있으면 항상 켜지고 07 이 깨끗한 런을 생략하는 근거다 (ADR-H043). 각 파일의 `## 프로젝트 보강` 절은 **비운 채로** 배포한다(그 절이 비어 갈수록 하네스가 성숙한 것이다). `docs/harness/pipeline/ledger/{taxonomy.json,findings.jsonl,rules_changelog.md}` — `taxonomy.json` 하나가 **원장 어휘 · 승격 목적지 · 리뷰 범위** 셋의 단일 출처다. **`findings.jsonl` 은 비어 있다** (§6) |
-| **진입점** | `.claude/commands/feature.md` (`/feature` — 01~08 전부. push 는 실행기가 하고 **PR 생성·코멘트 게시는 메인 세션이 forge 도구로** 한다. **머지는 범위 밖**) · `.claude/commands/log.md` (`/log`) · `.claude/agents/{impl-writer,test-writer,plan-reviewer}.md` (각 3KB 이하 — 소유 경계·제출 형식·금지만 담고 규약은 담지 않는다) |
+| **계약 계층** | `harness/config.json` · `config.schema.json` · `adapters/{self-python,nextjs-ts,_template}.json` + `adapter.schema.json` · `profiles/nextjs-ts/` · `templates/contract.md`. 프로필은 템플릿 config 와 키가 같고 `reviewers` · `review` 는 값까지 같다 — 스키마가 둘을 필수로 요구한다 ([ADR-H063](DECISIONS.md)) |
+| 실행기 | `scripts/harness.py` — `init` · `doctor` · `calibrate` · `verify-adapter`. `scripts/runtime.py` — 시각·트랜스크립트 읽기·출력 인코딩의 공유 원시요소 ([ADR-H037](DECISIONS.md)) |
+| **파이프라인 코어** | `scripts/pipeline/{cli,state,adapters,attribution,verdict,contract,gate,trace_contract,review,precheck,ledger,mask,pr,promote,review07,report,triage}.py` — 8페이즈 실행기. `doctor` · `init --feature` · `next` · `record` · `gate` · `advance` · `retry` · `escalate` · `resume` · `status` · `abandon` · `lint-phases` · `precheck` · `contract-trace` · `approve` · `mask` · `pr` · `promote` · `review07` · `report` · `cost`. **stdout 은 언제나 단일 JSON 봉투 하나**. 모듈명이 `trace.py` 가 아닌 것은 stdlib `trace` 를 가리기 때문이다 |
+| **페이즈 파일** | `harness/phases/{00-triage,01-plan,02-cross-verify,03-implement,04-gate,05-code-review,06-pr,07-pr-review,08-report}.md` — `---` 로 감싼 JSON 프론트매터. 00 은 요청을 레인(`docs`·`small`·`normal`)으로 나누는 예측이고 03·05 가 검증한다 (ADR-H044). `fix` 레인은 기계가 내지 않고 사람·모델만 고른다 (ADR-H053). 여덟이 다 섰고 `lint-phases` 의 FUTURE 전이는 0건이다 |
+| **리뷰어 · 원장** | `.claude/skills/{general,data-layer,security,architecture,test-quality,docs}-reviewer/SKILL.md` — 스택 비종속 관점 6종. `general` 은 소스 변경이 있으면 항상 켜지고 07 이 깨끗한 런을 생략하는 근거다 (ADR-H043). 레인별 호출 상한을 넘으면 우선순위 `gen · data · sec · test · arch · docs` 의 뒤쪽부터 빠진다 (ADR-H062). 각 파일의 `## 프로젝트 보강` 절은 **비운 채로** 배포한다(그 절이 비어 갈수록 하네스가 성숙한 것이다). `docs/harness/pipeline/ledger/{taxonomy.json,findings.jsonl,rules_changelog.md}` — `taxonomy.json` 하나가 **원장 어휘 · 승격 목적지 · 리뷰 범위** 셋의 단일 출처다. **`findings.jsonl` 은 비어 있다** (§6) |
+| **진입점** | `.claude/commands/feature.md` (`/feature` — 01~08 전부. push 는 실행기가 하고 **PR 생성·코멘트 게시는 메인 세션이 forge 도구로** 한다. **머지는 범위 밖**) · `.claude/commands/log.md` (`/log`) · `.claude/agents/{impl-writer,test-writer,ui-writer,plan-reviewer}.md` (각 3KB 이하 — 소유 경계·제출 형식·금지만 담고 규약은 담지 않는다) |
 | 테스트 | `scripts/test_harness.py` · `scripts/test_pipeline.py` · `scripts/test_runtime.py` — `python -m pytest scripts/` |
 | **파이프라인 명세** | `docs/harness/pipeline/team-spec.md` — **8페이즈의 정본.** 페이즈 01~08 · 종료 코드표 · 실패 3분류·매트릭스 · 수렴 판정 · 귀속 규칙 · 승격 임계값 · §E1~E14 · §P1~P6 |
 | 실측 | `harness/calibration.json` — `calibrate` 산출. 정책 5종이 여기서 유도된다. **지금은 전부 미측정이고 첫 `calibrate` 가 채운다** |
@@ -160,6 +160,9 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 | 스택 교체 시 코어 무변경 | **검증됨** — 어댑터를 갈아도 코어는 0줄이다 ([ADR-H038](DECISIONS.md)) |
 | **어댑터 `verified`** | **`false` 다.** 동봉 어댑터가 셋 다 `false` 이고, 그것이 정직한 값이다. 2차 파일럿이 `nextjs-ts` 로 15런을 완주했지만 그 값은 파일럿 리포의 것이다 — 클론은 `python scripts/harness.py verify-adapter` 로 올린다 — 완주 런 ≥ 3 이 전부 01~08 `passed` 면 `true` ([ADR-H047](DECISIONS.md)). 측정 뒤 완주 런이 5 이상 쌓이면 `precheck` 가 `calibration_stale` 로 재측정을 권한다(등급 X) |
 | **`calibration.json`** | **템플릿은 영구 미측정** ([ADR-H039](DECISIONS.md)). 클론이 첫 `calibrate` 로 채우고, 그 뒤로는 `promote --flush` 가 런마다 `tests_ran_floor` 를 올린다 ([ADR-H047](DECISIONS.md)) — 2차 파일럿은 1회 측정값(14)이 652개 시점까지 고정돼 급감 감지가 꺼져 있었다 |
+| **승격 자체 게이트** | **코드만 있다** ([ADR-H065](DECISIONS.md)). `promote --apply` 가 어댑터의 `lint` · `check` 를 돌리지만 실제 `applied` 승격은 아직 0건이다. 이 리포의 `self-python` 은 두 명령이 `null` 이라 여기서는 언제나 gap `promotion_selfgate_unverified` 다 |
+| **`risk_undeclared`** | **관측만, 표본 0** ([ADR-H067](DECISIONS.md)). 05 가 01 의 `risk` 신고와 켜진 리뷰어를 대조해 기록한다. 등급 · gap · exit 는 건드리지 않는다 |
+| **`files_max` 는 소스만 센다** | **미실측** ([ADR-H066](DECISIONS.md)). 2차 파일럿 exit 9 여섯 번 중 몇 번이 이 규칙으로 통과했을지 재지 않았다 — 클론의 첫 5런 exit 9 비율이 검사한다 |
 | **`findings.jsonl` · 승격 임계** | **템플릿 표본 0.** 2차 파일럿 표본(15런 · 140행 · 판정 13회 전부 skip)은 [ADR-H051](DECISIONS.md) · [ADR-H054](DECISIONS.md) 에 근거로만 남겼다. `THRESHOLDS` 여섯 숫자는 아직 바꾸지 않는다 — 시한 뒤 skip 은 이제 gap 이다 |
 
 **어댑터 `verified: true` 를 기다리지 않기로 했다.** 승격 조건은 *"`attribution` 의
@@ -185,7 +188,8 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 4. **리뷰어 호출 고정비.** 실행기의 계수가 형식 교정 왕복과 07 내장 리뷰를 안 세서
    실측과 갈렸다. 원장이 쌓이면 답이 나온다. **01 의 2라운드 이후·전이가 바로 내는
    다음 페이즈 지시·05 `merged`·승격 판정이 계수 밖이던 것은 닫혔다**
-   ([ADR-H042](DECISIONS.md)) — 남은 것은 형식 교정 왕복이다
+   ([ADR-H042](DECISIONS.md)). 05 수리 작성자도 이제 `05:r{n}:repair:{role}` 키로 센다 — 전에는
+   03 재제출에 섞였다 ([ADR-H064](DECISIONS.md)). 남은 것은 형식 교정 왕복이다
 5. **트리아지 임계값 셋과 모델 등급 표.** `config.triage` 의 `small_max_paths` ·
    `normal_min_chars` · `model_call_when_undecided` 와 `config.models` 의 슬롯별
    등급은 실측 없이 고른 초기값이다 ([ADR-H044](DECISIONS.md)). 첫 세 런의
@@ -193,12 +197,18 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
    나면 docs 규칙이 헐거운 것이고, 모델 호출이 매 런 나면 규칙이 너무 좁은 것이다.
    **2차 파일럿 15런의 값은 [ADR-H054](DECISIONS.md) 에 있다** — `small` 2런, `triage_miss` 0.
    등급표는 [ADR-H061](DECISIONS.md) 로 1차 개정했다 (작성자 sonnet · 검사자 normal opus ·
-   effort 는 에이전트 프론트매터) — 여전히 실측 0 이다
+   effort 는 에이전트 프론트매터) — 여전히 실측 0 이다. 05 수리 작성자는 04 수리와 같은 `roles`
+   슬롯이다 ([ADR-H064](DECISIONS.md))
 6. **파이프라인 우회를 어떻게 재는가.** 2차 파일럿은 마지막 Must 머지 뒤 1h25m 동안 PR 일곱
    건을 파이프라인 없이 머지했다 — 1기능 평균 1h42m 인 파이프라인이 작은 수정에 비싸서다. 08 은
    파이프라인 밖을 셀 수 없다. `fix` 레인은 [ADR-H053](DECISIONS.md) 대로 2026-09-19 에 구현됐다
    (사람·모델만 고른다 — 실물 런은 아직 0) — 우회가 줄었는지는 클론 리포의 `git log --merges` 대비
    `_workspace/runs/` 수로 대조하는 것이 지금 유일한 방법이다
+7. **`risk_undeclared` 를 게이트로 올릴 것인가.** 지금은 관측만 한다([ADR-H067](DECISIONS.md)).
+   클론의 첫 5런에서 이것이 난 런에 05·07 이 그 관점의 지적을 냈으면 게이트(02 강제 또는 gap)로
+   올리고, 없었으면 매핑을 좁힌다. 비슷하게 첫 3런의 `routing.dropped` 에 `arch` 가 얼마나 자주
+   오르는지, 그 런에 구조 지적이 새어 나갔는지 본다 — `test` 를 앞세운 대가가 구조 리뷰 누락이고,
+   새면 상한을 4→5 로 올린다 ([ADR-H062](DECISIONS.md))
 
 ---
 

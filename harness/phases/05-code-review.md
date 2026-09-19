@@ -59,7 +59,8 @@
 
 - 04 가 `passed` 이고 워크트리 지문이 유효하다
 - 계약 파일이 필수 절을 담고 있다 (`no_contract` 모드가 아닌 한)
-- `precheck` 가 통과했다 — 예산 · 브랜치 · base · 인프라
+- `precheck` 가 통과했다 — 예산 · 브랜치 · base · 인프라. 예산의 파일 수는 어댑터
+  `attribution.test_file_globs` 에 걸린 테스트 파일을 뺀 소스 파일 수다 (ADR-H066)
 
 ## 절차
 
@@ -68,7 +69,7 @@
 
 ```
 1. precheck --scope pr      정적 · 무료   예산 · 브랜치 · divergence · 인프라
-2. contract-trace           정적 · 무료   계약 ↔ 코드 대조 9종
+2. contract-trace           정적 · 무료   계약 ↔ 코드 대조 10종
 3. Critical 있으면 선수리 + gate --phase 05 --stage loop             → 2로 복귀
 4. 리뷰:  diff ≤ merge_below_diff_lines  → 단일 에이전트 · 다중 체크리스트
           그보다 크면                      → 병렬 fan-out (profile 상한까지)
@@ -114,6 +115,15 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
 **`fix` 레인은 상한이 1 이라 `gen` 만 라우팅된다** (`review.profile_caps.fix`,
 ADR-H053). 다른 관점이 매칭됐으면 `dropped` 에 남고 보고서가 그것을 적는다.
 
+**상한을 넘으면 우선순위 뒤쪽부터 빠진다** — `gen · data · sec · test · arch · docs`
+(배열 순서). `test` 가 `arch` 보다 앞이라 넷이 다 매칭되는 `normal` 런에서는 `arch` 가
+`dropped` 로 간다 (ADR-H062).
+
+**봉투가 01 의 자진신고와 라우팅을 대조한다** (ADR-H067). 매칭된 리뷰어(`dropped`
+포함)의 `risk`(`data` → `schema`·`boundary`, `sec` → `authz`·`boundary`)를 INTENT
+`risk` 가 하나도 안 적었으면 `risk_undeclared` 이벤트와 이 페이즈 노드에 한 번 남는다.
+**관측이다** — 등급도 exit 도 바뀌지 않고, 02 를 되돌려 돌리지도 않는다. 네가 할 일은 없다.
+
 각 리뷰어에게 주는 것 — 봉투의 **「리뷰 범위」** 줄이 둘 중 하나를 정한다
 (`review.depth`, 레인별 · ADR-H059):
 
@@ -135,7 +145,8 @@ ADR-H053). 다른 관점이 매칭됐으면 `dropped` 에 남고 보고서가 �
 ## 역할 프롬프트 템플릿
 
 리뷰어에게 보내는 형태다. **역할(작성자)에게 보내는 것이 아니다** — 수리 지시는
-04 의 템플릿을 그대로 쓴다.
+04 의 템플릿을 그대로 쓴다. 수리 작성자의 모델은 봉투의 `## 모델 등급` 절이
+`05:r{n}:repair:{role}` 키마다 찍는다 — 04 수리와 같은 `roles` 슬롯이다 (ADR-H064).
 
 ```
 ## 리뷰 요청 — {reviewer.code}
@@ -274,8 +285,8 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
   회계할 목록은 수리 봉투가 직접 적어 준다
 - **소스를 고친 뒤 재게이트 없이 넘어가지 마라.** 이유: 지문이 어긋나 06 이
   자동으로 막는다. 막히는 것이 정상 동작이다
-- **여기서 push 하거나 PR 을 만들지 마라.** 이유: 그것은 06 의 일이고 06 은 아직
-  구현되지 않았다
+- **여기서 push 하거나 PR 을 만들지 마라.** 이유: 그것은 06 의 일이다. 06 이 승인과
+  지문을 확인한 뒤에야 push 한다
 
 ## 실패 시
 
