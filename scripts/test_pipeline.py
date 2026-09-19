@@ -8054,6 +8054,20 @@ class TestPhase05Ledgering:
         assert "수리가 필요하다" in env["render"]
         assert "Minor 는 고치지 않는다" in env["render"]
 
+    def test_the_repair_writer_gets_a_model_tier(self, repo, request_file, phases):
+        """05 수리 작성자도 지시 키를 받는다 — 04 와 대칭 (ADR-H064).
+        없으면 메인 세션 모델로 돌아 `config.models` 밖이다."""
+        run_id, paths = self._prepare(repo, request_file, phases)
+        f = _reviewer_files(paths, "arch", [
+            {"id": "F-1", "category": "AUTHZ_MISSING_RULE", "severity": "major",
+             "target_role": "impl", "title": "인가 누락", "quote": "인가 누락"}])
+        env = cli.run_record(repo, "05", str(f), reviewer="arch", round_=1,
+                             run_id=run_id)
+        assert env["exit"] == 4, env["render"]
+        assert "`05:r1:repair:impl` → model: `sonnet`" in env["render"], env["render"]
+        _p, s = st.load(repo, run_id)
+        assert s["models"]["instructed"].get("05:r1:repair:impl") == "sonnet",             s["models"]
+
     def test_minor_finding_does_not_block(self, repo, request_file, phases):
         run_id, paths = self._prepare(repo, request_file, phases)
         f = _reviewer_files(paths, "arch", [
@@ -12881,6 +12895,7 @@ class TestModelTierRouting:
         "03:r0:impl":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
         "04:r1:impl":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
         "05:r1:gen":      {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "opus"},
+        "05:r1:repair:impl": {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
     }
 
     def test_slot_and_profile_fallback(self):

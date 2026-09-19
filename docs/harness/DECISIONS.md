@@ -101,9 +101,10 @@
 | [[ADR-H058]] | 계약·인가 테스트를 contract-trace 가 센다 | 채택됨 | 구현 | `untested_contract_item` 은 03 미적용 → 백로그 7. e2e 도입은 프로젝트 몫 → 백로그 17 |
 | [[ADR-H059]] | 07 트리거 삭제 · 05 범위는 레인이 | 채택됨 | 구현 | audit 문구는 [[ADR-H061]] 이 대체 |
 | [[ADR-H060]] | 02 는 최대 1회 · `risk` 가 돌린다 | 채택됨 | 구현 | `risk_undeclared` 대조 장치는 후속 → 백로그 5 |
-| [[ADR-H061]] | 작성자는 싸게, 검사자는 비싸게 | 채택됨 | 구현 | 05 `review_repair` 작성자는 등급 밖 → 백로그 6 |
+| [[ADR-H061]] | 작성자는 싸게, 검사자는 비싸게 | 채택됨 | 구현 | 05 `review_repair` 작성자 등급은 [[ADR-H064]] 가 배선 |
 | [[ADR-H062]] | `test` 리뷰어가 `arch` 보다 먼저 | 채택됨 | 구현 | 백로그 1 닫음 |
 | [[ADR-H063]] | 프로필 시드는 템플릿 키를 전부 갖는다 | 채택됨 | 구현 | 백로그 12 닫음 |
+| [[ADR-H064]] | 05 수리 작성자도 지시 키를 받는다 | 채택됨 | 구현 | 백로그 6 닫음. 등급 값은 표본 대기(백로그 19) |
 
 ---
 
@@ -131,7 +132,7 @@
 |---|---|---|---|
 | 1 | 결정 | [[ADR-H054]] 표 | **닫힘 2026-09-19 · [[ADR-H062]]** — **(b) priority 교환**(test 4→3 · arch 3→4, `_reviewers_note` 가 "우선순위는 배열 순서" 라 배열 위치도 옮긴다). 코드 0줄, 테스트는 config 에서 읽어 자동 적응. (a) 는 단독으로 못 닫는다 — `when_role_owned` 는 매칭만 바꾸고 절단은 `matched[:cap]` 이 priority 순으로 한다. (c) 는 `test_normal_profile_respects_the_cap`·`test_dropped_reviewers_are_named_not_silently_lost` 둘을 다시 써야 한다 |
 | 12 | 코드 | **1 뒤** (같은 블록을 복사하므로) | **닫힘 2026-09-19 · [[ADR-H063]]** — `harness/config.json` 의 `reviewers`+`review` 를 프로필에 복사 · `config.schema.json` `required` 에 `reviewers`·`review` 추가 · 프로필↔템플릿 키 일치 테스트 1개(지금 없다 — 이 결함이 안 잡힌 이유) |
-| 6 | 코드 | 없음 | `_review_repair_render` 직전에 `_instruct(s, "05-code-review", ["05:r{n}:repair:{owner}"])` + `_slot_of` 의 05 분기에서 `repair` 면 `roles`. 3~5줄, 04 와 대칭. 등급 **값**은 파동 3 의 표본이 정하고, 배선은 지금 해야 표본이 쌓인다 |
+| 6 | 코드 | 없음 | **닫힘 2026-09-19 · [[ADR-H064]]** (배선만 — 등급 값은 파동 3) — `_review_repair_render` 직전에 `_instruct(s, "05-code-review", ["05:r{n}:repair:{owner}"])` + `_slot_of` 의 05 분기에서 `repair` 면 `roles`. 3~5줄, 04 와 대칭. 등급 **값**은 파동 3 의 표본이 정하고, 배선은 지금 해야 표본이 쌓인다 |
 | 3 | 결정 | 브랜치 격리 범위 | `run_promote` 의 `apply` 직전에 `adapters.run_stage(root, adapter, "lint")`·`"check"` 를 돌려 exit≠0 이면 `applied` 행을 `rejected`+사유로. `promote.py` 에 `reject_applied` 헬퍼(종단 상태 보호와 같은 층). 07 페이즈 148~151·259행 문구 교체. ~50줄. **함정 둘**: `cmd:null` 스테이지의 `skipped` 는 통과가 아니라 갭(`promotion_baseline_unverified` 와 같은 모양으로 남긴다) · 브랜치 생성은 실행기 밖 그대로 두고 그 사실을 07 에 적는다(권장 — 격리까지 실행기가 하면 파동 4 규모) |
 
 **파동 2 — 사람 결정이 곧 작업**
@@ -160,7 +161,7 @@
 **P1 — 관측 공백**
 
 5. **`risk_undeclared` 대조** — [[ADR-H060]]. 01 INTENT 의 `risk` 는 자진신고이고 03·05 가 검증하지 않는다. `data` 리뷰어 매칭을 프록시로 쓰는 안은 오탐이 잦을 것이라 후속으로 미뤘다(사용자 결정, 2026-09-19).
-6. **05 `review_repair` 작성자의 모델 등급** — [[ADR-H061]]. `_instruct` 호출은 00·01·03·04 넷뿐이라 05 수리 작성자는 `config.models` 밖이다. 닫힘: `state.models.instructed × counters.repair` 5런 뒤 빈도를 보고 정한다.
+6. **배선 닫힘 (2026-09-19 · [[ADR-H064]])** — **05 `review_repair` 작성자의 모델 등급** — [[ADR-H061]]. `_instruct` 호출은 00·01·03·04 넷뿐이라 05 수리 작성자는 `config.models` 밖이다. 닫힘: `state.models.instructed × counters.repair` 5런 뒤 빈도를 보고 정한다.
 7. **`untested_contract_item` 을 03 이 요구하지 않는다** — [[ADR-H058]]. 원인 미규명 오탐 6/6(§E6) 이 남아 `BASELINE_CHECKS` 유예에만 있다. 닫힘: 오탐 원인 규명 뒤 `required_tests` 에 편입.
 8. **`OTHER` 26관측(폴백의 40%)** — [[ADR-H035]] 한계 4(C6). taxonomy 에 `OTHER: unpromotable` 그대로이고 군집 셋(`search_failed`·`facts_failed` 계열)도 어휘에 없다.
 9. **닫힘 (2026-09-19 · [[ADR-H023]] 추기)** — **`resolve_ambiguous` 가 deferred 실패에도 flip 인덱스를 올린다** — [[ADR-H023]] 이 "별건" 으로 남긴 것.
@@ -3189,6 +3190,8 @@ effort 는 07 의 `/code-review --effort` 하나만 결정론으로 정했고 �
 `roles.normal` 을 opus 로 올리고, 늘지 않으면 `test-writer` 를 medium 으로 내릴지 본다. 감사 런 2회의
 `escaped_05` 가 medium 시절(16건/15런)과 다른지 본다. 05 수리가 런당 1회를 넘으면 그 경로에 지시 키를 둔다.
 
+**추기 (2026-09-19, 백로그 6 배선 닫힘)**: 트레이드오프의 "05 수리 작성자는 등급 밖이다" 는 [[ADR-H064]] 가 닫았다 — `05:r{n}:repair:{role}` 키가 `roles` 슬롯으로 지시된다. 재검토 시점의 마지막 문장도 그것으로 답했다.
+
 관련: [[ADR-H044]](결정 4 부분 대체) · [[ADR-H059]](audit 문구 대체) · [[ADR-H025]] · [[ADR-H053]] · [[ADR-H060]]
 
 ---
@@ -3243,6 +3246,33 @@ effort 는 07 의 `/code-review --effort` 하나만 결정론으로 정했고 �
 **재검토 시점**: 두 번째 프로필 시드가 생길 때.
 
 관련: [[ADR-H061]] · [[ADR-H062]] · [[ADR-H043]]
+
+---
+
+### ADR-H064: 05 수리 작성자도 지시 키를 받는다 — `roles` 슬롯, 04 와 대칭
+
+**날짜**: 2026-09-19 · **상태**: 채택됨 · **구현 상태**: 구현됨 (2026-09-19 — `cli._judge_05` blocking 분기의
+`_instruct` · `_model_tiers_render` · `_slot_of` 의 `05:…:repair:…` 분기)
+
+**맥락**: 백로그 6. [[ADR-H061]] 이 트레이드오프로 남긴 것 — `_instruct` 호출은 00 · 01 · 03 · 04 넷뿐이라 05 의
+`review_repair` 작성자는 `config.models` 밖(메인 세션 모델)이었다. 백로그는 "등급 **값**은 표본이 정하고, 배선은 지금
+해야 표본이 쌓인다" 고 적었다 — 지시 키가 없으면 `state.models.instructed × counters.repair` 를 잴 재료부터 없다.
+
+**결정**:
+1. 05 가 blocking 으로 exit 4 를 낼 때 blocking 의 서로 다른 `target_role` 마다 `05:r{n}:repair:{role}` 키로
+   `_instruct` 한다. `n` 은 `review_repair` 카운터의 사용 횟수로, 04 의 `04:r{n}:{owner}` 와 같은 규칙이다.
+   봉투는 04 와 같이 `## 모델 등급` 절을 덧붙인다.
+2. `_slot_of` 는 `05` 의 셋째 칸이 `repair` 면 `roles`, 아니면 `reviewers` 다 — 05 수리 작성자는 04 수리와 같은
+   작성자이고 [[ADR-H061]] 의 "작성자는 싸게" 가 그대로 걸린다. 등급 값은 새로 정하지 않는다(`roles` 표 그대로).
+
+**트레이드오프**: `target_role` 이 없는 지적(메인 몫, `CONTRACT_DEFECT`)은 키를 받지 않는다 — 에이전트 기동이 아니다.
+계수가 는다: 05 수리 1회가 이제 `model_calls` 에 잡힌다. 그것이 [[ADR-H042]] 의 "지시하는 자리에서 센다" 이고,
+전에는 03 재제출로 새어 보이지도 않았다.
+
+**재검토 시점**: [[ADR-H061]] 과 같다 — `state.models.instructed` × `counters.repair` 5런. 05 수리가 `roles` 등급으로
+라운드를 더 쓰면 05 수리만 따로 올릴지 본다.
+
+관련: [[ADR-H061]](트레이드오프 닫음) · [[ADR-H042]] · [[ADR-H044]]
 
 ---
 

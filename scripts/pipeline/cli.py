@@ -1454,7 +1454,8 @@ def _slot_of(key):
     if head in ("03", "04"):
         return "roles"
     if head == "05":
-        return "reviewers"
+        # 05 수리 작성자는 04 수리와 같은 작성자다 (ADR-H064).
+        return "roles" if len(parts) > 2 and parts[2] == "repair" else "reviewers"
     return None
 
 
@@ -3767,6 +3768,12 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
         # 다음 회차에 델타가 회계해야 할 목록이다. `record` 가 같은 인자로
         # 부르는 함수이므로 봉투와 검사가 같은 것을 본다 (M38).
         prev_open = _previous_open(node.get("rounds") or {}, round_ + 1, delta)
+        # 수리 배정도 기동 지시다 — 04 와 대칭으로 작성자마다 센다 (ADR-H064).
+        repair_keys = ["05:r%d:repair:%s" % (used, r) for r in
+                       sorted({f.get("target_role") for f in blocking
+                               if f.get("target_role")})]
+        _instruct(s, "05-code-review", repair_keys, ctx)
+        tiers = _model_tiers_render(ctx, s, repair_keys)
         st.save(paths, s)
         return st.envelope(
             "record", False, 4, s,
@@ -3775,7 +3782,8 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             _review_repair_render(blocking, used + 1, delta, prev_open,
                                   raised=raised if node.get(
                                       "severity_raised_grant", {}).get(
-                                      "round") == round_ else None),
+                                      "round") == round_ else None)
+            + (("\n\n" + tiers) if tiers else ""),
             "python scripts/pipeline/cli.py gate --phase 04 --stage scoped "
             "--run-id %s" % s["run_id"])
 
