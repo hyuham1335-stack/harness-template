@@ -6135,6 +6135,27 @@ class TestPrecheckBudget:
         got = pc.run(repo, scope="pr")
         assert got["budget"]["files"] >= 12
 
+    def test_test_files_do_not_count_toward_files_max(self, repo):
+        """ADR-H066 — 파일 수 예산은 소스만 센다. 줄 수는 여전히 전체다."""
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 3)
+        for i in range(11):
+            (repo / "src" / "lib" / ("t%d.test.ts" % i)).write_text(
+                "export const t = %d\n" % i, encoding="utf-8")
+        got = pc.run(repo, scope="pr")
+        assert got["exit"] == 0, got["checks"]
+        assert got["budget"]["files"] == 3, got["budget"]
+        assert got["budget"]["test_files_excluded"] == 11, got["budget"]
+
+    def test_source_files_alone_still_exceed_files_max(self, repo):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 11)
+        (repo / "src" / "lib" / "a.test.ts").write_text("export const t = 1\n",
+                                                        encoding="utf-8")
+        got = pc.run(repo, scope="pr")
+        assert got["exit"] == 9
+        assert got["budget"]["files"] == 11, got["budget"]
+
 
 class TestPrecheckBranch:
 
