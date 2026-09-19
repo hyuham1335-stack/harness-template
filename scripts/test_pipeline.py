@@ -3023,6 +3023,22 @@ class TestAttribution:
         got = attr.dispatch(failures, config, prev_sigs=[], flip_state={})
         assert got["parallel"] is True and not got["deferred"]
 
+    def test_a_deferred_flip_is_rolled_back(self, repo, config):
+        """미룬 배정은 지시로 안 나갔다 — flip 인덱스도 정체 체인도 그것을 세면
+        다음 라운드에 역할 하나를 건너뛰거나(ADR-H023 별건) 즉시 정체로 잡힌다."""
+        f1 = {"id": "F-1", "owner": "test", "sig": "a", "frames": ["src/lib/match.ts"]}
+        f2 = {"id": "F-2", "owner": "ambiguous", "sig": "b",
+              "frames": ["src/lib/match.ts"]}
+        flip = {}
+        got = attr.dispatch([f1, f2], config, prev_sigs=[], flip_state=flip)
+        assert got["owner"] == "test" and got["deferred"][0]["owner"] == "impl"
+        assert flip["b"]["assigned"] == [], "안 나간 배정이 flip 에 남았다"
+        assert "impl|b" not in got["pairs"], "안 나간 쌍이 정체 체인에 들어간다"
+        again = attr.dispatch([dict(f2)], config, prev_sigs=got["pairs"],
+                              flip_state=flip)
+        assert again["owner"] == "impl", "같은 역할이 처음으로 시도해야 한다"
+        assert again["stuck"] is False
+
     def test_same_signature_twice_is_stuck(self, repo, config):
         failures = [{"id": "F-1", "owner": "impl", "sig": "a", "frames": []}]
         got = attr.dispatch(failures, config, prev_sigs=["impl|a"], flip_state={})
