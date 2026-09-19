@@ -103,6 +103,7 @@
 | [[ADR-H060]] | 02 는 최대 1회 · `risk` 가 돌린다 | 채택됨 | 구현 | `risk_undeclared` 대조 장치는 후속 → 백로그 5 |
 | [[ADR-H061]] | 작성자는 싸게, 검사자는 비싸게 | 채택됨 | 구현 | 05 `review_repair` 작성자는 등급 밖 → 백로그 6 |
 | [[ADR-H062]] | `test` 리뷰어가 `arch` 보다 먼저 | 채택됨 | 구현 | 백로그 1 닫음 |
+| [[ADR-H063]] | 프로필 시드는 템플릿 키를 전부 갖는다 | 채택됨 | 구현 | 백로그 12 닫음 |
 
 ---
 
@@ -129,7 +130,7 @@
 | # | 성격 | 선행 | 권장안 · 규모 |
 |---|---|---|---|
 | 1 | 결정 | [[ADR-H054]] 표 | **닫힘 2026-09-19 · [[ADR-H062]]** — **(b) priority 교환**(test 4→3 · arch 3→4, `_reviewers_note` 가 "우선순위는 배열 순서" 라 배열 위치도 옮긴다). 코드 0줄, 테스트는 config 에서 읽어 자동 적응. (a) 는 단독으로 못 닫는다 — `when_role_owned` 는 매칭만 바꾸고 절단은 `matched[:cap]` 이 priority 순으로 한다. (c) 는 `test_normal_profile_respects_the_cap`·`test_dropped_reviewers_are_named_not_silently_lost` 둘을 다시 써야 한다 |
-| 12 | 코드 | **1 뒤** (같은 블록을 복사하므로) | `harness/config.json` 의 `reviewers`+`review` 를 프로필에 복사 · `config.schema.json` `required` 에 `reviewers`·`review` 추가 · 프로필↔템플릿 키 일치 테스트 1개(지금 없다 — 이 결함이 안 잡힌 이유) |
+| 12 | 코드 | **1 뒤** (같은 블록을 복사하므로) | **닫힘 2026-09-19 · [[ADR-H063]]** — `harness/config.json` 의 `reviewers`+`review` 를 프로필에 복사 · `config.schema.json` `required` 에 `reviewers`·`review` 추가 · 프로필↔템플릿 키 일치 테스트 1개(지금 없다 — 이 결함이 안 잡힌 이유) |
 | 6 | 코드 | 없음 | `_review_repair_render` 직전에 `_instruct(s, "05-code-review", ["05:r{n}:repair:{owner}"])` + `_slot_of` 의 05 분기에서 `repair` 면 `roles`. 3~5줄, 04 와 대칭. 등급 **값**은 파동 3 의 표본이 정하고, 배선은 지금 해야 표본이 쌓인다 |
 | 3 | 결정 | 브랜치 격리 범위 | `run_promote` 의 `apply` 직전에 `adapters.run_stage(root, adapter, "lint")`·`"check"` 를 돌려 exit≠0 이면 `applied` 행을 `rejected`+사유로. `promote.py` 에 `reject_applied` 헬퍼(종단 상태 보호와 같은 층). 07 페이즈 148~151·259행 문구 교체. ~50줄. **함정 둘**: `cmd:null` 스테이지의 `skipped` 는 통과가 아니라 갭(`promotion_baseline_unverified` 와 같은 모양으로 남긴다) · 브랜치 생성은 실행기 밖 그대로 두고 그 사실을 07 에 적는다(권장 — 격리까지 실행기가 하면 파동 4 규모) |
 
@@ -165,7 +166,7 @@
 9. **닫힘 (2026-09-19 · [[ADR-H023]] 추기)** — **`resolve_ambiguous` 가 deferred 실패에도 flip 인덱스를 올린다** — [[ADR-H023]] 이 "별건" 으로 남긴 것.
 10. **파이프라인 우회 측정** — [[ADR-H053]]. 클론 리포에서 `git log --merges` 의 PR 수와 `_workspace/runs/` 의 런 수를 대조한다(ROADMAP §7-6). 하네스 밖이다.
 11. **비용 계측 0건** — [[ADR-H032]]·[[ADR-H052]]. `cli cost` 는 있으나 파일럿이 걷어냈고 08 표는 「미계측」만 찍는다. **코드는 완비다** — `runtime.read_cost_state` 가 트랜스크립트의 마지막 `cost-state` 레코드를 읽고 `run_cost` 가 세션×런 구간 겹침으로 귀속한다. 훅이 못 채우는 것은 결함이 아니라 설계다: `cost-state` 는 런타임이 트랜스크립트 마지막 줄로 쓰므로 그 세션 자신의 `SessionEnd` 훅은 볼 수 없다(`runtime.py` 주석). 닫힘: `cost-state` 가 실재하는 세션에서 `cli cost --run-id` 를 돌려 값이 나는 것을 확인 — 표본 대기.
-12. **`nextjs-ts` 프로필에 `reviewers`·`review` 블록이 없다** — 탐색 중 발견. **영향은 cap 미전달보다 크다** — `reviewers` 가 없으면 `review.route()` 가 빈 목록을 받아 클론에서 **05 코드리뷰가 통째로 비활성**이다(cap `normal: 3` 은 그 뒤 문제). 구조적 원인은 `config.schema.json` `required` 에 `reviewers`·`review` 가 없어 프로필이 검증을 통과하는 것. 프로필 시드는 `nextjs-ts` 하나뿐이라 `init --adapter self-python` 은 이미 거부된다.
+12. **닫힘 (2026-09-19 · [[ADR-H063]])** — **`nextjs-ts` 프로필에 `reviewers`·`review` 블록이 없다** — 탐색 중 발견. **영향은 cap 미전달보다 크다** — `reviewers` 가 없으면 `review.route()` 가 빈 목록을 받아 클론에서 **05 코드리뷰가 통째로 비활성**이다(cap `normal: 3` 은 그 뒤 문제). 구조적 원인은 `config.schema.json` `required` 에 `reviewers`·`review` 가 없어 프로필이 검증을 통과하는 것. 프로필 시드는 `nextjs-ts` 하나뿐이라 `init --adapter self-python` 은 이미 거부된다.
 
 **P2 — 사람 결정**
 
@@ -3214,6 +3215,34 @@ effort 는 07 의 `/code-review --effort` 하나만 결정론으로 정했고 �
 있는가. 있으면 (c) 로 간다.
 
 관련: [[ADR-H050]](결정 4 닫음) · [[ADR-H054]] · [[ADR-H043]]
+
+---
+
+### ADR-H063: 프로필 시드는 템플릿 config 의 키를 전부 갖는다 — 스키마가 `reviewers`·`review` 를 요구한다
+
+**날짜**: 2026-09-19 · **상태**: 채택됨 · **구현 상태**: 구현됨 (2026-09-19 — `profiles/nextjs-ts/config.json` 에
+`reviewers` · `review` · `external_pr_review` 와 그 주석 복사 · `config.schema.json` `required` 에 `reviewers` · `review` ·
+`ProfileParityTest` 셋)
+
+**맥락**: 백로그 12. 유일한 프로필 시드 `nextjs-ts` 에 `reviewers` · `review` · `external_pr_review` 가 없었다. `reviewers`
+가 없으면 `review.route()` 가 빈 목록을 받아 **클론에서 05 코드리뷰가 통째로 비활성**이다 — 계획된 리뷰어 0 은
+`review05.status: failed` 라 모든 런이 등급을 잃는다. 스키마 `required` 에 둘이 없어 프로필이 검증을 통과했고,
+프로필↔템플릿 키를 대조하는 테스트가 없어 아무도 몰랐다. `models` 만 [[ADR-H061]] 이 동기화 테스트를 가졌다.
+
+**결정**:
+1. 템플릿의 세 블록과 그 `_note` 를 프로필에 그대로 복사한다. 템플릿의 글롭은 이미 `src/**` 의 ts 레이아웃이라
+   고칠 것이 없다. [[ADR-H062]] 의 순서가 함께 간다.
+2. `config.schema.json` `required` 에 `reviewers` · `review` 를 더한다 — 없으면 05 가 무의미해지는 블록이다.
+   `external_pr_review` 는 없으면 `disabled` 로 읽혀 gap 이 아니므로 요구하지 않는다.
+3. `ProfileParityTest` — 모든 프로필의 최상위 키(`_` 주석 제외)가 템플릿과 같고, `reviewers` · `review` 값이 같다.
+   값이 프로젝트마다 다른 블록(`project` · `adapter` · `cross_verify`)은 키만 대조한다.
+
+**트레이드오프**: 키 대조는 템플릿에 새 블록을 넣을 때마다 프로필도 고치게 강제한다 — 그것이 목적이다.
+`reviewers` 값 대조는 프로필이 스택별 글롭을 가질 날(어댑터 3종, ROADMAP §5 보류)에 풀어야 한다.
+
+**재검토 시점**: 두 번째 프로필 시드가 생길 때.
+
+관련: [[ADR-H061]] · [[ADR-H062]] · [[ADR-H043]]
 
 ---
 

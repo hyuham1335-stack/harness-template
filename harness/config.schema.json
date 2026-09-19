@@ -3,7 +3,7 @@
   "title": "harness config",
   "description": "프로젝트 고유 지식이 사는 유일한 파일. 스크립트·페이즈 파일에는 고유명사를 남기지 않는다. scripts/harness.py 의 자체 검증기가 이 스키마를 해석하므로 아래 키워드만 쓴다: type · enum · required · properties · additionalProperties · items · minItems · minimum · maximum · pattern · $ref(로컬) · definitions · title · description. 인스턴스에서 밑줄(_)로 시작하는 키는 주석으로 보고 additionalProperties 검사에서 제외한다.",
   "type": "object",
-  "required": ["schema", "project", "adapter", "contract", "vcs", "roles", "primary_role"],
+  "required": ["schema", "project", "adapter", "contract", "vcs", "roles", "primary_role", "reviewers", "review"],
   "additionalProperties": false,
   "properties": {
     "schema": {
