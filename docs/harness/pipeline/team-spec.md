@@ -596,7 +596,7 @@ stateDiagram-v2
 
 **1·2번이 무료다.** 뒤에서 되돌릴 일을 여기서 먼저 잡는다.
 
-#### `contract-trace` — 검사 8종
+#### `contract-trace` — 검사 9종
 
 04의 `tests_from` 파서를 재사용해 계약의 절에서 백틱 심볼을 뽑는다.
 
@@ -609,14 +609,17 @@ stateDiagram-v2
 | 진입점마다 **그 진입점의** 테스트 파일이 존재 | `untested_entrypoint` | 같은 디렉터리의 스템 일치 ∪ import 지정자 해석(`attribution.import_aliases`). Major, 테스트 역할 — **유예 없음**, 03 이 먼저 거부 (ADR-H058) |
 | 오류 어휘 상수를 테스트가 쓴다 | `untested_error_symbol` | 테스트 본문에 `상수`. Major, 테스트 역할 — **유예 없음** |
 | `[역할]` 태그 진입점의 거부 테스트 | `authz_untested` | 그 진입점의 테스트 파일에 `attribution.authz_denied_pattern`. Major, 테스트 역할 — **유예 없음**. 패턴이 없으면 이 검사만 스킵 |
+| 여정의 스펙이 슬러그를 선언 | `missing_journey_spec` | 계약 `## 여정` 의 스펙 파일이 실재하고 슬러그가 `describe`/`test.describe` 문자열 인자나 `export` 이름으로 있다(주석은 안 센다). Critical, 테스트 역할 — **유예 없음**, 03 이 먼저 거부 (ADR-H058 추기) |
 | 계약에 없는 신규 public 심볼 | `out_of_contract` | Major — **첫 3런 `warn_only`**. 계약이 이름 붙인 것은 유닛·오류 어휘뿐 아니라 `config.contract.sections.data_shapes` 절의 **타입·상수**도 포함한다 (M57 — 그 절이 파서에 등록된 적이 없어 P8 의 지적 6/6 이 구조적 오탐이었다) |
 
 - **「데이터 형태」 절은 형태로 거른다.** 백틱 안의 첫 심볼이 PascalCase 또는 UPPER_SNAKE 인 것만 센다 — 그 절은 산문이 섞여 있어 필드명·내장(`map`·`any`)·경로가 함께 백틱에 온다. 형태 없이 다 모으면 `symbols()` 가 넓어져 **오탐 대신 미탐**이 생긴다: 흔한 낱말이 계약 산문에 있다는 이유로 진짜 위반이 조용히 통과한다.
 - **컨테이너명 + 심볼명 쌍으로 검색한다.** 심볼명만 보면 흔한 이름이 다른 파일에 있어 **거짓 통과**한다. 컨테이너를 못 찾으면 `unknown`으로 낙하시킨다.
 - 파일 읽기는 전부 UTF-8 명시 (§E4).
 - 커버리지 도구가 없는 상태에서 `untested_contract_item`이 "테스트 약화" 탐지를 대신한다.
-- `adapter.entrypoint_resolver`가 미정의면 진입점을 풀어야 하는 셋(`missing_entrypoint`·`untested_entrypoint`·`authz_untested`)만 스킵하고 나머지 5종은 수행한다 + 보고서에 사유와 함께 명시.
+- `adapter.entrypoint_resolver`가 미정의면 진입점을 풀어야 하는 셋(`missing_entrypoint`·`untested_entrypoint`·`authz_untested`)만 스킵하고 나머지 6종은 수행한다 + 보고서에 사유와 함께 명시.
 - 테스트 존재 검사 넷(`untested_*`·`authz_untested`)은 **존재 검사이지 의미 검사가 아니다** — 단언이 맞는지는 test-quality 리뷰어가 본다.
+- **유닛 테스트 검사는 e2e 를 세지 않는다.** 어댑터 `attribution.e2e_file_globs` 와 계약 여정의 스펙 파일을 뺀 테스트만 본다 — e2e 가 상수를 화면 문구로 단언해도 유닛 테스트 부재를 가리지 않는다.
+- **러너 없는 여정은 디스패치 전에 거부한다.** 03 패킷을 내는 두 자리(`next`·전이)와 `record --phase 03` 이 `_contract_precheck_03` 을 부른다: 어댑터 `e2e` 가 `present` 가 아니면(없음·해당 없음) exit 8, 여정 단계가 진입점 절의 `METHOD /path` 와 글자 그대로 맞지 않아도 exit 8. 지시 계수 전이다.
 - **새 셋은 03 에서 먼저 요구한다** (ADR-H058 결정 6·7). 05 의 Major 는 수리 루프를 돌리지 않고 원장에 쌓일 뿐이라, 03 패킷이 계약에서 뽑은 목록을 주고 03 제출이 같은 함수(`required_tests`)로 센다 — 빠지면 첫 런부터 exit 8(유예 없음, 결정 8). 05 는 두 번째 방어선이다.
 
 #### 리뷰어 선정 (결정론)
@@ -1354,7 +1357,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 | **M19** — 실행기가 가드레일 **지문**을 남기지 않아 런 중 변경이 장부에 드러나지 않는다 | `runs[]`에 가드레일·소스 해시 (§E13) |
 | **M11 · M17** — 커밋 범위를 `roles[].owns`에서 유도하고 소유 밖 변경은 커밋하지 않고 드러낸다. 판정은 `doctor`가 쓰는 것과 **같은 glob 엔진**으로 | `clean_ownership` 계산 (§3.3) |
 | `retry_budget`이 **50 step 무재시도**에서 유도됐다 | 이 값은 실측이 아니라 **바닥에 눌린 값**이다. 재시도가 한 번도 없는 상태에서 유도된 상한은 "안전한 상한"이 아니라 "아직 모른다"를 뜻한다 (§4) |
-| **회귀로 잠그지 않은 문서 계약은 지켜지지 않는다** — 런 #10의 보고 6건 중 넷이 문서 ↔ 코드 어긋남이었고, 그 런이 처음으로 *문서가 지켜지는지*를 검사했기 때문에 드러났다 | `02-cross-verify`가 겨누는 자리이고, `contract-trace` 8종이 05에서 같은 일을 한다 (§3.5) |
+| **회귀로 잠그지 않은 문서 계약은 지켜지지 않는다** — 런 #10의 보고 6건 중 넷이 문서 ↔ 코드 어긋남이었고, 그 런이 처음으로 *문서가 지켜지는지*를 검사했기 때문에 드러났다 | `02-cross-verify`가 겨누는 자리이고, `contract-trace` 9종이 05에서 같은 일을 한다 (§3.5) |
 
 ---
 

@@ -63,12 +63,15 @@ def parse(text, config):
     """
     sections = (config.get("contract") or {}).get("sections") or {}
     units, dropped = _units(section(text, sections.get("units")))
+    journeys, journeys_dropped = _journeys(section(text, sections.get("journeys")))
     return {
         "units": units,
         "dropped": dropped,
         "entrypoints": _entrypoints(section(text, sections.get("entrypoints"))),
         "errors": _errors(section(text, sections.get("errors"))),
         "data_shapes": _data_shapes(section(text, sections.get("data_shapes"))),
+        "journeys": journeys,
+        "journeys_dropped": journeys_dropped,
     }
 
 
@@ -88,6 +91,8 @@ def symbols(parsed):
         out.add(e)
     for d in parsed.get("data_shapes") or []:
         out.add(d)
+    for j in parsed.get("journeys") or []:
+        out.add(j["symbol"])
     return out
 
 
@@ -116,6 +121,59 @@ def _units(block):
         else:
             dropped.append(dict(item, reason="컨테이너명과 심볼명 쌍이 아니다"))
     return out, dropped
+
+
+_STEP_ARROW = re.compile(r"→|->")
+
+
+def _journeys(block):
+    """(여정, 버려진 것). 형식은 유닛과 같다 — `스펙 파일 · 여정 슬러그` (ADR-H058 추기).
+
+    유닛과 달리 **들여쓴 줄을 읽는다.** 그 줄이 여정의 진입점 순서이고, `→`·`->`
+    로 나눈 조각마다 `METHOD /path` 를 뽑아 `steps` 에 둔다. 백틱은 있어도 없어도 된다.
+    """
+    out, dropped, current = [], [], None
+    for line in block.splitlines():
+        if line.startswith("-"):
+            current = None
+            spans = _BACKTICK.findall(line)
+            if not spans:
+                continue
+            container, symbol = _split(spans[0])
+            item = {"container": container, "symbol": symbol, "raw": spans[0],
+                    "steps": []}
+            if container and symbol:
+                out.append(item)
+                current = item
+            else:
+                dropped.append(dict(item, reason="스펙 파일과 여정 슬러그 쌍이 아니다"))
+        elif current is not None and line[:1].isspace():
+            text = _BACKTICK.sub(lambda m: m.group(1), line.strip().lstrip("-*+ "))
+            for piece in _STEP_ARROW.split(text):
+                m = _METHOD_PATH.match(piece)
+                if m:
+                    current["steps"].append({"method": m.group("method"),
+                                             "path": m.group("path")})
+    return out, dropped
+
+
+def journey_problems(parsed):
+    """여정이 디스패치될 수 없는 이유들. 빈 목록이면 문제없다.
+
+    단계는 **`METHOD path` 쌍**으로 진입점 절과 대조한다 — 경로만 보면 `GET /x` 가
+    `POST /x` 로 통과한다. 표기는 진입점 절과 글자 그대로여야 한다.
+    """
+    known = {(e["method"], e["path"]) for e in parsed.get("entrypoints") or []}
+    out = ["`%s` — %s" % (d["raw"], d["reason"])
+           for d in parsed.get("journeys_dropped") or []]
+    for j in parsed.get("journeys") or []:
+        if not j["steps"]:
+            out.append("`%s` — 들여쓴 줄에 진입점 순서(`METHOD /path`)가 없다" % j["raw"])
+        for step in j["steps"]:
+            if (step["method"], step["path"]) not in known:
+                out.append("`%s` — `%s %s` 가 진입점 절에 없다"
+                           % (j["raw"], step["method"], step["path"]))
+    return out
 
 
 def _split(span):

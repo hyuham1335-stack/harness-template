@@ -1202,6 +1202,10 @@ def run_next(root, run_id=None):
                 "커밋된 변경:\n%s"
                 % (len(files), "\n".join("- `%s`" % f for f in files[:20])),
                 "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
+    if pid == "03-implement":
+        refused = _contract_precheck_refuse(root, paths, s, ctx, "next")
+        if refused is not None:
+            return refused
     # **지시를 낸 자리에서 센다** (M26). `next` 는 같은 페이즈에서 여러 번
     # 불릴 수 있으므로 키로 멱등을 만든다.
     _t, _m, exhausted = _instruct(
@@ -1876,7 +1880,8 @@ def _tests_required_render(root, ctx, s):
         return ""
     parsed = contract_mod.parse(full.read_text(encoding="utf-8"), ctx["config"])
     eps, errors = parsed.get("entrypoints") or [], parsed.get("errors") or []
-    if not eps and not errors:
+    journeys = parsed.get("journeys") or []
+    if not eps and not errors and not journeys:
         return ""
     test_role = trace_contract._test_role(ctx["config"])
     lines = ["## 게이트가 세는 테스트 — `%s` 역할" % test_role, "",
@@ -1890,7 +1895,64 @@ def _tests_required_render(root, ctx, s):
                      "파일을 import 하는 테스트에 %s" % (ep.get("raw"), need))
     for name in errors:
         lines.append("- 오류 어휘 `%s` — 이 상수를 단언하는 테스트" % name)
+    for j in journeys:
+        lines.append("- 여정 `%s` — `%s` 에 이 슬러그를 최상위 describe 문자열이나 "
+                     "`export const` 이름으로" % (j["symbol"], j["container"]))
     return "\n".join(lines)
+
+
+def _contract_precheck_refuse(root, paths, s, ctx, cmd):
+    """`next`·전이가 03 패킷을 내기 전의 거부 봉투. 통과면 None — 지시를 세기 전이다."""
+    refused = _contract_precheck_03(root, ctx, s)
+    if refused is None:
+        return None
+    st.append_event(paths, "check_fail", cmd=cmd, phase="03-implement",
+                    **refused["data"])
+    st.save(paths, s)
+    return st.envelope(cmd, False, 8, s, refused["data"], refused["render"],
+                       "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
+
+
+def _contract_precheck_03(root, ctx, s):
+    """03 패킷을 내기 **전에** 계약을 본다 (ADR-H058 추기). 문제가 없으면 None.
+
+    러너 없는 여정을 워커가 스펙까지 쓴 뒤에 거부하면 그 스펙이 test 소유·claimed
+    로 `clean_ownership` 을 지나 PR 에 조용히 실린다. 그래서 디스패치 전에 막는다.
+    03 의 `requires` 가 계약 파일을 요구하므로 여기 올 때 계약은 있다.
+    반환: {"render": str, "data": dict}
+    """
+    import contract as contract_mod
+
+    if ((s.get("contract") or {}).get("mode")) == "no_contract":
+        return None
+    full = Path(root) / resolve("${run.contract_file}", ctx)
+    if not full.exists():
+        return None
+    parsed = contract_mod.parse(full.read_text(encoding="utf-8"), ctx["config"])
+    if not parsed.get("journeys") and not parsed.get("journeys_dropped"):
+        return None
+    _config, adapter, _cal = adapters.load(root)
+    state = adapters.stage_state(adapter, "e2e")
+    if state != "present":
+        why = ("이 스택은 e2e 가 해당 없음이라 여정을 적을 수 없다"
+               if state == "na" else
+               "어댑터에 e2e 가 없다 — 도입은 ADR 로 한다")
+        files = harness.list_files_with_untracked(root)
+        written = [src for src in (contract_mod._source_for_container(
+                       j.get("container"), files) for j in parsed["journeys"]) if src]
+        tail = ("\n\n이미 쓴 스펙은 지운다 — 러너 없는 스펙은 test 소유라 소유 "
+                "검사를 지나 PR 에 조용히 실린다:\n%s"
+                % "\n".join("- `%s`" % w for w in written)) if written else ""
+        return {"data": {"journeys": "e2e_" + state, "written": written},
+                "render": "## 러너 없는 여정\n\n%s. 계약의 `## 여정` 을 \"없음\" 으로 "
+                          "되돌리고 `next` 를 다시 친다.%s" % (why, tail)}
+    problems = contract_mod.journey_problems(parsed)
+    if problems:
+        return {"data": {"journeys": "invalid", "problems": problems},
+                "render": "## 여정을 디스패치할 수 없다\n\n%s\n\n단계는 「진입점」 절의 "
+                          "`METHOD /path` 를 글자 그대로 `→` 로 잇는다."
+                          % "\n".join("- %s" % p for p in problems)}
+    return None
 
 
 def _deferred_render(s):
@@ -2325,6 +2387,10 @@ def _advance_to_next(root, paths, s, phase_item, ctx, cmd="record",
     skipped = _skip_policy(root, paths, s, nxt_item, ctx, cmd)
     if skipped is not None:
         return skipped
+    if nxt == "03-implement":
+        refused = _contract_precheck_refuse(root, paths, s, ctx, cmd)
+        if refused is not None:
+            return refused
     # **지시를 낸 자리에서 센다.** 전이가 다음 패킷을 바로 내므로 `next` 의
     # 계수를 지나친다 — 02 의 교차검증기가 그렇게 예산 밖에 있었다 (ADR-H042).
     _t, _m, exhausted = _instruct(
@@ -2913,6 +2979,15 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
                "\n".join("- `%s` — %s" % (d.get("raw"), d.get("reason"))
                          for d in zero["dropped"][:10]) or "- (없음 — 불릿이 한 줄도 없다)"),
             _same_command(s, "03"))
+    refused = _contract_precheck_03(root, ctx, s)
+    if refused is not None:
+        # 백스톱이다 — 패킷 뒤에 메인이 계약에 여정을 넣은 경우 (ADR-H058 추기).
+        st.set_phase_status(s, "03-implement", "failed")
+        st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
+                        **refused["data"])
+        st.save(paths, s)
+        return st.envelope("record", False, 8, s, refused["data"], refused["render"],
+                           _same_command(s, "03"))
     bad_rules = _check_rules_read(claims, _rules_read_expected(root, ctx["config"]))
     if bad_rules:
         # **워커의 규칙 읽기를 게이트가 묻는다** (ADR-H055). `CLAUDE.md` 는

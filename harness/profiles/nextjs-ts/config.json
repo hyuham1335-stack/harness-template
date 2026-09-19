@@ -21,7 +21,8 @@
       "errors": "## 오류 어휘",
       "data_shapes": "## 데이터 형태",
       "schema": "## 스키마·데이터 변경",
-      "boundaries": "## 외부 경계"
+      "boundaries": "## 외부 경계",
+      "journeys": "## 여정"
     },
     "required": ["units"]
   },
@@ -46,7 +47,7 @@
       "id": "test",
       "agent": "test-writer",
       "code": "test",
-      "owns": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.golden.test.ts"]
+      "owns": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.golden.test.ts", "e2e/**"]
     }
   ],
   "primary_role": "impl",

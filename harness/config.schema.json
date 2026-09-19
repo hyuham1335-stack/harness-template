@@ -69,14 +69,15 @@
             "errors": {"type": "string"},
             "data_shapes": {"type": "string"},
             "schema": {"type": "string"},
-            "boundaries": {"type": "string"}
+            "boundaries": {"type": "string"},
+            "journeys": {"type": "string"}
           }
         },
         "required": {
           "description": "계약 문서에 반드시 있어야 하는 절의 키.",
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string", "enum": ["units", "entrypoints", "errors", "data_shapes", "schema", "boundaries"]}
+          "items": {"type": "string", "enum": ["units", "entrypoints", "errors", "data_shapes", "schema", "boundaries", "journeys"]}
         }
       }
     },

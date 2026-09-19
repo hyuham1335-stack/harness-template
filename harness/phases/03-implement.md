@@ -28,6 +28,8 @@
      "except": "config.main_owned_paths",
      "claims": "${run.dir}/03_claims.json", "on_fail": 8},
     {"id": "tests_required", "from": "${run.contract_file}",
+     "unless": "state.contract.mode == \"no_contract\"", "on_fail": 8},
+    {"id": "journeys_runnable", "from": "${run.contract_file}",
      "unless": "state.contract.mode == \"no_contract\"", "on_fail": 8}
   ],
   "gate": {"runner": "adapter", "fail_fast": true, "steps": [{"id": "compile"}]},
@@ -69,6 +71,10 @@
    `POST`·`maxDuration` 같은 이름은 어댑터 `implied_exports` 가 말하므로
    유닛에 다시 적지 않는다. 진입점 경로의 파라미터는 `{id}` 로 적어도
    어댑터 `param_styles` 가 실제 폴더명(`[id]`)으로 찾는다.
+   **`## 여정` 은 이 런으로 PRD 유저 스토리 하나의 AC 가 전부 충족될 때만 1개 적고,
+   아니면 "없음" 이다.** 형식은 유닛과 같은 `스펙 파일 · 여정 슬러그` 이고 들여쓴 줄에
+   진입점 절의 `METHOD /path` 를 글자 그대로 `→` 로 잇는다. 어댑터에 e2e 스테이지가
+   없으면(없음·해당 없음) 패킷을 내기 전에 exit 8 이다 (ADR-H058 추기).
 2. 계약의 유닛·진입점 항목 수를 세어 프로파일을 확정한다.
 3. **역할 전원을 한 메시지 안에서 동시 호출한다.** 각 역할에게 지시문 패킷을
    준다 — 패킷에 **소유권 표**가 들어 있고, 그 표가 소유 경계의 유일한 출처다.
@@ -158,6 +164,8 @@ orphan(아무도 claim 하지 않은 변경)으로 잡혀 03 전체가 거부된
   `CONTRACT_DEFECT` 로 보고하면 메인이 고치고 델타를 다시 내린다
 - **커밋·푸시하지 마라.** 이유: 파이프라인이 지문을 잡는 시점이 정해져 있고,
   중간 커밋은 그 지문을 앞당겨 게이트 영수증을 어긋나게 한다
+- **러너 없는 여정을 적지 마라.** 이유: 돌지 않는 e2e 스펙은 test 소유라 소유 검사를
+  지나 PR 에 조용히 실린다. 도입은 프로젝트 ADR 로 어댑터 `e2e.cmd` 를 채운 뒤다
 
 ## 실패 시
 

@@ -189,6 +189,13 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "e2e_file_globs": {
+          "description": "e2e 스펙과 보조 파일. contract-trace 의 유닛·오류 어휘·진입점 테스트 검사가 이 파일들을 세지 않는다 — e2e 가 유닛 테스트 부재를 가리지 않게 (ADR-H058 추기).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
