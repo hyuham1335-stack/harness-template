@@ -36,7 +36,7 @@
     "full": {"cmd": ["run", "test"], "timeout_sec": 1800, "once_after_loop": true},
     "e2e": {
       "cmd": null,
-      "_note": "Playwright E2E 는 TRD 8번에서 [Scale] 단계다. cmd:null 은 '없는 것'이고 게이트는 스킵됨으로 기록한다 — 통과가 아니다."
+      "_note": "Playwright E2E 는 TRD 8번에서 [Scale] 단계다. cmd:null 은 '없는 것'이고 게이트는 스킵됨으로 기록한다 — 통과가 아니다. 이 상태에서 계약에 `## 여정` 을 적으면 03 이 디스패치 전에 거부한다 (ADR-H058 추기). 도입 시 형태: cmd 와 함께 when_touched [\"e2e/**\", \"src/app/**\"], infra_preflight 에 테스트 DB URL(on_missing warn → infra_skipped:e2e). test_report.glob 에 e2e 리포트를 넣지 않는다 — 테스트 수 신호는 full 전용이고 지난 런의 XML 이 안 돈 런의 실적이 된다."
     },
     "build": {
       "cmd": ["run", "build"],
@@ -55,7 +55,8 @@
   "attribution": {
     "compile_error_regex": "(?P<path>[^\\s:()]+\\.(?:ts|tsx|js|jsx))[:(](?P<line>\\d+)[:,](?P<col>\\d+)\\)?:?\\s*-?\\s*error",
     "app_frame_prefixes": ["src/app/", "src/components/", "src/lib/", "src/services/", "src/types/"],
-    "test_file_globs": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.golden.test.ts"],
+    "test_file_globs": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.golden.test.ts", "e2e/**/*.spec.ts"],
+    "e2e_file_globs": ["e2e/**"],
     "symbol_not_found_patterns": ["has no exported member", "Cannot find name", "Module not found", "Cannot find module"],
     "authz_denied_pattern": "\\b403\\b|FORBIDDEN",
     "import_aliases": {"@/": "src/"},

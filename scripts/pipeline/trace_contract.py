@@ -4,7 +4,7 @@
 **05 에서 두 번째로 도는 검사이고 무료다.** 리뷰어를 부르기 전에 여기서 잡으면
 뒤에서 되돌릴 일이 없다. 모델을 한 번도 부르지 않는다.
 
-검사는 여덟이다:
+검사는 아홉이다:
 
 | 코드 | 무엇 | 심각도 |
 |---|---|---|
@@ -15,6 +15,7 @@
 | `untested_entrypoint`     | 진입점마다 그 진입점의 테스트 파일이 있는가 | major (유예 없음, 03 이 먼저 거부) |
 | `untested_error_symbol`   | 오류 어휘 상수를 테스트가 한 번이라도 쓰는가 | major (유예 없음, 03 이 먼저 거부) |
 | `authz_untested`          | `[역할]` 태그 진입점의 테스트에 거부 단언이 있는가 | major (유예 없음, 03 이 먼저 거부) |
+| `missing_journey_spec`    | 계약 `## 여정` 의 스펙 파일에 그 슬러그가 선언돼 있는가 | critical (유예 없음, 03 이 먼저 거부) |
 | `out_of_contract`         | 계약에 없는 신규 public 심볼      | major (첫 3런 warn_only) |
 
 "첫 3런" 은 **그 검사가 지적을 낸 런**으로 센다 (ADR-H058 · `ledger.in_baseline_for`).
@@ -46,7 +47,7 @@ import ledger  # noqa: E402
 
 CHECKS = ("missing_impl", "missing_error_symbol", "missing_entrypoint",
           "untested_contract_item", "untested_entrypoint", "untested_error_symbol",
-          "authz_untested", "out_of_contract")
+          "authz_untested", "missing_journey_spec", "out_of_contract")
 
 _NO_RESOLVER = "어댑터에 `entrypoint_resolver` 가 없다"
 
@@ -80,6 +81,7 @@ CATEGORY = {
     "untested_entrypoint": "TEST_MISSING_FAILURE_PATH",
     "untested_error_symbol": "TEST_MISSING_FAILURE_PATH",
     "authz_untested": "AUTHZ_MISSING_RULE",
+    "missing_journey_spec": "BOUNDARY_VIOLATION",
     "out_of_contract": "NAMING",
 }
 
@@ -96,7 +98,7 @@ _DEFAULT_PUBLIC = (r"^\s*export\s+(?:async\s+)?(?:function|const|class|type|"
 
 def run(root, config, adapter, contract_path, no_contract=False, changed=None,
         baseline_runs=None):
-    """여덟 검사를 돌린다. 반환은 그대로 `05_trace.json` 이 된다."""
+    """아홉 검사를 돌린다. 반환은 그대로 `05_trace.json` 이 된다."""
     root = Path(root)
     if no_contract or not contract_path:
         # §E3. 계약이 없는 런은 정상 경로다. 다만 **통과가 아니다** —
@@ -170,6 +172,7 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
         "contract": {"units": len(parsed.get("units") or []),
                      "entrypoints": len(parsed.get("entrypoints") or []),
                      "errors": len(parsed.get("errors") or []),
+                     "journeys": len(parsed.get("journeys") or []),
                      "dropped": parsed.get("dropped") or []},
         "note": ("Critical 은 리뷰어를 부르기 전에 선수리한다 — 계약과 코드가 "
                  "어긋난 채로 리뷰하면 리뷰어가 그것을 다시 발견하는 데 돈을 쓴다."),
@@ -195,10 +198,11 @@ def required_tests(root, config, adapter, contract_path):
 
 
 def _test_checks(root, adapter, parsed, files, test_role):
-    """`untested_entrypoint` · `untested_error_symbol` · `authz_untested`."""
+    """`untested_entrypoint` · `untested_error_symbol` · `authz_untested` ·
+    `missing_journey_spec`."""
     resolver = (adapter.get("entrypoint_resolver") or {}).get("kind") or "none"
     authz_rx = (adapter.get("attribution") or {}).get("authz_denied_pattern")
-    tests = _test_files(adapter, files)
+    tests = _unit_test_files(adapter, files, parsed)
     out = {"findings": [], "checks_run": [], "skipped": [], "skip_reasons": {},
            "unresolved": []}
 
@@ -225,6 +229,9 @@ def _test_checks(root, adapter, parsed, files, test_role):
         out["checks_run"].append("authz_untested")
         out["findings"] += _authz_untested(root, adapter, parsed, files, tests,
                                            re.compile(authz_rx), test_role)
+
+    out["checks_run"].append("missing_journey_spec")
+    out["findings"] += _missing_journey_spec(root, parsed, files, test_role)
     return out
 
 
@@ -382,7 +389,7 @@ def _untested(root, config, adapter, parsed, files, test_role):
 
     커버리지 도구가 없는 상태에서 이 검사가 "테스트 약화" 탐지를 대신한다.
     """
-    tests = _test_files(adapter, files)
+    tests = _unit_test_files(adapter, files, parsed)
     blob = _concat(root, tests)
     out = []
     for unit in parsed.get("units") or []:
@@ -466,6 +473,20 @@ def _concat(root, rels):
 def _test_files(adapter, files):
     globs = (adapter.get("attribution") or {}).get("test_file_globs") or []
     return [f for f in files if harness.glob_any(globs, f)]
+
+
+def _unit_test_files(adapter, files, parsed):
+    """유닛·오류 어휘·진입점 테스트 검사가 세는 파일 — **e2e 는 빼고.**
+
+    e2e 스펙이 오류 상수를 화면 문구로 단언하거나 심볼명을 담으면 유닛 테스트
+    부재를 가린다. 빼는 것은 어댑터 `attribution.e2e_file_globs` 와 이 계약의 여정
+    스펙 파일이다 — 코어는 e2e 가 어디 사는지 모른다 (ADR-H031).
+    """
+    e2e = (adapter.get("attribution") or {}).get("e2e_file_globs") or []
+    specs = {contract_mod._source_for_container(j.get("container"), files)
+             for j in parsed.get("journeys") or []}
+    return [f for f in _test_files(adapter, files)
+            if f not in specs and not harness.glob_any(e2e, f)]
 
 
 # ------------------------------------------------ 진입점·오류 어휘·인가 테스트
@@ -586,6 +607,38 @@ def _authz_untested(root, adapter, parsed, files, tests, rx, test_role):
             evidence="이 진입점의 테스트 파일 %d개에 %r 이 없다"
                      % (len(own), rx.pattern)))
     return out
+
+
+def _missing_journey_spec(root, parsed, files, test_role):
+    """계약 `## 여정` 의 스펙 파일이 실재하고 슬러그가 **선언**으로 있는가.
+
+    파일 전문의 `\b슬러그\b` 는 주석 한 줄로 통과하므로 쓰지 않는다 — 최상위
+    그룹 이름(`describe`/`test.describe` 의 문자열 인자)이나 `export` 이름만 센다.
+    """
+    out = []
+    for j in parsed.get("journeys") or []:
+        src = contract_mod._source_for_container(j.get("container"), files)
+        if src is not None and _has_symbol_declared(Path(root) / src, j["symbol"]):
+            continue
+        out.append(_finding(
+            "missing_journey_spec", "critical", test_role,
+            "계약의 여정 %s 의 스펙이 없다" % j.get("raw"),
+            container=j.get("container"), symbol=j["symbol"], path=src,
+            evidence=("%r 이 리포에 없다" % j.get("container") if src is None else
+                      "%s 에 %r 을 이름으로 하는 describe 나 export 가 없다"
+                      % (src, j["symbol"]))))
+    return out
+
+
+def _has_symbol_declared(path, symbol):
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    s = re.escape(symbol)
+    rx = re.compile(r"""\b(?:test\.)?describe(?:\.\w+)?\(\s*["'`]%s["'`]"""
+                    r"|\bexport\s+(?:const|function|let)\s+%s\b" % (s, s))
+    return rx.search(text) is not None
 
 
 # ------------------------------------------------------------ out_of_contract

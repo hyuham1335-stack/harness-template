@@ -5314,10 +5314,10 @@ class TestContractTraceErrorsAndEntrypoints:
         assert [f for f in got["findings"] if f["code"] == "missing_entrypoint"] == []
         # 오류 어휘 검사는 그대로 돌아야 한다.
         assert any(f["code"] == "missing_error_symbol" for f in got["findings"])
-        # 진입점 해석에 기대는 셋만 빠지고 나머지 다섯은 돈다.
+        # 진입점 해석에 기대는 셋만 빠지고 나머지 여섯은 돈다.
         assert set(got["skipped"]) == {"missing_entrypoint", "untested_entrypoint",
                                        "authz_untested"}
-        assert len(got["checks_run"]) == 5
+        assert len(got["checks_run"]) == 6
 
 
 class TestContractTraceAdapterConventions:
@@ -12804,3 +12804,270 @@ class TestSkipPolicy:
         loaded, _ = cli.load_phases(repo)
         assert sorted(loaded)[0] == "00-triage"
         assert loaded["00-triage"]["front"]["index"] == 0
+
+
+# ---------------------------------------------------------------------------
+# G. e2e 준비 — 계약 `## 여정` (ADR-H058 추기)
+# ---------------------------------------------------------------------------
+
+JOURNEY_CONTRACT = TESTS_REQUIRED_CONTRACT.replace(" [admin]", "") + """
+## 여정
+
+- `e2e/analyze.spec.ts · analyzeJourney`
+  - POST /api/analyze
+"""
+
+
+def _journey_contract(steps="POST /api/analyze"):
+    return JOURNEY_CONTRACT.replace("  - POST /api/analyze", "  - " + steps)
+
+
+def _set_e2e(repo, stage):
+    a = repo / "harness" / "adapters" / "nextjs-ts.json"
+    data = json.loads(a.read_text(encoding="utf-8"))
+    data["stages"]["e2e"] = stage
+    a.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _journey_spec(repo, body):
+    p = repo / "e2e" / "analyze.spec.ts"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+class TestContractJourneys:
+    """계약 `## 여정` 파서 — 유닛과 같은 형식에 들여쓴 줄이 진입점 순서다."""
+
+    def _parse(self, repo, text):
+        cfg = json.loads((repo / "harness" / "config.json").read_text(encoding="utf-8"))
+        return contract_mod.parse(text, cfg)
+
+    def test_여정과_단계를_읽는다(self, repo):
+        doc = ("## 여정\n\n- `e2e/a.spec.ts · aJourney`\n"
+               "  - `POST /api/a` → GET /api/a/[id] -> `DELETE /api/a/[id]`\n")
+        j = self._parse(repo, doc)["journeys"]
+        assert [(x["container"], x["symbol"]) for x in j] == [("e2e/a.spec.ts", "aJourney")]
+        assert j[0]["steps"] == [{"method": "POST", "path": "/api/a"},
+                                 {"method": "GET", "path": "/api/a/[id]"},
+                                 {"method": "DELETE", "path": "/api/a/[id]"}]
+
+    def test_템플릿의_기본_본문은_여정이_없다(self, repo):
+        text = (repo / "harness" / "templates" / "contract.md").read_text(encoding="utf-8")
+        p = self._parse(repo, text)
+        assert "## 여정" in text
+        assert p["journeys"] == [] and p["journeys_dropped"] == []
+
+    def test_여정_슬러그는_계약이_이름_붙인_것이다(self, repo):
+        p = self._parse(repo, JOURNEY_CONTRACT)
+        assert "analyzeJourney" in contract_mod.symbols(p)
+
+    def test_문제_목록(self, repo):
+        ok = self._parse(repo, JOURNEY_CONTRACT)
+        assert contract_mod.journey_problems(ok) == []
+        for steps in ("GET /api/analyze", "POST /api/other", "없음"):
+            p = self._parse(repo, _journey_contract(steps))
+            assert contract_mod.journey_problems(p), steps
+        bad = self._parse(repo, JOURNEY_CONTRACT.replace(
+            "`e2e/analyze.spec.ts · analyzeJourney`", "`0`"))
+        assert bad["journeys_dropped"] and contract_mod.journey_problems(bad)
+
+
+class TestContract03Journeys:
+    """**러너 없는 여정은 디스패치 전에 거부한다** — 워커가 스펙을 쓴 뒤가 아니라."""
+
+    def _enter(self, repo, request_file, monkeypatch, text=JOURNEY_CONTRACT):
+        monkeypatch.setattr(adapters, "run_stage",
+                            lambda *a, **k: {"id": "compile", "state": "ran",
+                                             "exit": 0, "sec": 0.1})
+        return TestRecord03ContractUnitsZero()._enter_03(repo, request_file, text)
+
+    def _total(self, repo, run_id):
+        _p, s = st.load(repo, run_id)
+        return st._budget_node(s).get("total", 0)
+
+    def test_e2e_가_없으면_next_가_exit_8_이고_지시를_세지_않는다(
+            self, repo, request_file, phases, monkeypatch):
+        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch)
+        before = self._total(repo, run_id)
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 8, env["render"]
+        assert "e2e" in env["render"] and "ADR" in env["render"]
+        assert "next" in (env["next_command"] or "")
+        assert self._total(repo, run_id) == before
+
+    def test_해당_없음_스택은_그렇게_말한다(self, repo, request_file, phases,
+                                           monkeypatch):
+        _set_e2e(repo, {"cmd": None, "not_applicable": "브라우저가 없다."})
+        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch)
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 8 and "해당 없음" in env["render"], env["render"]
+
+    def test_이미_쓴_스펙은_지우라고_한다(self, repo, request_file, phases,
+                                         monkeypatch):
+        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch)
+        _journey_spec(repo, "describe('analyzeJourney', () => {})\n")
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 8 and "e2e/analyze.spec.ts" in env["render"], env["render"]
+
+    def test_진입점에_없는_단계는_거부한다(self, repo, request_file, phases,
+                                        monkeypatch):
+        _set_e2e(repo, {"cmd": ["run", "e2e"]})
+        for steps in ("GET /api/analyze", "POST /api/other"):
+            run_id, _paths, _c = self._enter(repo, request_file, monkeypatch,
+                                             _journey_contract(steps))
+            env = cli.run_next(repo, run_id)
+            assert env["exit"] == 8, (steps, env["render"])
+            assert steps in env["render"], env["render"]
+
+    def test_record_03_이_백스톱이다(self, repo, request_file, phases, monkeypatch):
+        run_id, _paths, claims = self._enter(repo, request_file, monkeypatch)
+        env = cli.run_record(repo, "03", str(claims), run_id=run_id)
+        assert env["exit"] == 8 and "여정" in env["render"], env["render"]
+        _p, s = st.load(repo, run_id)
+        assert st.phase_status(s, "03-implement") != "passed"
+
+    def test_러너가_있으면_패킷에_여정_행이_있다(self, repo, request_file, phases,
+                                               monkeypatch):
+        _set_e2e(repo, {"cmd": ["run", "e2e"]})
+        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch)
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 0, env["render"]
+        line = next(l for l in env["render"].splitlines() if "analyzeJourney" in l)
+        assert "e2e/analyze.spec.ts" in line
+
+    def test_여정이_없는_계약은_영향이_없다(self, repo, request_file, phases,
+                                          monkeypatch):
+        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch,
+                                         TESTS_REQUIRED_CONTRACT)
+        assert cli.run_next(repo, run_id)["exit"] == 0
+
+
+class TestContractTraceJourneys:
+    """`missing_journey_spec` — 스펙이 실재하고 슬러그가 **선언**으로 있는가."""
+
+    def _got(self, repo):
+        _route(repo, "analyze", "expect(body.code).toBe('MATCH_EMPTY')\n")
+        return _codes(_trace(repo, _write_contract(repo, JOURNEY_CONTRACT),
+                             changed=[]), "missing_journey_spec")
+
+    def test_스펙이_없으면_critical(self, repo):
+        got = self._got(repo)
+        assert got and got[0]["severity"] == "critical"
+        assert got[0]["target_role"] == "test"
+
+    def test_주석에만_있으면_지적한다(self, repo):
+        _journey_spec(repo, "// analyzeJourney\n")
+        assert self._got(repo)
+
+    def test_describe_문자열이나_export_const_면_통과한다(self, repo):
+        for body in ("test.describe('analyzeJourney', () => {})\n",
+                     'describe("analyzeJourney", () => {})\n',
+                     "export const analyzeJourney = 1\n"):
+            _journey_spec(repo, body)
+            assert self._got(repo) == [], body
+
+    def test_03_도_같은_검사를_센다(self, repo):
+        config, adapter, _cal = _load(repo)
+        p = _write_contract(repo, JOURNEY_CONTRACT)
+        _route(repo, "analyze", "expect(body.code).toBe('MATCH_EMPTY')\n")
+        req = tr.required_tests(repo, config, adapter, p)
+        assert [f["code"] for f in req["findings"]] == ["missing_journey_spec"]
+
+    def test_오류_상수가_e2e_스펙에만_있으면_지적한다(self, repo):
+        """e2e 가 화면 문구로 상수를 단언해도 유닛 테스트 부재를 가리지 않는다."""
+        _route(repo, "analyze", "expect(res.status).toBe(200)\n")
+        _journey_spec(repo, "describe('analyzeJourney', () => {})\n// MATCH_EMPTY\n")
+        got = _trace(repo, _write_contract(repo, JOURNEY_CONTRACT), changed=[])
+        assert _codes(got, "untested_error_symbol"), got["findings"]
+
+    def test_유닛_심볼이_e2e_스펙에만_있으면_지적한다(self, repo):
+        _journey_spec(repo, "describe('analyzeJourney', () => {})\n// matchTitle\n")
+        (repo / "src" / "lib" / "match.test.ts").write_text("// 없음\n", encoding="utf-8")
+        got = _trace(repo, _write_contract(repo, JOURNEY_CONTRACT), changed=[])
+        assert _codes(got, "untested_contract_item"), got["findings"]
+
+
+class TestJourneyOwnership:
+
+    def test_e2e_디렉터리는_test_소유다(self, repo, config):
+        for rel in ("e2e/x.spec.ts", "e2e/fixtures/x.ts"):
+            p = repo / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("// x\n", encoding="utf-8")
+        got = attr.clean_ownership(repo, config, _claims(
+            test=["e2e/x.spec.ts", "e2e/fixtures/x.ts"]))
+        assert got["ok"], got["message"]
+
+
+class TestJourneyHint:
+    """계약을 쓰라는 봉투가 e2e 부재를 말한다 — 메인이 어댑터를 추론하지 않는다."""
+
+    HINT = "e2e 가 없다"
+
+    def _at_03_without_contract(self, repo, request_file, mode="contract", plan=True):
+        init = cli.run_init(repo, "x", request_file)
+        paths, s = st.load(repo, init["run_id"])
+        for pid in ("01-plan", "02-cross-verify"):
+            st.set_phase_status(s, pid, "passed")
+        s["phase"] = "03-implement"
+        s["contract"] = {"mode": mode, "present": False,
+                         "path": "_workspace/contract_x.md"}
+        st.save(paths, s)
+        if plan:
+            (paths.run_dir / "01_plan.md").write_text(
+                "<!-- INTENT -->\n<!-- COVERAGE -->\n" + "플랜 본문. " * 40,
+                encoding="utf-8")
+        return paths
+
+    def test_next_거부_봉투가_e2e_부재를_말한다(self, repo, request_file, phases):
+        paths = self._at_03_without_contract(repo, request_file)
+        env = cli.run_next(repo, paths.run_id)
+        assert env["exit"] == 3 and "진입 거부" in env["render"], env["render"]
+        failed = [c for c in env["data"]["requires_report"] if not c["ok"]]
+        assert failed and all("contract_file" in c["message"] for c in failed), failed
+        assert self.HINT in env["render"] and "없음" in env["render"], env["render"]
+
+    def test_해당_없음_스택(self, repo, request_file, phases):
+        _set_e2e(repo, {"cmd": None, "not_applicable": "브라우저가 없다."})
+        paths = self._at_03_without_contract(repo, request_file)
+        env = cli.run_next(repo, paths.run_id)
+        assert env["exit"] == 3 and "해당 없음" in env["render"], env["render"]
+
+    def test_e2e_가_있으면_힌트가_없다(self, repo, request_file, phases):
+        _set_e2e(repo, {"cmd": ["run", "e2e"]})
+        paths = self._at_03_without_contract(repo, request_file)
+        env = cli.run_next(repo, paths.run_id)
+        assert env["exit"] == 3, env["render"]
+        assert "## 여정" not in env["render"], env["render"]
+
+    def test_전이_봉투도_말한다(self, repo, request_file, phases):
+        paths = self._at_03_without_contract(repo, request_file)
+        _p, s = st.load(repo, paths.run_id)
+        s["phase"] = "02-cross-verify"
+        s["phases"]["02-cross-verify"].pop("status", None)
+        st.save(paths, s)
+        loaded, _ = cli.load_phases(repo)
+        env = cli._advance_to_next(repo, paths, s, loaded["02-cross-verify"],
+                                   cli.build_context(repo, paths, s))
+        assert "선행 조건이 남았다" in env["render"], env["render"]
+        assert self.HINT in env["render"], env["render"]
+
+    def test_no_contract_런은_힌트가_없다(self, repo, request_file, phases):
+        paths = self._at_03_without_contract(repo, request_file, mode="no_contract",
+                                             plan=False)
+        env = cli.run_next(repo, paths.run_id)
+        assert env["exit"] == 3 and "진입 거부" in env["render"], env["render"]
+        assert self.HINT not in env["render"], env["render"]
+
+    def test_docs_예측_빗나감_봉투도_말한다(self, repo, phases):
+        paths = TestDocsLane()._at_01(repo)
+        _submit_plan(repo, paths, _plan())
+        (repo / "src" / "lib" / "match.ts").write_text("export const x = 1\n",
+                                                        encoding="utf-8")
+        claims = paths.run_dir / "03_claims.json"
+        claims.write_text('{"schema":1,"roles":[]}', encoding="utf-8")
+        env = cli.run_record(repo, phase="03", file=str(claims), reviewer=None,
+                             round_=None)
+        assert env["exit"] == 3 and "docs 예측" in env["render"], env["render"]
+        assert self.HINT in env["render"], env["render"]
