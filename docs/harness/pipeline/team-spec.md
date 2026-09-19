@@ -248,7 +248,7 @@ docs/harness/pipeline/runs/{run_id}.md          # 08 보고서
                    "scope":"push+pr","grade_at_grant":"PASS"}},
  "pr":{"number":231,"head":"…","pushed":true,"created_at":"…","state":"open"},
  "review07":{"external":{"status":"reviewed","major":0},
-             "code_review":"skipped|low|medium","escaped_05":0},
+             "code_review":"skipped|low|medium|high","escaped_05":0},
  "audit":{"is_audit_run":false,"reason":null},
  "tests":{"ran":0,"expected_min":0,"status":"none|shrank|ok","source":"report_glob|calibration"},
  "grade":"PASS|PASS_WITH_GAPS|INCOMPLETE","gaps":[],
@@ -310,7 +310,7 @@ docs/harness/pipeline/runs/{run_id}.md          # 08 보고서
 |---|---|---|---|
 | 01 | 기계 검사만(인용 · 커버리지 · 드리프트), **리뷰어 0** (`review.unless`) | 리뷰어 2 · 라운드 상한 2 (00 부터) | 지금과 같음 |
 | 02 | 정책 스킵 `docs_profile` (`skip_policy` 첫 항목, 등급 유지) | `plan_unedited` | 〃 |
-| 03 | `no_contract` · **역할 0** (`allow.unless`) · 메인이 직접 편집 · claims `roles: []` | 역할 2 · model sonnet | 역할 2 · inherit |
+| 03 | `no_contract` · **역할 0** (`allow.unless`) · 메인이 직접 편집 · claims `roles: []` | 역할 2 · model sonnet | 역할 2 · sonnet (ADR-H061) |
 | 04 | 어댑터 스테이지 그대로 (무료) | 〃 | 〃 |
 | 05 | glob 라우팅 그대로 → docs 리뷰어 1 · cap 1 | cap 2 (00 부터) | cap 4 |
 | 07 | `decide()` skip `docs_profile` | 기존 | 기존 |

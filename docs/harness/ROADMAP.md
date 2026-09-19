@@ -191,7 +191,9 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
    등급은 실측 없이 고른 초기값이다 ([ADR-H044](DECISIONS.md)). 첫 세 런의
    `00_triage.json` 과 `triage_miss` 이벤트가 검사한다 — miss 가 docs 예측에서만
    나면 docs 규칙이 헐거운 것이고, 모델 호출이 매 런 나면 규칙이 너무 좁은 것이다.
-   **2차 파일럿 15런의 값은 [ADR-H054](DECISIONS.md) 에 있다** — `small` 2런, `triage_miss` 0
+   **2차 파일럿 15런의 값은 [ADR-H054](DECISIONS.md) 에 있다** — `small` 2런, `triage_miss` 0.
+   등급표는 [ADR-H061](DECISIONS.md) 로 1차 개정했다 (작성자 sonnet · 검사자 normal opus ·
+   effort 는 에이전트 프론트매터) — 여전히 실측 0 이다
 6. **파이프라인 우회를 어떻게 재는가.** 2차 파일럿은 마지막 Must 머지 뒤 1h25m 동안 PR 일곱
    건을 파이프라인 없이 머지했다 — 1기능 평균 1h42m 인 파이프라인이 작은 수정에 비싸서다. 08 은
    파이프라인 밖을 셀 수 없다. `fix` 레인은 [ADR-H053](DECISIONS.md) 대로 2026-09-19 에 구현됐다

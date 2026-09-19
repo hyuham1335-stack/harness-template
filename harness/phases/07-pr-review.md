@@ -116,9 +116,9 @@ python scripts/pipeline/cli.py review07 --external {07_external.json} --run-id {
   등급이 내려가지 않는다. **`/code-review` 를 부르지 말고** `07_pr_review.json`
   을 `code_review: "skipped"` · findings 빈 배열로 내고 바로 `record` 로 간다 —
   5~8번은 그대로 돈다
-- `audit_run` — 5런마다 1회, 생략 조건을 만족해도 medium 을 강제한다.
+- `audit_run` — 5런마다 1회, 생략 조건을 만족해도 **high** 를 강제한다.
   **생략하면 `escaped_05` 를 셀 수 없기 때문**이고, 5런에 1회의 비용으로
-  정책의 근거를 산다 (§E2)
+  정책의 근거를 산다 (§E2). 표본이라 낮은 effort 는 과소측정이다 (ADR-H061)
 
 ### 6·7번 — 승격은 런당 한 번이고, 대개 아무 일도 없다
 
@@ -189,7 +189,7 @@ finding 은 **05 와 같은 스키마**를 쓴다 — **`rule_slug` 규칙도 �
 
 ```json
 {"external": {"status": "reviewed|disabled|not_a_review|timeout", "major": 0},
- "code_review": "skipped|low|medium",
+ "code_review": "skipped|low|medium|high",
  "findings": [
    {"id": "G-1", "category": "AUTHZ_MISSING_RULE", "severity": "major",
     "target_role": "impl", "title": "…", "path": "…", "line": 34,

@@ -2945,4 +2945,54 @@ test-quality 리뷰어가 본다. import 해석은 정규식이라 재수출(bar
 
 ---
 
+### ADR-H061: 모델 등급은 "작성자는 싸게, 검사자는 비싸게" 로 레인별 개정하고, effort 는 에이전트 프론트매터가 역할별로 정한다
+
+**날짜**: 2026-09-19 · **상태**: 채택됨 · **구현 상태**: 구현됨 (2026-09-19 — `config.models` 표 · 네 에이전트
+프론트매터 `effort:` · `review07.EFFORTS` 에 `high` · audit 분기 `high` · `state.MODELS_BLIND_SPOTS` 넷째 줄 ·
+team-spec `code_review` 어휘 · nextjs-ts 프로필 동기화)
+
+**맥락**: [[ADR-H044]] 의 등급표는 "실측 없이 고른 초기값" 이었고 normal 레인의 plan · xv · roles · reviewers 가
+전부 `inherit` 였다. `inherit` 는 메인 세션의 모델(이 리포에서는 `claude-fable-5-1`, Opus 5 의 2배 단가)이라
+(a) 워커 비용이 사용자의 CLI 설정에 묶이고 (b) `state.models.instructed` 에 실값이 안 남았다(blind spot 3).
+effort 는 07 의 `/code-review --effort` 하나만 결정론으로 정했고 나머지는 손잡이가 없었다. Claude Code 공식
+문서를 확인한 결과 Agent 툴은 호출 시 `model` 만 받고 `effort` 는 못 받으며, 서브에이전트 effort 를 줄 유일한
+자리는 `.claude/agents/*.md` 프론트매터의 `effort:` 필드다 — 정적이고 레인별로 못 바꾼다. 리뷰어 스킬과
+트리아지는 에이전트 정의가 없어 세션 기본값(`high`)을 상속한다. [[ADR-H059]] 의 "서브에이전트 스킬은 effort
+인자를 못 받는다" 는 그대로 참이다.
+
+**결정**:
+1. **등급표를 두 원칙으로 다시 쓴다** — `roles`(03 · 04 수리)는 **전 레인 sonnet**: 계약이 시그니처 · 오류
+   어휘 · 진입점을 이미 고정했고 뒤에 04 게이트와 05 리뷰가 있다. 파일럿 15런에서 최상위 모델로 돌려도 05 는
+   매 런 Major 를 냈으므로 작성자 등급이 지적 수를 좌우한다는 근거가 없다. `plan` · `xv` · `reviewers` 는
+   **normal 에서 opus**, 나머지 레인 sonnet: 검사자의 내용 품질에는 기계 검사가 없고 `escaped_05` 만 사후에
+   잰다. normal 은 `no_risk` 로 02 가 빠지면(([[ADR-H060]]) plan-reviewer 가 유일한 독립 관측이고 05 는
+   `diff+refs` 범위다. `triage` 는 haiku 그대로. **표에 `inherit` 를 남기지 않는다** — 어휘에는 남는다.
+2. **effort 는 역할 종류가 정하고 레인이 정하지 않는다.** `impl-writer` medium(계약이 고정한 것을 옮기고
+   판단은 `CONTRACT_DEFECT` 로 메인에 넘긴다) · `test-writer` high(실패 경로 · 경계값 도출, impl 을 검사하는
+   첫 번째 눈) · `ui-writer` medium · `plan-reviewer` high. [[ADR-H044]] 결정 4 가 프론트매터 `model:` 을
+   금지한 사유는 "레인별 불가" 와 "두 출처" 둘이다 — effort 는 봉투 출처가 없어 둘째는 해당 없고, 첫째는
+   그대로 걸리지만 대안이 없다(Agent 인자 없음). `high` 를 기본값과 같은데도 명시하는 이유는 메인 세션의
+   `/effort` 변경이 워커에 새지 않게 하고 값이 파일에 선언되게 하는 것이다. **관측기는 없다** — 하네스 코드는
+   프론트매터 effort 를 읽지 않고(Claude Code 가 읽는다) 상태에도 안 남는다. [[ADR-H025]] 의 "선언은 읽히거나
+   거부된다" 는 하네스가 읽는 선언의 규칙이고 이것은 Claude Code 가 읽는 선언이라 exit 2 대상이 아니다. 대신
+   그 blind spot 을 `state.models.blind_spots` 넷째 줄로 매 런 보고서에 드러낸다. 리뷰어용 러너 에이전트를
+   만들어 effort 를 박는 안은 버렸다 — 지금은 기본값과 같은 `high` 라 실익이 없고 라우팅 개념이 하나 는다.
+3. **07 의 감사 런은 `high`.** `EFFORTS` 에 `high` 를 더하고 `audit` 강제만 `high` 로, 나머지 분기는
+   [[ADR-H059]] 그대로. 감사 런은 `escaped_05` 를 재는 표본이라 낮은 effort 는 과소측정이다. 5런에 1회라
+   비용 영향은 작다. [[ADR-H059]] 의 "audit 강제는 그대로다" 를 이 한 줄이 대체한다.
+
+**트레이드오프**: 전부 **미검증** — 이 리포의 실측은 0 이고 근거는 파일럿의 것이다. 검사자 opus 는 fable 대비
+절반, sonnet 대비 2.5배 단가다. 작성자 sonnet + impl medium 은 수리 라운드를 늘릴 수 있다 — `counters.repair`
+로 잰다. effort 는 레인별로 못 바꾸고 관측기가 없다. **05 수리 작성자는 등급 밖이다** — `_instruct` 호출은
+`cli.py` 의 넷(00 · 01 · 03 · 04)뿐이고 05 의 `review_repair` 경로에는 지시 키가 없어 메인 세션 모델로 돈다.
+이번에 고치지 않았다 — 05 수리는 델타이고 빈도를 먼저 본다.
+
+**재검토 시점**: `state.models.instructed` × `counters.repair` 가 5런 쌓이면 — 수리 라운드가 파일럿보다 늘면
+`roles.normal` 을 opus 로 올리고, 늘지 않으면 `test-writer` 를 medium 으로 내릴지 본다. 감사 런 2회의
+`escaped_05` 가 medium 시절(16건/15런)과 다른지 본다. 05 수리가 런당 1회를 넘으면 그 경로에 지시 키를 둔다.
+
+관련: [[ADR-H044]](결정 4 부분 대체) · [[ADR-H059]](audit 문구 대체) · [[ADR-H025]] · [[ADR-H053]] · [[ADR-H060]]
+
+---
+
 ### ADR-H00N: {다음 결정}
