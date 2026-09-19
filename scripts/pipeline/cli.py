@@ -2614,6 +2614,8 @@ def _record_01_plan(root, paths, s, phase_item, ctx, file):
     got = verdict.check_plan(text, request_text, limit)
     node = s.setdefault("phases", {}).setdefault("01-plan", {})
     node["drift_score"] = got["drift_score"]
+    # INV 생략(짧은 요청)이면 `None` — 02 는 그때 보수적으로 돈다 (ADR-H060).
+    node["risk"] = got.get("risk")
     if got.get("inv_skipped"):
         s.setdefault("profile", {})["inv_skipped"] = True
 
@@ -2787,6 +2789,23 @@ def _open_from_05_render(open_):
     return "\n".join(lines)
 
 
+def _plan_has_risk(node, rounds):
+    """02 를 돌릴 근거가 있는가 (ADR-H060).
+
+    셋 중 하나면 참이다 — INTENT 의 `risk` 가 비어 있지 않다 / INV 블록이
+    생략돼 `risk` 자체가 없다(짧은 요청이라도 관측을 빼지 않는다) / 01 의
+    어느 회차든 리뷰어가 Critical 을 냈다(플랜이 한 번 뒤집혔으면 위험 절이
+    없다는 자진신고를 그대로 믿지 않는다). `risk` 는 01 의 자진신고이고
+    03·05 가 검증하지 않는다 — 대조 장치는 계약에 스키마 절이 생기면 뒤에 둔다.
+    """
+    risk = node.get("risk")
+    if risk is None or risk:
+        return True
+    return any(k.get("severity") == "critical"
+               for r in (rounds or {}).values() for sub in r.values()
+               for k in sub.get("keys") or [])
+
+
 def _note_cross_verify_gap(s):
     """폴백으로 돈 회차가 있으면 등급이 그것을 말한다.
 
@@ -2832,6 +2851,10 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
         # 검사가 근거로 삼는 이전 회차 지적이 사라졌다. 정수를 읽는
         # 소비자는 어디에도 없었다 — 순수한 손실이다 (P3).
         s["phases"]["01-plan"]["converged_at_round"] = round_
+        # **02 가 돌지를 여기서 정한다** (ADR-H060). 02 의 `skip_policy` 가 이
+        # 값을 읽는다 — 단일 비교만 받으므로 합성은 여기서 한다.
+        s["phases"]["01-plan"]["has_risk"] = _plan_has_risk(
+            s["phases"]["01-plan"], rounds)
         # exceeded 무시 — 수렴이 라운드를 닫았다. 마지막 라운드에서 수렴한
         # 것은 상한 초과가 아니고, 여기서 멈출 다음 라운드도 없다 (ADR-H048).
         st.counter_inc(s, _loop_counter(phase_item["front"]), max_rounds,

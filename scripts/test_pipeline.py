@@ -1519,6 +1519,7 @@ def _plan(intent=None, coverage=None, body=None):
         "out_of_scope": [],
         "acceptance": [{"id": "AC-1", "text": "0~1 유사도",
                         "source_quote": "책 제목 유사도를 재는 함수"}],
+        "risk": [],
     }
     coverage = coverage if coverage is not None else {
         "covers": [{"id": "INV-1", "status": "covered", "plan_section": "## 경계값"},
@@ -1918,8 +1919,9 @@ class TestCrossVerifyTransientFailure:
     """
 
     def _converge_01(self, repo, paths):
-        """01 을 1라운드에 통과시킨다 — xv 는 01 에 없으니 `plan` 단독이다."""
-        _submit_plan(repo, paths, _plan())
+        """01 을 1라운드에 통과시킨다 — xv 는 01 에 없으니 `plan` 단독이다.
+        02 가 돌아야 하므로 `risk` 가 있는 플랜이다 (ADR-H060)."""
+        _submit_plan(repo, paths, _risky_plan("schema"))
         return _submit_review(repo, paths, _review("plan"))
 
     def _verdict02(self, repo, paths, mode="primary", err=None, findings=None):
@@ -11677,32 +11679,40 @@ class TestConvergenceThreshold:
         assert st.phase_status(after, "01-plan") != "passed"
 
 
-class TestCrossVerifyAlwaysRunsExceptDocs:
-    """01 이 더는 xv 를 부르지 않으므로, 02 가 xv 를 부르는 유일한 지점이다.
+def _risky_plan(*risk):
+    """INTENT 의 `risk` 가 비어 있지 않은 플랜 — 02 가 이 값으로 돈다."""
+    intent = json.loads(_plan().split("<!-- INTENT\n")[1].split("\n-->")[0])
+    intent["risk"] = list(risk) or ["schema"]
+    return _plan(intent=intent)
 
-    ADR-H042 의 `plan_unedited` 스킵(01 이 1라운드에 수렴하면 02 를 건너뛴다)은
-    그 전제("01 의 매 라운드에서 이미 교차검증이 걸렸다")가 더는 성립하지 않아
-    뺐다 — 지금은 xv 가 01 에서 전혀 불리지 않으므로, 1라운드 수렴 때도 02 가
-    xv 를 정확히 1회 불러야 한다. `docs_profile` 스킵은 그대로다(별도 스위트).
+
+class TestCrossVerifyRunsWhenRisky:
+    """02 는 **최대 1회** — 01 INTENT 의 `risk` 가 있거나 01 라운드에 Critical 이
+    있었을 때만 돈다 (ADR-H060). 01 은 xv 를 전혀 안 부르므로 그때 02 가 xv 를
+    부르는 유일한 지점이다.
+
+    파일럿 29건의 xv 지적 중 채택 11 은 스키마·트랜잭션·동시성 플랜에 몰렸고
+    프론트 전용 런은 5/5 기각이었다 — 위험 절이 없는 플랜에 10분씩 쓰고 있었다.
+    `docs_profile` · `fix_profile` 스킵은 그대로다(별도 스위트).
     """
 
-    def _converge_r1(self, repo, paths):
-        _submit_plan(repo, paths, _plan())
+    def _converge_r1(self, repo, paths, plan=None):
+        _submit_plan(repo, paths, plan or _risky_plan("schema"))
         return _submit_review(repo, paths, _review("plan"))
 
-    def test_round_one_convergence_still_runs_02(self, run01):
+    def test_a_risky_plan_runs_02_after_round_one(self, run01):
         repo, paths, s = run01
         env = self._converge_r1(repo, paths)
         assert env["exit"] == 0, env["render"]
         _, after = st.load(repo, paths.run_id)
+        assert after["phases"]["01-plan"]["risk"] == ["schema"]
+        assert after["phases"]["01-plan"]["has_risk"] is True
         assert after["phase"] == "02-cross-verify", after["phase"]
         assert st.phase_status(after, "02-cross-verify") != "skipped"
 
-    def test_02_instructs_xv_exactly_once_even_after_round_one(self, run01):
-        """02 의 `next_command` 은 페이즈 하나에 리뷰어가 하나뿐이라
-        `--phase 02 --file <산출물>` 처럼 일반형이지 리뷰어 이름을 담지
-        않는다(01 의 회차 지시와 다른 형태) — 그래서 여기서는 실제로 기동을
-        지시했는지를 `budget.model_calls.counted` 의 `xv` 키로 확인한다."""
+    def test_02_instructs_xv_exactly_once(self, run01):
+        """02 의 `next_command` 은 리뷰어 이름을 담지 않으므로 기동 지시는
+        `budget.model_calls.counted` 의 `xv` 키로 확인한다."""
         repo, paths, s = run01
         env = self._converge_r1(repo, paths)
         assert env["phase"] == "02-cross-verify", env["render"]
@@ -11711,7 +11721,22 @@ class TestCrossVerifyAlwaysRunsExceptDocs:
                     if k.startswith("02:") and k.endswith(":xv")]
         assert len(xv_calls) == 1, after["budget"]["model_calls"]
 
-    def test_round_two_convergence_also_runs_02(self, run01):
+    def test_no_risk_and_no_critical_skips_02_without_a_gap(self, run01):
+        repo, paths, s = run01
+        env = self._converge_r1(repo, paths, plan=_plan())
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["phases"]["01-plan"]["has_risk"] is False
+        assert st.phase_status(after, "02-cross-verify") == "skipped"
+        assert after["cross_verify"]["skip_reason"] == "no_risk"
+        assert after["phase"] == "03-implement", after["phase"]
+        assert after.get("grade") in (None, "PASS"), after.get("gaps")
+        # 레인의 양보가 아니라 `applied` 에 들어가지 않는다 — miss 이름과 무관하다.
+        assert "02:skipped" not in (after["profile"].get("applied") or [])
+        assert not [k for k in after["budget"]["model_calls"]["counted"]
+                    if k.startswith("02:")]
+
+    def test_a_critical_in_01_runs_02_even_without_risk(self, run01):
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
         _submit_review(repo, paths, _review("plan", findings=[_crit()]))
@@ -11722,8 +11747,42 @@ class TestCrossVerifyAlwaysRunsExceptDocs:
             round_=2)
         assert env["exit"] == 0, env["render"]
         _, after = st.load(repo, paths.run_id)
+        assert after["phases"]["01-plan"]["has_risk"] is True
         assert after["phase"] == "02-cross-verify", after["phase"]
         assert st.phase_status(after, "02-cross-verify") == "running"
+
+    def test_a_short_request_without_an_intent_block_runs_02(self, repo, phases):
+        """INV 블록이 없으면 `risk` 도 없다 — 관측을 빼지 않는 쪽으로 낙하한다."""
+        req = repo / "_workspace" / "requests" / "short.md"
+        req.parent.mkdir(parents=True, exist_ok=True)
+        req.write_text("짧은 요청이다.", encoding="utf-8")
+        paths, s = st.create_run(repo, "short", req)
+        _past_00(paths, s)
+        st.set_phase_status(s, "01-plan", "running")
+        st.save(paths, s)
+        env = _submit_plan(repo, paths, "# 플랜\n\n" + "여백 " * 60)
+        assert env["exit"] == 0, env["render"]
+        env = _submit_review(repo, paths, _review("plan"))
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["phases"]["01-plan"]["risk"] is None
+        assert after["phases"]["01-plan"]["has_risk"] is True
+        assert after["phase"] == "02-cross-verify", after["phase"]
+
+    def test_risk_is_a_closed_vocabulary(self, run01):
+        repo, paths, s = run01
+        intent = json.loads(_plan().split("<!-- INTENT\n")[1].split("\n-->")[0])
+        del intent["risk"]
+        env = _submit_plan(repo, paths, _plan(intent=intent))
+        assert env["exit"] == 8 and "risk" in env["render"], env["render"]
+        intent["risk"] = ["performance"]
+        env = _submit_plan(repo, paths, _plan(intent=intent))
+        assert env["exit"] == 8 and "performance" in env["render"], env["render"]
+        intent["risk"] = "schema"
+        env = _submit_plan(repo, paths, _plan(intent=intent))
+        assert env["exit"] == 8, env["render"]
+        for word in cli.verdict.RISK_VOCAB:
+            assert _submit_plan(repo, paths, _risky_plan(word))["exit"] == 0, word
 
     def test_lint_rejects_an_unparseable_skip_condition(self, repo, phases):
         _rewrite(phases / "02-cross-verify.md",
@@ -12512,7 +12571,7 @@ class TestPhase00Wiring:
         env = _submit_triage(repo, paths, {"profile": "unclear",
                                            "expected_paths": [], "reasons": []})
         assert env["exit"] == 9, env["render"]
-        assert len(env["data"]["options"]) == 3
+        assert len(env["data"]["options"]) == 4     # docs · fix · small · normal
         _, mid = st.load(repo, paths.run_id)
         assert mid["phase"] == "00-triage" and not mid.get("escalated")
         env = _submit_triage(repo, paths, {"profile": "normal", "expected_paths": [],

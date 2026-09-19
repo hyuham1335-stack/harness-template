@@ -711,8 +711,9 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
         ("01 교차검증", cv.get("mode")),
         ("폴백 회차", "%s / %s" % (cv.get("degraded_rounds") or 0,
                                    len(cv.get("rounds") or {}))),
-        # **생략과 불가는 다르다** (ADR-H042). `plan_unedited` 는 1라운드 수렴이라
-        # 같은 관측기를 같은 전문에 다시 안 부른 것이고 등급이 안 내려간다.
+        # **생략과 불가는 다르다** (ADR-H042). `no_risk` 는 01 INTENT 의 `risk`
+        # 가 비어 있고 Critical 도 없었던 것(ADR-H060), `docs_profile` ·
+        # `fix_profile` 은 레인의 양보다 — 셋 다 정책 스킵이라 등급이 안 내려간다.
         ("02 생략 사유", cv.get("skip_reason")),
         # 08 지시문 검토와 슬롯 예산 (ADR-H056 추기).
         ("지시문 검토", _instruction_review_cell(state)),
