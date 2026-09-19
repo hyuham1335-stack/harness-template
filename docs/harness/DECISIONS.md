@@ -90,7 +90,7 @@
 | [[ADR-H047]] | 하한·캘리브레이션은 런이 갱신 | 채택됨 | 구현 | `stage_na` · `verify-adapter` 포함 |
 | [[ADR-H048]] | 카운터 상한 강제 · 재상정은 지급 | 채택됨 | 구현 | — |
 | [[ADR-H049]] | contract-trace 는 어댑터 관례를 읽는다 | 채택됨 | 구현 | — |
-| [[ADR-H050]] | 0 findings 는 신호 | 채택됨 | 부분 승계 | **결정 4(test 리뷰어 보장) 미결** → 백로그 1. 결정 5 는 (a) 만 2026-09-19 구현(백로그 2(a) 닫힘) · (b) 는 백로그 2(b) |
+| [[ADR-H050]] | 0 findings 는 신호 | 채택됨 | 부분 승계 | 결정 4(test 리뷰어 보장)는 [[ADR-H062]] 가 닫음(백로그 1). 결정 5 는 (a) 만 2026-09-19 구현(백로그 2(a) 닫힘) · (b) 는 백로그 2(b) |
 | [[ADR-H051]] | 미룸은 이월 · 시한은 등급이 치른다 | 채택됨 | 구현 | `promotion_overdue` 는 [[ADR-H056]] 이 prose 버킷에 무효화 |
 | [[ADR-H052]] | 08 은 대기·형식 왕복·비용을 센다 | 채택됨 | 구현 | 비용 칸은 「미계측」 → 백로그 11 |
 | [[ADR-H053]] | `fix` 레인 | 채택됨 | 구현 | 실물 `fix` 런 0(ROADMAP §7-6). 우회 측정 → 백로그 10 |
@@ -102,6 +102,7 @@
 | [[ADR-H059]] | 07 트리거 삭제 · 05 범위는 레인이 | 채택됨 | 구현 | audit 문구는 [[ADR-H061]] 이 대체 |
 | [[ADR-H060]] | 02 는 최대 1회 · `risk` 가 돌린다 | 채택됨 | 구현 | `risk_undeclared` 대조 장치는 후속 → 백로그 5 |
 | [[ADR-H061]] | 작성자는 싸게, 검사자는 비싸게 | 채택됨 | 구현 | 05 `review_repair` 작성자는 등급 밖 → 백로그 6 |
+| [[ADR-H062]] | `test` 리뷰어가 `arch` 보다 먼저 | 채택됨 | 구현 | 백로그 1 닫음 |
 
 ---
 
@@ -127,7 +128,7 @@
 
 | # | 성격 | 선행 | 권장안 · 규모 |
 |---|---|---|---|
-| 1 | 결정 | [[ADR-H054]] 표 | **(b) priority 교환**(test 4→3 · arch 3→4, `_reviewers_note` 가 "우선순위는 배열 순서" 라 배열 위치도 옮긴다). 코드 0줄, 테스트는 config 에서 읽어 자동 적응. (a) 는 단독으로 못 닫는다 — `when_role_owned` 는 매칭만 바꾸고 절단은 `matched[:cap]` 이 priority 순으로 한다. (c) 는 `test_normal_profile_respects_the_cap`·`test_dropped_reviewers_are_named_not_silently_lost` 둘을 다시 써야 한다 |
+| 1 | 결정 | [[ADR-H054]] 표 | **닫힘 2026-09-19 · [[ADR-H062]]** — **(b) priority 교환**(test 4→3 · arch 3→4, `_reviewers_note` 가 "우선순위는 배열 순서" 라 배열 위치도 옮긴다). 코드 0줄, 테스트는 config 에서 읽어 자동 적응. (a) 는 단독으로 못 닫는다 — `when_role_owned` 는 매칭만 바꾸고 절단은 `matched[:cap]` 이 priority 순으로 한다. (c) 는 `test_normal_profile_respects_the_cap`·`test_dropped_reviewers_are_named_not_silently_lost` 둘을 다시 써야 한다 |
 | 12 | 코드 | **1 뒤** (같은 블록을 복사하므로) | `harness/config.json` 의 `reviewers`+`review` 를 프로필에 복사 · `config.schema.json` `required` 에 `reviewers`·`review` 추가 · 프로필↔템플릿 키 일치 테스트 1개(지금 없다 — 이 결함이 안 잡힌 이유) |
 | 6 | 코드 | 없음 | `_review_repair_render` 직전에 `_instruct(s, "05-code-review", ["05:r{n}:repair:{owner}"])` + `_slot_of` 의 05 분기에서 `repair` 면 `roles`. 3~5줄, 04 와 대칭. 등급 **값**은 파동 3 의 표본이 정하고, 배선은 지금 해야 표본이 쌓인다 |
 | 3 | 결정 | 브랜치 격리 범위 | `run_promote` 의 `apply` 직전에 `adapters.run_stage(root, adapter, "lint")`·`"check"` 를 돌려 exit≠0 이면 `applied` 행을 `rejected`+사유로. `promote.py` 에 `reject_applied` 헬퍼(종단 상태 보호와 같은 층). 07 페이즈 148~151·259행 문구 교체. ~50줄. **함정 둘**: `cmd:null` 스테이지의 `skipped` 는 통과가 아니라 갭(`promotion_baseline_unverified` 와 같은 모양으로 남긴다) · 브랜치 생성은 실행기 밖 그대로 두고 그 사실을 07 에 적는다(권장 — 격리까지 실행기가 하면 파동 4 규모) |
@@ -150,7 +151,7 @@
 
 **P0 — 게이트 공백**
 
-1. **test 리뷰어 보장** — [[ADR-H050]] 결정 4. `config.reviewers` 의 `test` 는 priority 4 이고 `review.profile_caps.normal` 이 4 라 테스트 파일이 바뀌어도 `routing.dropped` 로 떨어진다(파일럿 5런). 세 안: (a) `when_role_owned` 를 role `test` 로 확장 (b) priority 를 `arch` 위로 (c) cap 4 → 5. **(a) 는 단독으로 닫지 못한다** — `when_role_owned` 는 매칭을 넓힐 뿐이고 `test` 는 이미 자기 글롭으로 매칭되며, 절단은 `review.route()` 의 `matched[:cap]` 이 priority 순으로 한다. 닫힘: [[ADR-H054]] 의 표를 근거로 새 ADR 이 (b) 또는 (c) 를 고른다.
+1. **닫힘 (2026-09-19 · [[ADR-H062]], (b))** — **test 리뷰어 보장** — [[ADR-H050]] 결정 4. `config.reviewers` 의 `test` 는 priority 4 이고 `review.profile_caps.normal` 이 4 라 테스트 파일이 바뀌어도 `routing.dropped` 로 떨어진다(파일럿 5런). 세 안: (a) `when_role_owned` 를 role `test` 로 확장 (b) priority 를 `arch` 위로 (c) cap 4 → 5. **(a) 는 단독으로 닫지 못한다** — `when_role_owned` 는 매칭을 넓힐 뿐이고 `test` 는 이미 자기 글롭으로 매칭되며, 절단은 `review.route()` 의 `matched[:cap]` 이 priority 순으로 한다. 닫힘: [[ADR-H054]] 의 표를 근거로 새 ADR 이 (b) 또는 (c) 를 고른다.
 2. **계약 자체의 결함을 보는 눈** — (a) 닫힘 (2026-09-19 · [[ADR-H050]] 추기) · (b) 열림. [[ADR-H050]] 결정 5. (a) gen 체크리스트 「계약이 지시한 재사용 심볼의 정의를 열어 전제를 확인한다」— [[ADR-H059]] 가 넣은 「기존 코드와의 상호작용」이 절반이다. (b) 02 에 계약 초안을 함께 넘기기 — 미착수. 둘 다 모델 판단이라 기계 검증이 없다.
 3. **승격 자체 게이트 강제** — [[ADR-H021]] 이 "같이 하지 않은 것" 으로 적은 §E11. `promote --apply` 뒤 `lint`+`check` 재실행을 실행기가 돌리지 않고 07 페이즈 파일이 "네가 그 브랜치에서 돌린다" 고 지시만 한다(team-spec §E11 「아직 실행기가 강제하지 않는다」). 닫힘: `promote --apply` 가 어댑터의 lint·check 스테이지를 돌리고 실패면 `rejected` 를 쓴다. 손잡이는 `adapters.run_stage` 가 이미 있고 `run_promote` 는 `runner` 주입점을 갖고 있다. **열린 설계 결정 하나**: 규칙 전용 브랜치 생성까지 실행기가 할 것인가 — 안 하면 게이트가 현재 워크트리에서 돌아 07 의 "기능 PR 무영향" 약속과 어긋나는 사실을 07 에 적어야 한다.
 4. **닫힘 (2026-09-19 · [[ADR-H045]] 추기)** — **02 봉투가 교차검증기를 말하지 않는다** — [[ADR-H045]] 의 부수 결함. `cli._cross_verify_render` 는 페이즈 프론트매터 `review.reviewers` 에서 교차검증기를 찾는데 `02-cross-verify.md` 에는 `review` 선언이 없어 02 에서 빈 문자열을 낸다. 01 이 xv 를 안 부르는 지금은 primary/fallback·재시도 안내를 어느 봉투도 하지 않는다. 닫힘: 02 전용 프로스펙티브 렌더, 또는 02 프론트매터에 xv 리뷰어 선언.
@@ -2639,6 +2640,8 @@ entrypoints: 0, scope.selected: 0` 인 채 게이트를 지났고, 그 결과 �
 
 **추기 (2026-09-19, 백로그 2(a) 닫힘)**: 결정 5 의 (a) 를 넣었다 — `general-reviewer/SKILL.md` 「볼 것」 표에 「재사용 전제」 행(계약이 재사용하라고 지시한 심볼의 정의를 열어 시그니처·반환·예외의 전제를 확인하고, 틀리면 `CONTRACT_DEFECT`), 「입력」 절에 그 파일을 열어도 된다는 허용 한 줄. 기계 검증이 없다는 사실을 SKILL 에 적었다. (b) 는 02 시점에 계약 파일이 없어(03 이 처음 `produces`) 봉투 한 줄이 아니라 계약 작성 시점을 옮기는 변경이다 — 백로그 2(b) 로 남는다.
 
+**추기 (2026-09-19, 백로그 1 닫힘)**: 결정 4 는 [[ADR-H062]] 가 (b) priority 교환으로 닫았다 — `test` 3 · `arch` 4.
+
 관련: [[ADR-H043]](07 생략 조건) · [[ADR-H017]](리뷰 수행은 라우팅이 증언) · [[ADR-H035]](통제 어휘)
 
 ---
@@ -3186,6 +3189,31 @@ effort 는 07 의 `/code-review --effort` 하나만 결정론으로 정했고 �
 `escaped_05` 가 medium 시절(16건/15런)과 다른지 본다. 05 수리가 런당 1회를 넘으면 그 경로에 지시 키를 둔다.
 
 관련: [[ADR-H044]](결정 4 부분 대체) · [[ADR-H059]](audit 문구 대체) · [[ADR-H025]] · [[ADR-H053]] · [[ADR-H060]]
+
+---
+
+### ADR-H062: `test` 리뷰어가 `arch` 보다 먼저다 — normal cap 에서 잘리는 쪽을 바꾼다
+
+**날짜**: 2026-09-19 · **상태**: 채택됨 · **구현 상태**: 구현됨 (2026-09-19 — `config.reviewers` 의 `test` priority 4→3 ·
+`arch` 3→4, 배열 위치 교환)
+
+**맥락**: [[ADR-H050]] 결정 4 (백로그 1). `review.route()` 는 매칭된 리뷰어를 priority 순으로 세우고 `matched[:cap]` 으로
+자른다. normal cap 4 에 `gen`·`data`·`sec`·`arch` 가 먼저 앉아 테스트 파일이 바뀐 런에서도 `test` 가 `routing.dropped`
+로 떨어졌다(파일럿 5런). 세 안 중 (a) `when_role_owned` 확장은 매칭만 넓히고 절단은 그대로라 단독으로 못 닫고,
+(c) cap 4→5 는 리뷰어 1명분 비용과 기존 테스트 둘의 재작성이 따른다.
+
+**결정**: (b) — `test` 를 priority 3, `arch` 를 4 로 교환한다. `_reviewers_note` 가 "우선순위는 배열 순서" 라 배열
+위치도 옮긴다. 코드는 0줄이고 라우팅 테스트는 config 를 읽어 순서를 따라온다.
+`test_a_test_change_keeps_the_test_reviewer_under_the_normal_cap` 이 닫힘을 잠근다.
+
+**트레이드오프**: 넷이 모두 매칭되는 normal 런에서는 이제 `arch` 가 떨어진다. `arch` 의 글롭(`src/lib/**` 등)은 넓어
+거의 매 런 매칭되므로 "테스트가 바뀐 런에서 구조 관점이 빠진다" 가 새 공백이다. `test` 는 글롭이 좁아 테스트 파일이
+바뀐 런에서만 자리를 차지하므로 `arch` 가 잃는 빈도는 그만큼이다. 미검증이다.
+
+**재검토 시점**: 다음 파일럿 3런의 `routing.dropped` 에 `arch` 가 몇 번 오르는가, 그 런의 `escaped_05` 에 구조 지적이
+있는가. 있으면 (c) 로 간다.
+
+관련: [[ADR-H050]](결정 4 닫음) · [[ADR-H054]] · [[ADR-H043]]
 
 ---
 

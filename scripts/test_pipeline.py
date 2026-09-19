@@ -6513,6 +6513,16 @@ class TestReviewerRouting:
         got = rv.route(_config(repo), changed, "normal")
         assert got["dropped"], "상한으로 빠진 리뷰어가 이름으로 남아야 한다"
 
+    def test_a_test_change_keeps_the_test_reviewer_under_the_normal_cap(self, repo):
+        """테스트 파일이 바뀌면 `test` 가 cap 에 잘리지 않는다 — 잘리는 것은
+        `arch` 다 (ADR-H062). 파일럿 5런이 `test` 를 `dropped` 로 잃었다."""
+        changed = ["src/lib/schemas.ts", "src/app/api/x/route.ts",
+                   "src/lib/a.test.ts"]
+        got = rv.route(_config(repo), changed, "normal")
+        codes = [r["code"] for r in got["reviewers"]]
+        assert "test" in codes, got
+        assert "arch" not in codes, got
+
     def test_docs_reviewer_only_when_no_source_change(self, repo):
         with_src = rv.route(_config(repo), ["docs/x.md", "src/lib/a.ts"], "normal")
         assert "docs" not in [r["code"] for r in with_src["reviewers"]]
