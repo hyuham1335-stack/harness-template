@@ -34,10 +34,13 @@
 이 페이즈가 막는 실패는 하나다 — **"아무도 안 봤다"가 "통과"가 되는 것.**
 관측기를 **빼지 않고 바꾼다** (ADR-H043): 일반 정합성("구현이 계약대로
 동작하는가")은 05 의 `gen` 리뷰어가 소스 변경마다 보고, 07 의 내장 리뷰는
-**신호가 있는 런**에서만 돈다 — 05 가 `ok` 가 아니거나, 04·05 에서 수리가
-있었거나, Major 가 남았거나, 감사 런이다. 깨끗한 런은 `skipped` 이고 등급이
-내려가지 않는다. 봇을 켜 놓고 무응답이면 그것은 있어야 할 관측기가 없는
-것이라 여전히 gap 이고 내장 리뷰가 대신 돈다.
+**신호가 있는 런**에서만 돈다 — 05 가 `ok` 가 아니거나, 00 의 예측이 빗나갔거나,
+05 의 지적이 0건이거나, 감사 런이다. **"Major 가 남았다" · "04·05 에 수리가
+있었다" 는 신호가 아니다** (ADR-H059) — 05 는 매 런 Major 를 내므로 그 둘은
+파일럿 11런 중 9런에서 07 을 강제했고, 그 Major 는 05 안에서 수리·델타
+재리뷰를 이미 받은 것이었다. 두 번째 눈의 표본은 감사 런이 산다. 그 밖의 런은
+`skipped` 이고 등급이 내려가지 않는다. 봇을 켜 놓고 무응답이면 그것은 있어야
+할 관측기가 없는 것이라 여전히 gap 이고 내장 리뷰가 대신 돈다.
 
 **`docs` 레인은 `docs_profile` 로 생략한다** — 소스 변경이 없고 05 의 docs
 리뷰어가 봤으니 내장 코드 리뷰가 볼 코드가 없다. **`fix` 레인은 `fix_profile`
@@ -99,11 +102,16 @@ python scripts/pipeline/cli.py review07 --external {07_external.json} --run-id {
 
 - `review05.status != ok` → **medium** (리뷰 결손을 비싼 쪽으로 메운다)
 - 봇을 켜 놓았는데 `timeout` · `not_a_review` → **low** + 등급 `PASS_WITH_GAPS`
-- 외부 Major 가 있거나 05 에 Major 가 남았다 → **low**
-- 04·05 에서 수리가 있었다 (`repair` · `review_repair` 의 `gate_failure` ·
-  `review_blocking` 소모) → **low**. 고친 코드는 두 번째 눈을 받는다. 형식
-  반려(`format_reject`)는 수리가 아니라 세지 않는다
-- 그 밖 → **skipped** (`skip_reason: clean_05`). 봇이 config 로 꺼진
+- 00 의 예측이 빗나갔다 (`profile.triage_miss`) → **medium**
+- `docs` 레인 → **skipped** (`docs_profile`) · `fix` 레인 → **skipped**
+  (`fix_profile`, 단 05 지적 0건이면 low)
+- 외부가 `reviewed` 이고 `small` 레인 → **skipped** (`clean_05`)
+- 외부 리뷰에 Major 가 있다 → **low**
+- 05 의 지적이 0건이다 → **low**. 0 은 "봤는데 없었다" 와 "보지 않았다" 를
+  가르지 못한다 (ADR-H050)
+- 그 밖 → **skipped** (`skip_reason: clean_05`). 05 에 Major 가 남았거나
+  04·05 에 수리가 있었어도 같다 — 그 Major 는 05 안에서 수리·델타 재리뷰를
+  이미 받았고, 두 번째 눈은 감사 런이 산다 (ADR-H059). 봇이 config 로 꺼진
   `disabled` 여도 성립한다 — 일반 정합성은 05 의 `gen` 이 봤다 (ADR-H043).
   등급이 내려가지 않는다. **`/code-review` 를 부르지 말고** `07_pr_review.json`
   을 `code_review: "skipped"` · findings 빈 배열로 내고 바로 `record` 로 간다 —

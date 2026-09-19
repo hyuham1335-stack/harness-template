@@ -4,7 +4,10 @@
 **이 모듈이 막는 실패는 하나다** — "아무도 안 봤다"가 "통과"가 되는 것.
 관측기를 **빼지 않고 바꾼다** (ADR-H043): 일반 정합성은 05 의 `gen` 이 소스
 변경마다 보고, 07 의 내장 리뷰는 **신호가 있는 런**에서만 돈다 — 05 가 `ok`
-가 아니거나, 04·05 에서 수리가 있었거나, Major 가 남았거나, 감사 런이다.
+가 아니거나, 트리아지 예측이 빗나갔거나, 켜 놓은 봇이 결손이거나, 05 의
+지적이 0건이거나, 감사 런이다. "Major 가 남았다" · "04·05 에 수리가 있었다"
+는 트리거가 아니다 (ADR-H059) — 05 가 매 런 Major 를 내므로 그 둘은 파일럿
+11런 중 9런을 강제했고, 05 안에서 수리·델타 재리뷰를 이미 받은 것이었다.
 그 밖의 깨끗한 런은 `skipped` 이고 등급이 내려가지 않는다.
 
 봇이 config 로 꺼진 `disabled` 는 gap 이 아니다. 켜 놓고 무응답인 `timeout`
@@ -37,11 +40,6 @@ EFFORTS = ("skipped", "low", "medium")
 # **미검증 상속값이다.** 5런에 1회의 비용으로 생략 정책의 근거를 산다 (§E2).
 AUDIT_EVERY = 5
 
-# 07 이 "고친 코드" 로 보는 예산 소모 사유. `format_reject` 는 예산은 태우지만
-# 코드를 고친 것이 아니다 (ADR-H029) — 세면 형식으로 튕긴 런이 수리 런처럼
-# 내장 리뷰를 받는다.
-REPAIR_REASONS = ("gate_failure", "review_blocking")
-
 # 정책 생략의 사유. `skip_policy` 의 `plan_unedited` 와 같은 부류다 —
 # 관측기 부재가 아니라 "같은 관측을 이미 했다" 이므로 등급이 안 내려간다.
 SKIP_CLEAN_05 = "clean_05"
@@ -54,21 +52,6 @@ SKIP_DOCS_PROFILE = "docs_profile"
 # `fix` 레인 — 05 의 `gen` 하나가 수리 하나를 봤다. 지적이 0건이면 ADR-H050
 # 그대로 low 로 한 번 돈다 (ADR-H053).
 SKIP_FIX_PROFILE = "fix_profile"
-
-
-def repaired_before_07(state):
-    """04·05 에서 코드를 고친 적이 있는가. `spent[].reason` 으로 센다.
-
-    `used` 를 보지 않는 것이 요점이다 — 같은 카운터가 형식 반려도 세므로
-    (ADR-H029) `used ≥ 1` 은 "고쳤다" 가 아니다. 사유가 어휘로 닫혀 있어
-    (`state.COUNTER_REASONS`) 여기서 가를 수 있다.
-    """
-    counters = (state or {}).get("counters") or {}
-    for name in ("repair", "review_repair"):
-        for entry in (counters.get(name) or {}).get("spent") or []:
-            if entry.get("reason") in REPAIR_REASONS:
-                return True
-    return False
 
 
 def audit_due(root):
@@ -209,13 +192,10 @@ def decide(state, external, config, audit=False):
     elif reviewed and (external.get("major") or 0) > 0:
         effort = "low"
         reasons.append("외부 리뷰에 Major 가 있다.")
-    elif (r05.get("major") or 0) > 0:
-        effort = "low"
-        reasons.append("05 에 Major 가 남아 있다.")
-    elif repaired_before_07(state):
-        effort = "low"
-        reasons.append("04·05 에서 수리가 있었다 — 고친 코드는 두 번째 눈을 "
-                       "받는다 (ADR-H043).")
+    # **"05 에 Major 가 남았다" · "04·05 에 수리가 있었다" 는 여기 없다**
+    # (ADR-H059). 05 는 매 런 Major 를 내므로 그 두 분기는 파일럿 11런 중
+    # 9런을 강제했다 — "조건부" 가 "항상" 이었다. Major 는 05 안에서 수리와
+    # 델타 재리뷰를 이미 받았고, 두 번째 눈의 표본은 감사 런(`audit`)이 산다.
     elif r05.get("findings_total") == 0:
         # **0 은 깨끗함의 증거가 아니다** (ADR-H050). 파일럿 9729 · 3305 는
         # 리뷰어 넷이 전부 0건을 냈고 07 도 생략돼 자동 게이트 말고는 아무
@@ -228,9 +208,10 @@ def decide(state, external, config, audit=False):
                        "한 번 돌린다 (ADR-H050).")
     else:
         skip, effort, skip_reason = True, "skipped", SKIP_CLEAN_05
-        reasons.append("05 가 ok 이고 Major 가 없고 04·05 에 수리가 없었다 — "
-                       "일반 정합성은 05 의 gen 이 봤다. 내장 리뷰를 생략한다 "
-                       "(ADR-H043). 등급은 내려가지 않는다.")
+        reasons.append("05 가 ok 이고 지적을 냈다 — 일반 정합성은 05 의 gen 이 "
+                       "봤고 Major 는 05 안에서 수리·델타 재리뷰를 받았다. 내장 "
+                       "리뷰를 생략한다 (ADR-H043 · ADR-H059). 등급은 내려가지 "
+                       "않는다.")
 
     if audit:
         # 생략하면 escaped_05 를 셀 수 없다. 그래서 5런에 1회는 강제한다.

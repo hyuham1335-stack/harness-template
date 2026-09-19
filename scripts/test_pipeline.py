@@ -10060,36 +10060,32 @@ class TestReview07Skip:
         assert s["review07"]["skip_reason"] == "clean_05"
         assert not any(g.startswith("external:") for g in s.get("gaps") or [])
 
-    def test_05_에서_수리가_있었으면_low_다(self, repo, request_file, phases):
-        """고친 코드는 두 번째 눈을 받는다."""
+    def test_05_에서_수리가_있었어도_생략한다(self, repo, request_file, phases):
+        """고친 코드는 05 의 델타 재리뷰가 이미 봤다 (ADR-H059). 파일럿 11런
+        중 9런이 이 분기와 "Major 잔여" 로 07 을 강제로 돌렸다 — 05 가 매 런
+        Major 를 내므로 "조건부" 가 "항상" 이었다."""
         run_id, paths = _enter_07(repo, request_file, phases)
         _spend(repo, run_id, "review_repair", "review_blocking")
         env = cli.run_review07(repo, run_id=run_id)
-        assert env["data"]["skip"] is False
-        assert env["data"]["effort"] == "low"
-        assert env["data"]["skip_reason"] is None
+        assert env["data"]["skip"] is True
+        assert env["data"]["effort"] == "skipped"
+        assert env["data"]["skip_reason"] == "clean_05"
 
-    def test_04_게이트_수리가_있었으면_low_다(self, repo, request_file, phases):
+    def test_04_게이트_수리가_있었어도_생략한다(self, repo, request_file, phases):
         run_id, paths = _enter_07(repo, request_file, phases)
         _spend(repo, run_id, "repair", "gate_failure")
-        env = cli.run_review07(repo, run_id=run_id)
-        assert env["data"]["skip"] is False
-        assert env["data"]["effort"] == "low"
-
-    def test_형식_반려만_있었으면_수리가_아니라_생략한다(self, repo,
-                                                       request_file, phases):
-        """형식 반려는 예산은 태우지만 코드를 고친 것이 아니다 (ADR-H029)."""
-        run_id, paths = _enter_07(repo, request_file, phases)
-        _spend(repo, run_id, "review_repair", "format_reject")
         env = cli.run_review07(repo, run_id=run_id)
         assert env["data"]["skip"] is True
         assert env["data"]["effort"] == "skipped"
 
-    def test_05_에_Major_가_남아_있으면_low_다(self, repo, request_file, phases):
+    def test_05_에_Major_가_남아_있어도_생략한다(self, repo, request_file, phases):
+        """Major 는 05 안에서 수리·델타 재리뷰를 받았다. 두 번째 눈은 감사 런이
+        산다 — escaped_05 16건/15런은 감사 런과 0건 런의 표본으로 잰다."""
         run_id, paths = _enter_07(repo, request_file, phases, major=1)
         env = cli.run_review07(repo, run_id=run_id)
-        assert env["data"]["skip"] is False
-        assert env["data"]["effort"] == "low"
+        assert env["data"]["skip"] is True
+        assert env["data"]["effort"] == "skipped"
+        assert env["data"]["skip_reason"] == "clean_05"
 
     def test_봇이_켜져_있는데_무응답이면_low_이고_gap_이다(self, repo,
                                                         request_file, phases):
@@ -10103,15 +10099,11 @@ class TestReview07Skip:
         _pp, s = st.load(repo, run_id)
         assert "external:timeout" in (s.get("gaps") or [])
 
-    def test_repaired_before_07_은_수리_사유만_센다(self):
-        assert rv7.repaired_before_07({}) is False
-        assert rv7.repaired_before_07({"counters": {"review_repair": {
-            "used": 1, "spent": [{"reason": "format_reject"}]}}}) is False
-        assert rv7.repaired_before_07({"counters": {"repair": {
-            "used": 1, "spent": [{"reason": "gate_failure"}]}}}) is True
-        assert rv7.repaired_before_07({"counters": {"review_repair": {
-            "used": 2, "spent": [{"reason": "format_reject"},
-                                 {"reason": "review_blocking"}]}}}) is True
+    def test_수리_사유는_더는_effort_분기가_아니다(self):
+        """ADR-H059 — `repaired_before_07` 을 지웠다. 수리 유무는 원장·보고서에
+        남지만 07 의 트리거가 아니다."""
+        assert not hasattr(rv7, "repaired_before_07")
+        assert not hasattr(rv7, "REPAIR_REASONS")
 
     def test_reviewed_이고_major_0_이면_생략한다(self, repo, request_file,
                                                 phases):
