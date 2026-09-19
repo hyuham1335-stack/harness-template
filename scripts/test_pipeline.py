@@ -13632,3 +13632,81 @@ class TestFixLane:
         cfg = _cfg()
         for slot in ("plan", "roles", "reviewers"):
             assert cfg["models"][slot]["fix"] == "sonnet", slot
+
+
+class TestReviewDepth:
+    """05 의 리뷰 범위는 레인별로 봉투가 찍는다 (`review.depth`).
+
+    FR-007 의 동시성 결함은 05 가 diff 만 봐서 놓쳤고 07 이 기존 `transition()`
+    과의 상호작용에서 잡았다 — 리뷰 범위가 레인과 무관하게 고정돼 있었다.
+    `normal` 은 `diff+refs`(계약이 참조하는 기존 파일까지), 나머지는 `diff`.
+    """
+
+    def test_config_declares_a_depth_per_lane(self):
+        cfg = _cfg()
+        assert cfg["review"]["depth"] == {"docs": "diff", "fix": "diff",
+                                          "small": "diff", "normal": "diff+refs"}
+
+    def test_schema_and_config_are_paired(self):
+        """스키마 없이 config 만 고치면 doctor 가 기동 전에 거부한다."""
+        cfg, schema = _cfg(), json.loads(
+            (ROOT / "harness" / "config.schema.json").read_text(encoding="utf-8"))
+        assert harness.validate(cfg, schema) == []
+        without = json.loads(json.dumps(schema))
+        del without["properties"]["review"]["properties"]["depth"]
+        errs = harness.validate(cfg, without)
+        assert any("depth" in e for e in errs), errs
+        bad = json.loads(json.dumps(cfg))
+        bad["review"]["depth"]["normal"] = "everything"
+        assert harness.validate(bad, schema), "어휘 밖 값은 거부다"
+
+    def test_05_entry_freezes_the_depth_and_the_envelope_says_it(
+            self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        # 계약 유닛 수 재판정에 밀리지 않게 사람이 정한 normal 로 둔다.
+        s["profile"] = {"name": "normal", "source": "user"}
+        st.save(_p, s)
+        (repo / "src" / "app" / "api" / "x").mkdir(parents=True)
+        (repo / "src" / "app" / "api" / "x" / "route.ts").write_text(
+            "export async function POST() {}\n", encoding="utf-8")
+        env = cli.run_next(repo, run_id)
+        _p, s = st.load(repo, run_id)
+        assert s["phases"]["05-code-review"]["depth"] == "diff+refs"
+        assert "리뷰 범위: **diff+refs**" in env["render"], env["render"]
+
+    def test_fix_lane_reviews_the_diff_only(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        s["profile"] = {"name": "fix", "source": "user"}
+        st.save(_p, s)
+        (repo / "src" / "lib" / "match.ts").write_text("export const x = 1\n",
+                                                        encoding="utf-8")
+        env = cli.run_next(repo, run_id)
+        _p, s = st.load(repo, run_id)
+        assert s["phases"]["05-code-review"]["depth"] == "diff"
+        assert [r["code"] for r in s["phases"]["05-code-review"]["routing"]["reviewers"]] == ["gen"]
+        assert "리뷰 범위: **diff**" in env["render"], env["render"]
+        assert "리뷰 범위: **diff+refs**" not in env["render"]
+
+    def test_render_explains_each_depth(self):
+        def node(depth):
+            return {"phases": {"05-code-review": {
+                "mode": "fanout", "depth": depth,
+                "routing": {"reviewers": [{"code": "gen", "skill": "general-reviewer",
+                                           "matched_count": 1}],
+                            "dropped": [], "capped": False}}}}
+        wide = cli._review_render(node("diff+refs"))
+        assert "리뷰 범위: **diff+refs**" in wide and "참조" in wide, wide
+        narrow = cli._review_render(node("diff"))
+        assert "리뷰 범위: **diff**" in narrow and "diff+refs" not in narrow, narrow
+
+    def test_depth_lands_in_review05_and_the_report(self):
+        s, node = {}, {"depth": "diff+refs"}
+        cli._write_review05(s, node, planned=["gen"], ok=1, merged=[], slot={},
+                            round_=1)
+        assert s["review05"]["depth"] == "diff+refs"
+        s.update({"run_id": "r", "slug": "x", "grade": "PASS", "phases": {},
+                  "counters": {}, "budget": {}, "profile": {"name": "normal"}})
+        text, _missing = rep_mod.build(s, {}, {}, [])
+        assert "05 리뷰 범위" in text and "diff+refs" in text, text

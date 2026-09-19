@@ -677,6 +677,9 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
         ("05 상태", r05.get("status")),
         ("05 리뷰어", "%s / %s" % (r05.get("reviewers_ok"),
                                    r05.get("reviewers_planned"))),
+        # 레인이 정한 지시 범위다 (ADR-H059). `diff+refs` 로 05 벽시계가 늘면
+        # 이 행과 `escaped_05` 를 나란히 놓고 depth 값을 다시 정한다.
+        ("05 리뷰 범위", r05.get("depth")),
         ("검토 제외로 드롭", r05.get("dropped_by_enforcement")),
         ("절단됨", r05.get("truncated")),
         ("맥락 부족 요청", len(r05.get("need_more_context") or []) or 0),

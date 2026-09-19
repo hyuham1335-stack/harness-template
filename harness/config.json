@@ -107,6 +107,7 @@
   "review": {
     "merge_below_diff_lines": 150,
     "profile_caps": {"docs": 1, "fix": 1, "small": 2, "normal": 4},
+    "depth": {"docs": "diff", "fix": "diff", "small": "diff", "normal": "diff+refs"},
     "findings_max": 50,
     "inline_max": {"lines": 600, "bytes": 25000},
     "baseline_runs": 3

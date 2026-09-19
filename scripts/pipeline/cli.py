@@ -1540,6 +1540,11 @@ def _plan_05_review(root, paths, s, ctx):
     node["contract_dropped"] = refreshed.get("dropped") or []
     node["mode"] = review_mod.mode(ctx["config"],
                                    pc._changed_lines(root, changed))
+    # **리뷰 범위도 레인이 정한다** (ADR-H059). FR-007 의 동시성 결함은 05 가
+    # diff 만 봐서 놓쳤다 — 기존 `transition()` 과의 상호작용은 누구의
+    # 체크리스트에도 없었다. `normal` 은 계약이 참조하는 기존 파일까지 본다.
+    node["depth"] = (((ctx["config"].get("review") or {}).get("depth") or {})
+                     .get(profile) or "diff")
     # **인라인 상한은 기계가 정한다** (ADR-H042). `review.inline_max` 는
     # 정의만 있고 아무도 안 읽어 큰 diff 가 리뷰어 수만큼 인라인됐다.
     node["inline"] = review_mod.inline_budget(ctx["config"],
@@ -1670,6 +1675,8 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
         "reviewers_ok": max(r["ok"] for r in seen),
         "reviewers_failed": sorted({c for r in seen for c in r["failed"]}),
         "mode": node.get("mode") or "fanout",
+        # 지시된 범위다 — 리뷰어가 실제로 참조 파일을 읽었는지는 실행기가 못 본다.
+        "depth": node.get("depth"),
         "major": sum(1 for f in merged if f.get("severity") in verdict.BLOCKING),
         # **0 은 신호다** (ADR-H050). 07 이 "05 가 ok 이고 Major 가 없다" 만 보고
         # 생략하면 리뷰어 넷이 전부 0건을 낸 런(파일럿 9729 · 3305)이 자동
@@ -1811,6 +1818,15 @@ def _review_render(s):
                     "단일 에이전트가 체크리스트를 순차 적용한다"
                     if node.get("mode") == "merged" else
                     "관점별 병렬 fan-out"))
+    depth = node.get("depth") or "diff"
+    if depth == "diff+refs":
+        lines.append("리뷰 범위: **diff+refs** — 계약 `## 유닛` 이 참조하는 **기존** "
+                     "파일을 리뷰어 패킷에 경로로 넣어라. diff 밖 상호작용(낙관적 "
+                     "잠금 · 상태 가드 · 기존 전이 함수)을 보는 것이 이 범위의 "
+                     "목적이다 — 05 가 놓치고 07 이 잡은 것이 그 자리였다 (FR-007).")
+    else:
+        lines.append("리뷰 범위: **%s** — 인라인 diff · 계약 · `05_trace.json` 만. "
+                     "그 밖의 파일은 패킷에 넣지 않는다." % depth)
     lines.append("")
     if node.get("mode") == "merged":
         # **M37.** 봉투가 `merged` 만 적으면 "제출도 하나" 로 읽힌다. 기계는
