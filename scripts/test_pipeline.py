@@ -10323,7 +10323,7 @@ class TestReview07Severity:
 
 class TestReview07Audit:
 
-    def test_audit_run_은_생략_조건을_만족해도_medium_을_강제한다(
+    def test_audit_run_은_생략_조건을_만족해도_high_를_강제한다(
             self, repo, request_file, phases, monkeypatch):
         run_id, paths = _enter_07(repo, request_file, phases)
         _enable_bot(repo)
@@ -10331,10 +10331,32 @@ class TestReview07Audit:
         monkeypatch.setattr(rv7, "audit_due", lambda root: True)
         env = cli.run_review07(repo, external=str(f), run_id=run_id)
         assert env["data"]["skip"] is False
-        assert env["data"]["effort"] == "medium"
+        assert env["data"]["effort"] == "high"
         assert env["data"]["audit_run"] is True
         _pp, s = st.load(repo, run_id)
         assert s["audit"]["is_audit_run"] is True
+
+    def test_high_는_감사_런만_낸다(self):
+        # 감사 런은 escaped_05 를 재는 표본이라 낮은 effort 는 과소측정한다
+        # (ADR-H061). 나머지 분기는 그대로 skipped·low·medium 이다.
+        assert "high" in rv7_mod.EFFORTS
+        cfg = {}
+        ext = {"status": "disabled", "major": 0}
+        states = [
+            {"review05": {"status": "degraded", "major": 0, "findings_total": 1},
+             "profile": {"name": "normal"}},
+            {"review05": {"status": "ok", "major": 0, "findings_total": 0},
+             "profile": {"name": "normal"}},
+            {"review05": {"status": "ok", "major": 2, "findings_total": 3},
+             "profile": {"name": "normal"}},
+            {"review05": {"status": "ok", "major": 0, "findings_total": 0},
+             "profile": {"name": "fix"}},
+        ]
+        for s in states:
+            got = rv7_mod.decide(s, ext, cfg)
+            assert got["effort"] != "high", (s, got)
+            got = rv7_mod.decide(s, ext, cfg, audit=True)
+            assert got["effort"] == "high" and got["skip"] is False, (s, got)
 
     def test_audit_주기는_5런마다다(self, repo):
         d = repo / "_workspace" / "runs"
@@ -12802,19 +12824,33 @@ class TestTriageMiss:
 class TestModelTierRouting:
     """등급은 봉투가 정한다 — 지시이지 실측이 아니다."""
 
+    # 슬롯 × 레인 전체. 작성자(roles)는 싸게, 검사자(plan · xv · reviewers)는
+    # normal 에서 opus — 계약이 작성자의 자유도를 묶었고 검사자의 내용 품질은
+    # 기계가 못 잰다 (ADR-H061). `inherit` 는 표에 없다.
+    EXPECTED_TIERS = {
+        "00:triage":      {"docs": "haiku", "fix": "haiku", "small": "haiku", "normal": "haiku"},
+        "01:r0:plan":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "opus"},
+        "01:r0:xv":       {"docs": "opus", "fix": "opus", "small": "opus", "normal": "opus"},
+        "02:xv":          {"docs": "opus", "fix": "opus", "small": "opus", "normal": "opus"},
+        "03:r0:impl":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
+        "04:r1:impl":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
+        "05:r1:gen":      {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "opus"},
+    }
+
     def test_slot_and_profile_fallback(self):
         cfg = _cfg()
-        assert cli._model_for(cfg, "01:r0:plan", "normal") == "sonnet"
-        assert cli._model_for(cfg, "01:r0:xv", "normal") == "inherit"
-        assert cli._model_for(cfg, "03:r0:impl", "small") == "sonnet"
-        assert cli._model_for(cfg, "03:r0:impl", "normal") == "inherit"
-        assert cli._model_for(cfg, "04:r1:impl", "small") == "sonnet"
-        assert cli._model_for(cfg, "05:r1:gen", "normal") == "inherit"
-        assert cli._model_for(cfg, "05:r1:gen", "small") == "sonnet"
-        assert cli._model_for(cfg, "00:triage", "normal") == "haiku"
+        for key, by_lane in self.EXPECTED_TIERS.items():
+            for lane, tier in by_lane.items():
+                assert cli._model_for(cfg, key, lane) == tier, (key, lane)
+                assert cli._model_for(cfg, key, lane) != "inherit", (key, lane)
         assert cli._model_for(cfg, "07:code-review", "normal") is None
         cfg.pop("models")
         assert cli._model_for(cfg, "01:r0:plan", "normal") is None
+
+    def test_the_profile_template_declares_the_same_tiers(self):
+        tmpl = json.loads((ROOT / "harness" / "profiles" / "nextjs-ts" / "config.json")
+                          .read_text(encoding="utf-8"))
+        assert tmpl["models"] == _cfg()["models"]
 
     def test_the_01_packet_names_the_tiers_and_state_records_them(self, repo, phases):
         paths, s = _init(repo, SOURCE_REQUEST)
@@ -12851,6 +12887,27 @@ class TestModelTierRouting:
         got = [f for f in _lint(repo) if f["rule"] == "agent_model"]
         assert got and got[0]["status"] == "WARN", got
         assert _fails(_lint(repo)) == []
+
+    # effort 는 Agent 호출 인자로 못 넘긴다 — 에이전트 프론트매터가 유일한
+    # 자리이고 역할 종류별로 정적이다 (ADR-H061). 모델 등급과 달리 봉투 출처가
+    # 없어 두 출처 문제가 없으므로 WARN 대상이 아니다.
+    EXPECTED_EFFORT = {"impl-writer": "medium", "test-writer": "high",
+                       "ui-writer": "medium", "plan-reviewer": "high"}
+
+    def test_agent_files_pin_effort_per_role(self):
+        for agent, want in self.EXPECTED_EFFORT.items():
+            text = (ROOT / ".claude" / "agents" / ("%s.md" % agent)).read_text(encoding="utf-8")
+            front = text.split("---", 2)[1]
+            got = [ln.split(":", 1)[1].strip() for ln in front.splitlines()
+                   if ln.strip().startswith("effort:")]
+            assert got == [want], (agent, got)
+            assert want in ("low", "medium", "high", "xhigh", "max")
+            assert not any(ln.strip().startswith("model:") for ln in front.splitlines()), agent
+
+    def test_lint_does_not_warn_on_effort_alone(self, repo, phases):
+        (repo / ".claude" / "agents" / "impl-writer.md").write_text(
+            "---\nname: impl-writer\neffort: medium\n---\n# x\n", encoding="utf-8")
+        assert [f for f in _lint(repo) if f["rule"] == "agent_model"] == []
 
 
 class TestSkipPolicy:

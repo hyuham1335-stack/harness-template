@@ -101,7 +101,7 @@ python scripts/harness.py init --adapter nextjs-ts --name my-project
 | 브랜치 규칙 | 기준 브랜치는 `main`, 작업 브랜치는 `feat-` 로 시작, `main` 직접 push 금지 |
 | 런당 예산 | 파일 10개 · 1000줄 · 모델 호출 24회 |
 | 수정 금지 경로 | `harness/**` `docs/**` `scripts/**` `.claude/**` 등 |
-| 트리아지 임계값 · 모델 등급 | 언급된 소스 경로가 3개 이하면 `small`, 요청이 1500자 이상이면 `normal`. 트리아지는 `haiku`, 계획은 `sonnet` 등. **전부 미검증 초기값**입니다 |
+| 트리아지 임계값 · 모델 등급 | 언급된 소스 경로가 3개 이하면 `small`, 요청이 1500자 이상이면 `normal`. 등급은 레인(`docs`·`fix`·`small`·`normal`)별로 **작성자는 싸게, 검사자는 비싸게** — 트리아지 `haiku`, 역할(구현·테스트)은 전 레인 `sonnet`, 플랜 리뷰어·교차검증·코드 리뷰어는 `normal` 에서만 `opus`. effort 는 `.claude/agents/*.md` 프론트매터가 역할별로 정합니다 (ADR-H061). **전부 미검증 초기값**입니다 |
 
 **지금 프로필은 `nextjs-ts` 하나뿐입니다.** 다른 스택이라면 이 명령 대신
 `harness/profiles/nextjs-ts/config.json` 을 `harness/config.json` 으로 복사한 뒤 위 표의

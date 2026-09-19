@@ -75,6 +75,10 @@ python scripts/pipeline/cli.py next
 호출의 `model` 인자로 그대로 넘긴다** — `inherit` 면 인자를 주지 않는다. 네가
 고르지 마라. 실행기는 실제 모델을 검증하지 못하므로 이것은 지시로만 남는다.
 
+effort 는 Agent 호출 인자에 **없다.** 역할 에이전트의 effort 는
+`.claude/agents/*.md` 프론트매터가 역할별로 정한다 (ADR-H061). 프롬프트에
+"깊게 생각하라" 류의 effort 지시를 넣지 마라 — 손잡이가 아니고 접두부만 늘린다.
+
 ### 00-triage 에서
 
 `init` 뒤 첫 `next` 가 00 이다. **기계 신호로 확정되면 봉투가 01 지시문을 바로
@@ -342,7 +346,7 @@ python scripts/pipeline/cli.py resume --ack --answer-file <경로>   # 잠금 �
   요청이 세션마다 다른 레인을 탄다
 - **봉투가 찍은 `model:` 을 바꾸지 마라.** 이유: 등급은 `config.models` 가
   레인별로 정한 결정론이고, 실행기가 검증할 수 없는 지시라 네가 바꾸면 아무도
-  모른다
+  모른다. effort 도 같다 — 프론트매터가 정하고 너는 넘길 수단이 없다
 - **계약을 역할 에이전트에게 쓰게 하지 마라.** 이유: 메인 단독 소유다
 - **`harness/config.json` · `harness/adapters/*` · `harness/calibration.json` 을
   고치지 마라.** 이유: 게이트가 검사할 기준을 게이트를 통과하려고 고치는 것이다

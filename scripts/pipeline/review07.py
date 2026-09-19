@@ -34,8 +34,10 @@ import verdict  # noqa: E402
 # 왔는데 리뷰의 구조가 아닌 것이다 — 둘 다 `reviewed` 가 아니다.
 EXTERNAL_STATUS = ("reviewed", "disabled", "not_a_review", "timeout")
 
-# 내장 리뷰의 effort. **`high` 는 없다** — 명세의 state 어휘가 셋뿐이다.
-EFFORTS = ("skipped", "low", "medium")
+# 내장 리뷰의 effort. `high` 는 **감사 런만** 낸다 — escaped_05 를 재는
+# 표본이 낮은 effort 로 돌면 과소측정이다 (ADR-H061). 명세 §state 의 어휘와
+# 같아야 한다 (team-spec.md 의 `code_review`).
+EFFORTS = ("skipped", "low", "medium", "high")
 
 # **미검증 상속값이다.** 5런에 1회의 비용으로 생략 정책의 근거를 산다 (§E2).
 AUDIT_EVERY = 5
@@ -215,10 +217,11 @@ def decide(state, external, config, audit=False):
 
     if audit:
         # 생략하면 escaped_05 를 셀 수 없다. 그래서 5런에 1회는 강제한다.
-        skip, effort, skip_reason = False, "medium", None
-        reasons.append("**감사 런이다** — 생략 조건을 만족해도 medium 을 "
+        skip, effort, skip_reason = False, "high", None
+        reasons.append("**감사 런이다** — 생략 조건을 만족해도 high 를 "
                        "강제한다. 생략하면 `escaped_05` 를 셀 수 없고, 그러면 "
-                       "생략 정책의 근거가 사라진다 (§E2).")
+                       "생략 정책의 근거가 사라진다 (§E2). 표본이라 낮은 effort "
+                       "는 과소측정이다 (ADR-H061).")
 
     return {"skip": skip, "effort": effort, "skip_reason": skip_reason,
             "audit_run": bool(audit), "reasons": reasons, "gaps": gaps}
