@@ -176,8 +176,8 @@ def _inv_block(plan_text):
     return m.group(0).strip() if m else ""
 
 
-def _contract_sections(root, state, config):
-    """계약의 유닛·진입점 절. **살아 있는 파일이 없으면 스냅샷을 읽는다** (M54).
+def _contract_text(root, state, config):
+    """계약 원문. **살아 있는 파일이 없으면 스냅샷을 읽는다** (M54).
 
     06 push 가 성공하면 계약 파일을 지운다. 07 수리 뒤 재승인하고 `pr` 을 다시
     돌리는 것은 정본이 선언한 정상 경로인데(`team-spec.md` §3.5), 그때 원본이
@@ -185,15 +185,34 @@ def _contract_sections(root, state, config):
     보고했다.** 지우기 직전에 남긴 `06_contract_snapshot.md` 가 그 원본이다.
 
     **살아 있으면 스냅샷을 보지 않는다** — 스냅샷은 삭제 시점에 굳은 값이라
-    그 뒤의 계약 델타를 모른다.
+    그 뒤의 계약 델타를 모른다. 살아 있는 경로는 `state.contract.path` 가 먼저고,
+    없으면 `contract.path_template` 이다 — `cli._drop_contract` 와 같은 낙하이고
+    계약 경로의 단일 출처는 뒤엣것이다.
     """
     node = state.get("contract") or {}
-    text = ""
-    for rel in (node.get("path"), node.get("snapshot")):
-        if rel:
-            text = _read(Path(root) / rel)
+    if node.get("mode") == "no_contract":
+        return ""                    # 경로에 남은 파일은 이 런의 계약이 아니다
+    live = node.get("path")
+    if not live and state.get("slug"):
+        template = ((config.get("contract") or {}).get("path_template")
+                    or "_workspace/contract_{slug}.md")
+        live = template.replace("{slug}", state["slug"])
+    for rel in (live, node.get("snapshot")):
+        text = _read(Path(root) / rel) if rel else ""
         if text:
-            break
+            return text
+    return ""
+
+
+def _contract_parsed(root, state, config):
+    import contract as contract_mod
+    text = _contract_text(root, state, config)
+    return contract_mod.parse(text, config) if text else None
+
+
+def _contract_sections(root, state, config):
+    """계약의 유닛·진입점 절 원문 — `<details>` 에 싣는다."""
+    text = _contract_text(root, state, config)
     if not text:
         return ""
     sections = (config.get("contract") or {}).get("sections") or {}
@@ -355,6 +374,174 @@ def _rule_changes(paths):
     return [c for c in changes or [] if isinstance(c, dict) and c.get("file")]
 
 
+# ------------------------------------------------------------ 흐름 노트 (06)
+
+NOTES_FILE = "06_pr_notes.json"
+
+NOTES_EXAMPLE = ('{"schema":1,"flow":[{"step":"채널 정책에 따라 본문을 만든다",'
+                 '"refs":["formatForChannel"]}],"verify":["…"]}')
+
+
+def read_notes(paths):
+    """(노트, 오류 문장). 없거나 깨졌으면 노트는 None 이다."""
+    try:
+        d = json.loads((paths.run_dir / NOTES_FILE).read_text(encoding="utf-8"))
+    except OSError:
+        return None, "없다"
+    except ValueError as exc:
+        return None, "JSON 을 읽지 못했다: %s" % exc
+    return d, None
+
+
+def check_notes(root, paths, state, config):
+    """06 흐름 노트를 대조한다 (ADR-H058 추기). 반환: (노트, 문제 목록).
+
+    **`refs` 만 검사한다.** step 산문의 백틱은 자연어라 오탐한다. refs 는 계약이
+    이름 붙인 것이어야 한다 — 식별자형은 `contract.symbols()` 와 전체 일치, 경로형
+    (`/` 포함)은 진입점 표기나 계약 컨테이너와 접미사 일치. 이것이 PR 본문의
+    「핵심 흐름」을 계약에 묶는 유일한 끈이다.
+    """
+    notes, err = read_notes(paths)
+    if err:
+        return None, ["`%s` — %s" % (NOTES_FILE, err)]
+    problems = []
+    d = notes if isinstance(notes, dict) else {}
+    flow, verify = d.get("flow"), d.get("verify")
+    if not isinstance(flow, list) or not flow:
+        problems.append("`flow` 가 비었다 — 핵심 흐름을 한 단계 이상 적는다")
+        flow = []
+    if not isinstance(verify, list) or not [v for v in verify
+                                            if isinstance(v, str) and v.strip()]:
+        problems.append("`verify` 가 비었다 — 직접 확인하는 법을 하나 이상 적는다")
+    parsed = _contract_parsed(root, state, config)
+    if parsed is None:
+        problems.append("계약을 읽지 못해 `refs` 를 대조할 수 없다")
+    for i, step in enumerate(flow, 1):
+        step = step if isinstance(step, dict) else {}
+        if not str(step.get("step") or "").strip():
+            problems.append("flow[%d] — `step` 이 비었다" % i)
+        refs = step.get("refs")
+        if not isinstance(refs, list) or not refs:
+            problems.append("flow[%d] — `refs` 가 비었다. 계약 식별자를 하나 이상 적는다" % i)
+            continue
+        for ref in refs:
+            if parsed is not None and not _ref_known(ref, parsed):
+                problems.append("flow[%d] — `%s` 는 계약에 없다" % (i, ref))
+    return notes, problems
+
+
+def _ref_known(ref, parsed):
+    import contract as contract_mod
+    if not isinstance(ref, str) or not ref.strip():
+        return False
+    ref = ref.strip()
+    if "/" not in ref:
+        return ref in contract_mod.symbols(parsed)
+    for ep in parsed.get("entrypoints") or []:
+        if ref in (ep.get("raw"), ep.get("path"),
+                   "%s %s" % (ep.get("method"), ep.get("path"))):
+            return True
+    ref = ref.lstrip("./")
+    for item in ((parsed.get("units") or []) + (parsed.get("screens") or [])
+                 + (parsed.get("journeys") or [])):
+        c = (item.get("container") or "").replace("\\", "/").lstrip("./")
+        if c and (ref == c or ref.endswith("/" + c) or c.endswith("/" + ref)):
+            return True
+    return False
+
+
+def _flow_lines(paths):
+    """핵심 흐름 · 직접 확인하는 법. 노트는 모델이 썼고, 대조는 `pr` 이 이미 했다."""
+    notes, _err = read_notes(paths)
+    d = notes if isinstance(notes, dict) else {}
+    flow = [f for f in d.get("flow") or [] if isinstance(f, dict)]
+    if not flow:
+        return ["**핵심 흐름**", "", "_흐름 노트 없음_", ""]
+    out = ["**핵심 흐름**", ""]
+    for i, f in enumerate(flow, 1):
+        refs = ", ".join("`%s`" % r for r in f.get("refs") or [])
+        out.append("%d. %s%s" % (i, str(f.get("step") or "").strip(),
+                                 " — " + refs if refs else ""))
+    out += ["", "**직접 확인하는 법**", ""]
+    out += ["- %s" % v.strip() for v in d.get("verify") or []
+            if isinstance(v, str) and v.strip()] or ["_없다_"]
+    return out + [""]
+
+
+def _by_file_count(by_file, rel):
+    for key, n in by_file.items():
+        k = key.lstrip("./")
+        if k == rel or k.endswith("/" + rel):
+            return n
+    return None
+
+
+def _verified_lines(root, state, config):
+    """유닛 | 테스트 파일 | 케이스 수. **못 잰 것은 「미측정」이다** — 0 이 아니다.
+
+    유닛의 테스트 파일은 계약 심볼이 본문에 나오는 테스트 파일이다
+    (`untested_contract_item` 과 같은 규칙). 케이스 수는 마지막 full 실행이
+    남긴 `state.tests.by_file` 이다 — 06 이 리포트를 다시 읽지 않는다.
+    """
+    import adapters
+    import trace_contract
+
+    parsed = _contract_parsed(root, state, config)
+    units = [u for u in (parsed or {}).get("units") or [] if u.get("symbol")]
+    head = ["**무엇이 검증됐나**", ""]
+    if not units:
+        return head + ["_계약 유닛이 없다._", ""]
+    _config, adapter, _cal = adapters.load(root)
+    tests = trace_contract._unit_test_files(adapter, trace_contract.repo_files(root),
+                                            parsed)
+    tinfo = state.get("tests") or {}
+    by_file = tinfo.get("by_file")
+    rows = ["| 유닛 | 테스트 파일 | 케이스 수 |", "|---|---|---|"]
+    for u in units:
+        rx = re.compile(r"\b%s\b" % re.escape(u["symbol"]))
+        mine = [t for t in tests if rx.search(_read(Path(root) / t))]
+        if not mine:
+            files, count = "—", "테스트 없음"
+        else:
+            files = ", ".join("`%s`" % t for t in mine)
+            got = ([_by_file_count(by_file, t) for t in mine]
+                   if isinstance(by_file, dict) else [None])
+            count = "미측정" if None in got else str(sum(got))
+        rows.append("| `%s` | %s | %s |" % (u["raw"].replace("|", "\\|"), files, count))
+    notes = ["_테스트 파일은 계약 심볼이 본문에 나오는 파일이다(`untested_contract_item` "
+             "과 같은 규칙). 케이스 수는 마지막 full 실행의 리포트다._"]
+    if not isinstance(by_file, dict):
+        notes.append("_파일별 케이스 수가 없다 — 미측정._")
+    elif tinfo.get("ran") is not None and sum(by_file.values()) != tinfo["ran"]:
+        notes.append("_**partial** — 파일별 합 %d 이 실행 수 %d 와 다르다._"
+                     % (sum(by_file.values()), tinfo["ran"]))
+    return head + rows + [""] + notes + [""]
+
+
+def _review05_line(paths, state):
+    """리뷰어 코드 · 수리된 Major · 미해결 Minor — 05 를 한 줄로."""
+    import verdict
+
+    node = ((state or {}).get("phases") or {}).get("05-code-review") or {}
+    rounds = node.get("rounds")
+    minors = len(_minor_open(paths, state))
+    if not rounds:
+        r = (state or {}).get("review05") or {}
+        return ("**05 리뷰**: %s · 리뷰어 %s명 · 미해결 Minor %d"
+                % (r.get("status") or "기록 없음", r.get("reviewers_ok", "?"), minors))
+    codes, severity, closed = set(), {}, set()
+    for slot in rounds.values():
+        for code, v in (slot or {}).items():
+            codes.add(code)
+            for k in v.get("keys") or []:
+                if isinstance(k, dict) and k.get("key"):
+                    severity.setdefault(k["key"], k.get("severity"))
+            closed |= set(v.get("closed") or [])
+    fixed = len([k for k in closed if severity.get(k) in verdict.BLOCKING])
+    return ("**05 리뷰**: %s — Major 수리 %d · 미해결 Minor %d"
+            % (" · ".join("`%s`" % c for c in sorted(codes)), fixed, minors))
+
+
 def build_body(root, paths, state, config):
     """PR 본문을 조립한다. **완료 등급이 최상단 한 줄이다.**
 
@@ -400,14 +587,19 @@ def build_body(root, paths, state, config):
               else "_요청 원문이 없다._", ""]
     if request_note:
         lines += [request_note, ""]
+    # 흐름 → 확인법 → 검증 표 → 05 한 줄 → 규모 → 계약 상세 (ADR-H058 추기).
+    # 리뷰어가 먼저 읽을 것을 위에 두고 계약 원문은 맨 끝에 접는다.
     lines += ["## 작업 내용", ""]
+    lines += _flow_lines(paths)
+    lines += _verified_lines(root, state, config)
+    lines += [_review05_line(paths, state), ""]
+    lines += ["- 변경 규모: %s" % stat, ""]
     if units:
         lines += ["<details><summary>계약 상세 (유닛·진입점)</summary>", ""]
         lines += [units, ""]
         lines += ["</details>", ""]
     else:
         lines += [_no_units(state), ""]
-    lines += ["- 변경 규모: %s" % stat, ""]
     lines += ["## 기술적 고려사항", ""]
     lines += (["- %s" % a for a in adopted] if adopted
               else ["_02 교차검증에서 채택된 판정이 없다._"]) + [""]

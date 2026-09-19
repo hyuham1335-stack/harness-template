@@ -1072,7 +1072,7 @@ def _stage_argv(root, adapter, stage_name, select):
 
 
 EMPTY_REPORT = {"ran": None, "suites": None, "failures": None,
-                "matched": False, "failed_units": []}
+                "matched": False, "failed_units": [], "by_file": None}
 
 
 def parse_test_report(root, adapter, report_root=None):
@@ -1102,6 +1102,7 @@ def _junit_report(root, adapter, report_root=None):
         return dict(EMPTY_REPORT, failed_units=[])
     tests = failures = suites = 0
     units = []
+    by_file = {}
     for path in paths:
         try:
             tree = ElementTree.parse(str(path))
@@ -1118,8 +1119,14 @@ def _junit_report(root, adapter, report_root=None):
                 tests += int(suite.get("tests") or 0)
                 failures += int(suite.get("failures") or 0)
         units.extend(_junit_failed_units(root_el))
+        # 파일별 케이스 수 — PR 본문의 검증 표가 읽는다 (ADR-H058 추기).
+        # `file` 속성이 먼저고, 없는 리포터는 `classname` 에 경로를 둔다.
+        for case in root_el.iter("testcase"):
+            key = (case.get("file") or case.get("classname") or "").replace("\\", "/")
+            if key:
+                by_file[key] = by_file.get(key, 0) + 1
     return {"ran": tests, "suites": suites, "failures": failures,
-            "matched": True, "failed_units": units}
+            "matched": True, "failed_units": units, "by_file": by_file}
 
 
 def _junit_failed_units(root_el):

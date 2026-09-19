@@ -5529,6 +5529,22 @@ def run_pr(root, run_id=None):
     # push 때는 기록이 있을 수 없고 07 수리 뒤 재push(아직 done 아님)는 대상이
     # 아니다. 그래서 `run_status: done` 일 때만 본다.
     closed_run = s.get("run_status") == st.DONE
+    # 2-a. 흐름 노트 (ADR-H058 추기). PR 본문의 「핵심 흐름」은 모델이 쓰고 `refs`
+    # 로 계약에 묶인다 — 열린 런은 첫 `pr` 부터 요구한다. 닫힌 런의 재실행은
+    # 이미 통과한 파일을 렌더만 한다(런 기록 갱신 경로에 새 exit 8 을 두지 않는다).
+    if not closed_run and (s.get("contract") or {}).get("mode") != "no_contract":
+        _notes, problems = pr_mod.check_notes(root, paths, s, config)
+        if problems:
+            data["pr_notes"] = problems
+            return st.envelope(
+                "pr", False, 8, s, data,
+                "## 흐름 노트 `%s` 가 없거나 틀렸다\n\n%s\n\n`pr` 전에 네가 쓴다. "
+                "형식:\n\n```json\n%s\n```\n\n`refs` 는 계약이 이름 붙인 것만 받는다 — "
+                "유닛·화면 심볼, 오류 어휘, 데이터 형태, 진입점(`METHOD /path`), 컨테이너 "
+                "경로. `step` 산문은 검사하지 않는다 (ADR-H058)."
+                % (pr_mod.NOTES_FILE, "\n".join("- %s" % p for p in problems),
+                   pr_mod.NOTES_EXAMPLE),
+                "python scripts/pipeline/cli.py pr --run-id %s" % s["run_id"])
     if closed_run:
         import precheck as pc
         rec_rel = "docs/harness/pipeline/runs/%s.md" % s["run_id"]

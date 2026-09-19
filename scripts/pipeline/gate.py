@@ -229,7 +229,16 @@ def _tests_signal(root, adapter, calibration, results, report_root):
         return None                     # 안 돌았다. **0 을 만들지 않는다**
 
     got = adapters.parse_report(root, adapter, report_root)
-    floor = adapters.derived(calibration, "tests_ran_floor")
+    sig = _tests_count(got, adapters.derived(calibration, "tests_ran_floor"))
+    if got.get("matched"):
+        # 파일별 케이스 수 — 06 PR 본문의 검증 표가 읽는다 (ADR-H058 추기).
+        # full 을 파싱하는 자리가 여기뿐이라 여기서 남긴다. 06 이 리포트를 다시
+        # 읽으면 그 사이 scoped 가 덮어쓴 XML 을 full 의 실적으로 적는다.
+        sig["by_file"] = got.get("by_file")
+    return sig
+
+
+def _tests_count(got, floor):
     if not got.get("matched"):
         return {"ran": None, "expected_min": floor, "status": "none",
                 "source": "report_glob",
