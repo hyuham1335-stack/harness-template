@@ -4647,7 +4647,13 @@ def run_cost(root, run_id=None, transcript_root=None):
     born = st._parse_stamp(s.get("created_at"))
     updated = st._parse_stamp(s.get("updated_at"))
 
-    ledger_path = root / "docs" / "pipeline-ledger.jsonl"
+    # 원장은 main 체크아웃 하나다. worktree 에서 불리면 `root/docs/…` 에는 없다.
+    common = harness._git(root, "rev-parse", "--path-format=absolute",
+                          "--git-common-dir")
+    ledger_root = (Path(common.stdout.strip()).parent
+                   if common is not None and common.returncode == 0
+                   and common.stdout.strip() else root)
+    ledger_path = ledger_root / "docs" / "pipeline-ledger.jsonl"
     rows = []
     if ledger_path.exists():
         for line in ledger_path.read_text(encoding="utf-8").splitlines():
@@ -4660,7 +4666,11 @@ def run_cost(root, run_id=None, transcript_root=None):
 
     sessions = []
     for idx, row in enumerate(rows):
-        if ((row.get("run") or {}).get("run_id")) != rid:
+        # worktree 에서 돈 런은 `worktrees[].run` 칸에 있다.
+        run_ids = [(row.get("run") or {}).get("run_id")] + [
+            (wt.get("run") or {}).get("run_id")
+            for wt in row.get("worktrees") or [] if isinstance(wt, dict)]
+        if rid not in run_ids:
             continue
         start = st._parse_stamp(rows[idx - 1].get("ts")) if idx else None
         end = st._parse_stamp(row.get("ts"))
