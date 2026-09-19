@@ -579,6 +579,40 @@ JUNIT_FIXTURE = """<?xml version="1.0" encoding="UTF-8" ?>
 """
 
 
+class JunitByFileTest(unittest.TestCase):
+    """파일별 케이스 수 — PR 본문의 「무엇이 검증됐나」 표가 읽는다 (ADR-H058 추기)."""
+
+    ADAPTER = {"test_report": {"format": "junit-xml", "glob": ["reports/*.xml"]}}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def parse(self, xml=None):
+        if xml is not None:
+            _write(self.root / "reports" / "r.xml", xml)
+        return harness.parse_test_report(self.root, self.ADAPTER)
+
+    def test_file_속성이_먼저고_없으면_classname(self):
+        got = self.parse(
+            '<testsuites tests="3"><testsuite tests="3">'
+            '<testcase file="src/lib/match.test.ts" classname="x" name="a"/>'
+            '<testcase file="src/lib/match.test.ts" classname="x" name="b"/>'
+            '<testcase classname="src\\app\\api\\route.test.ts" name="c"/>'
+            '</testsuite></testsuites>')
+        self.assertEqual({"src/lib/match.test.ts": 2, "src/app/api/route.test.ts": 1},
+                         got["by_file"])
+
+    def test_케이스가_없으면_빈_dict(self):
+        self.assertEqual({}, self.parse(JUNIT_FIXTURE)["by_file"])
+
+    def test_리포트가_없으면_None(self):
+        self.assertIsNone(self.parse()["by_file"])
+
+
 class VerifyAdapterTest(DoctorTestBase):
     """[[ADR-H047]] 결정 3 — 어댑터 `verified` 는 완주 런 수로 올린다.
 

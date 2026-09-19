@@ -8530,9 +8530,25 @@ class TestMask:
 # ---------------------------------------------------------------------------
 
 
+PR_NOTES = {"schema": 1,
+            "flow": [{"step": "두 제목의 유사도를 잰다", "refs": ["matchTitle"]}],
+            "verify": ["POST /api/analyze 에 두 제목을 보내 0~1 이 오는지 본다"]}
+
+
+def _pr_notes(paths, notes=None):
+    """06 흐름 노트 — 메인이 `pr` 전에 쓴다 (ADR-H058 추기)."""
+    p = paths.run_dir / "06_pr_notes.json"
+    p.write_text(json.dumps(PR_NOTES if notes is None else notes,
+                            ensure_ascii=False), encoding="utf-8")
+    return p
+
+
 def _enter_06(repo, request_file, phases, grade="PASS"):
-    """05 까지를 상태로 위조하고 06 에 세운다. **지문은 실물이다.**"""
+    """05 까지를 상태로 위조하고 06 에 세운다. **지문은 실물이다.**
+
+    흐름 노트도 쓴다 — 없으면 첫 `pr` 이 exit 8 이다."""
     run_id, paths = _enter_05(repo, request_file, phases)
+    _pr_notes(paths)
     _p, s = st.load(repo, run_id)
     st.set_phase_status(s, "05-code-review", "passed")
     s["phase"] = "06-pr"
@@ -13327,3 +13343,181 @@ class TestContractTraceScreens:
     def test_화면이_없는_계약은_미수행을_적지_않는다(self, repo):
         got = _trace(repo, _write_contract(repo, TESTS_REQUIRED_CONTRACT), changed=[])
         assert "untested_screen" not in got["skipped"]
+
+
+# ---------------------------------------------------------------------------
+# E. PR 본문 재구성 — 흐름·확인법·검증 표·05 한 줄 (ADR-H058 추기)
+# ---------------------------------------------------------------------------
+
+class TestPr06Notes:
+    """흐름 노트의 `refs` 는 계약 식별자여야 한다 — 산문은 검사하지 않는다."""
+
+    def _check(self, repo, paths, notes):
+        _pr_notes(paths, notes)
+        _p, s = st.load(repo, paths.run_id)
+        return pr_mod.check_notes(repo, paths, s,
+                                  harness._read_json(repo / harness.CONFIG_REL))[1]
+
+    def _notes(self, refs, step="흐름", verify=("확인",)):
+        return {"schema": 1, "flow": [{"step": step, "refs": list(refs)}],
+                "verify": list(verify)}
+
+    def test_계약_식별자면_통과한다(self, repo, request_file, phases):
+        _run_id, paths = _enter_06(repo, request_file, phases)
+        for refs in (["matchTitle"], ["MATCH_FAILED"], ["POST /api/analyze"],
+                     ["/api/analyze"], ["lib/match.ts"], ["src/lib/match.ts"]):
+            assert self._check(repo, paths, self._notes(refs)) == [], refs
+
+    def test_계약에_없는_ref_는_이름으로_거부한다(self, repo, request_file, phases):
+        _run_id, paths = _enter_06(repo, request_file, phases)
+        got = self._check(repo, paths, self._notes(["지어낸심볼", "src/lib/other.ts"]))
+        assert any("지어낸심볼" in g for g in got), got
+        assert any("src/lib/other.ts" in g for g in got), got
+
+    def test_step_산문의_백틱은_보지_않는다(self, repo, request_file, phases):
+        _run_id, paths = _enter_06(repo, request_file, phases)
+        notes = self._notes(["matchTitle"], step="`아무말` 로 부른다")
+        assert self._check(repo, paths, notes) == []
+
+    def test_형식이_틀리면_거부한다(self, repo, request_file, phases):
+        _run_id, paths = _enter_06(repo, request_file, phases)
+        for notes in (self._notes([]), self._notes(["matchTitle"], step=""),
+                      self._notes(["matchTitle"], verify=()),
+                      {"schema": 1, "flow": [], "verify": ["x"]}, []):
+            assert self._check(repo, paths, notes), notes
+
+    def test_계약_경로가_state_에_없어도_읽는다(self, repo, request_file, phases):
+        """`_drop_contract` 와 같은 낙하 — 경로의 단일 출처는 `path_template` 이다."""
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        assert not (s.get("contract") or {}).get("path")
+        assert self._check(repo, paths, self._notes(["matchTitle"])) == []
+
+    # --- pr 배선 -----------------------------------------------------------
+
+    def test_노트가_없으면_첫_pr_이_exit_8(self, repo, request_file, phases):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        (paths.run_dir / "06_pr_notes.json").unlink()
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+        assert "06_pr_notes.json" in env["render"], env["render"]
+        assert "pr" in (env["next_command"] or "")
+
+    def test_틀린_ref_는_pr_이_exit_8_로_알린다(self, repo, request_file, phases):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _pr_notes(paths, self._notes(["지어낸심볼"]))
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 8 and "지어낸심볼" in env["render"], env["render"]
+
+    def test_닫힌_런_재실행은_노트를_검사하지_않는다(self, repo, request_file, phases):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        (paths.run_dir / "06_pr_notes.json").unlink()
+        _p, s = st.load(repo, run_id)
+        s["run_status"] = st.DONE
+        st.save(_p, s)
+        assert cli.run_pr(repo, run_id=run_id)["exit"] != 8
+
+    def test_no_contract_런은_노트가_선택이다(self, repo, request_file, phases):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        (paths.run_dir / "06_pr_notes.json").unlink()
+        _p, s = st.load(repo, run_id)
+        s["contract"] = {"mode": "no_contract"}
+        st.save(_p, s)
+        assert cli.run_pr(repo, run_id=run_id)["exit"] != 8
+
+
+class TestPr06WorkSection:
+    """`## 작업 내용` — 흐름 → 확인법 → 검증 표 → 05 한 줄 → 변경 규모 → 계약 상세."""
+
+    def _body(self, repo, run_id, mutate=None):
+        paths, s = st.load(repo, run_id)
+        if mutate:
+            mutate(s)
+            st.save(paths, s)
+        return pr_mod.build_body(repo, paths, s,
+                                 harness._read_json(repo / harness.CONFIG_REL))
+
+    def _work(self, body):
+        return body.split("## 작업 내용", 1)[1].split("## 기술적 고려사항", 1)[0]
+
+    def _row(self, body):
+        return next(l for l in body.splitlines()
+                    if l.startswith("|") and "matchTitle" in l)
+
+    def test_순서가_흐름_확인법_검증_05_계약상세다(self, repo, request_file, phases):
+        run_id, _paths = _enter_06(repo, request_file, phases)
+        work = self._work(self._body(repo, run_id))
+        marks = ["핵심 흐름", "직접 확인하는 법", "무엇이 검증됐나", "05 리뷰",
+                 "변경 규모", "<details>"]
+        idx = [work.index(m) for m in marks]
+        assert idx == sorted(idx), list(zip(marks, idx))
+        assert "1. 두 제목의 유사도를 잰다 — `matchTitle`" in work, work
+        assert "- POST /api/analyze 에 두 제목을" in work, work
+
+    def test_노트가_없으면_없다고_적는다(self, repo, request_file, phases):
+        run_id, paths = _enter_06(repo, request_file, phases)
+        (paths.run_dir / "06_pr_notes.json").unlink()
+        assert "_흐름 노트 없음_" in self._body(repo, run_id)
+
+    def test_유닛의_테스트_파일과_케이스_수(self, repo, request_file, phases):
+        run_id, _paths = _enter_06(repo, request_file, phases)
+        body = self._body(repo, run_id, lambda s: s.__setitem__(
+            "tests", {"ran": 3, "by_file": {"src/lib/match.test.ts": 3}}))
+        row = self._row(body)
+        assert "`src/lib/match.test.ts`" in row and "| 3 |" in row, row
+        assert "partial" not in self._work(body)
+
+    def test_by_file_에_없는_파일은_미측정이다(self, repo, request_file, phases):
+        run_id, _paths = _enter_06(repo, request_file, phases)
+        body = self._body(repo, run_id, lambda s: s.__setitem__(
+            "tests", {"ran": 3, "by_file": {"src/other.test.ts": 3}}))
+        assert "미측정" in self._row(body)
+
+    def test_합이_ran_과_다르면_partial(self, repo, request_file, phases):
+        run_id, _paths = _enter_06(repo, request_file, phases)
+        body = self._body(repo, run_id, lambda s: s.__setitem__(
+            "tests", {"ran": 5, "by_file": {"src/lib/match.test.ts": 3}}))
+        assert "partial" in self._work(body)
+
+    def test_by_file_이_없으면_표_전체가_미측정(self, repo, request_file, phases):
+        run_id, _paths = _enter_06(repo, request_file, phases)
+        body = self._body(repo, run_id, lambda s: s.__setitem__("tests", {"ran": 3}))
+        assert "미측정" in self._row(body)
+
+    def test_05_한_줄이_수리된_Major_와_남은_Minor_를_센다(self, repo, request_file,
+                                                        phases):
+        run_id, _paths = _enter_06(repo, request_file, phases)
+        major = {"id": "F-1", "category": "RESPONSE_SHAPE", "severity": "major",
+                 "target_role": "impl", "title": "고친 Major", "quote": "q"}
+        minor = {"id": "F-2", "category": "NAMING", "severity": "minor",
+                 "target_role": "impl", "title": "남은 Minor", "quote": "q"}
+        k1, k2 = ldg.finding_key(major), ldg.finding_key(minor)
+
+        def mutate(s):
+            s["phases"]["05-code-review"]["rounds"] = {
+                "1": {"arch": {"keys": [{"key": k1, "id": "F-1", "severity": "major"}],
+                               "findings": [major], "closed": []},
+                      "gen": {"keys": [{"key": k2, "id": "F-2", "severity": "minor"}],
+                              "findings": [minor], "closed": []}},
+                "2": {"arch": {"keys": [], "findings": [], "closed": [k1]}}}
+        line = next(l for l in self._work(self._body(repo, run_id, mutate)).splitlines()
+                    if "05 리뷰" in l)
+        assert "arch" in line and "gen" in line, line
+        assert "Major 수리 1" in line and "미해결 Minor 1" in line, line
+
+
+class TestGateTestsByFile:
+
+    def test_full_실행이_파일별_케이스_수를_남긴다(self, gated, fxdir):
+        repo, paths, s = gated
+        cases = ('<testcase classname="src/lib/match.test.ts" name="a"/>'
+                 '<testcase classname="src/lib/match.test.ts" name="b"/>')
+        env = _gate(repo, make_fixture(fxdir, "byfile", dict(ALL_PASS), tests=1300,
+                                       cases=cases))
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert after["tests"]["by_file"] == {"src/lib/match.test.ts": 2}, after["tests"]
