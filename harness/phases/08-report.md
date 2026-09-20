@@ -79,10 +79,14 @@ prose 규칙은 원장 승격이 아니라 **여기로 온다** — 07 판정자
   대응하는지 `changes[].rule_keys` 에 적는다
 - 통과하면 흡수한 키는 원장에 `retire` 로 닫힌다. `skill` 이 null 이면 비강등
   gap `instruction_review_manual`
-- `instruction_slot_budget` 은 지시문 파일의 **최상위 불릿 수**(0열 `-`·`*`·`+`,
-  펜스·표 제외)로 잰다. 초과는 비강등 gap `instruction_slot_over_budget`, 본문은
-  있는데 불릿이 0이면 `instruction_slot_unmeasured` — 보고서 `## 리뷰` 표에
-  `used/budget` 이 나온다
+- `instruction_slot_budget` 은 **`rules_read` 증명 대상 집합 전체**(`instruction_file`
+  + `rules_dir` 직속 `*.md` − `rules_exclude`)의 **최상위 불릿 수**(0열 `-`·`*`·`+`
+  **그리고 `1.` 같은 번호 목록**, 펜스·표 제외)로 재고 **파일별로도 남긴다**
+  (ADR-H074). **초과는 gap 이 아니라 관측이다** — 지시문 파일 크기는 런 내용과
+  무관해 매 런 같은 값이 뜨고, 그런 표시는 경보가 아니다. 보고서 `## 리뷰` 표에
+  `used/budget` 이 그대로 나온다. 본문은 있는데 불릿이 0이면
+  `instruction_slot_unmeasured` 는 **여전히 gap** 이다 — 그건 상수가 아니라
+  「못 잼」의 신호다
 
 **서술은 네가 쓰고, 표는 실행기가 조립한다.**
 
@@ -161,7 +165,7 @@ python scripts/pipeline/cli.py report --out docs/harness/pipeline/runs/{run_id}.
 | 원장 누락 · 손상 | — | **"미측정" 으로 표기하고 산출한다.** 보고서는 파이프라인을 실패시키지 않는다 |
 | `promotions` 미종결 | 정책 | **exit 6** → `promote --flush` |
 | `08_instruction_review.json` 없음 · 대조 불일치 (열린 런) | 정책 | 보고서를 쓰지 않고 **exit 8** — 파일을 고쳐 같은 명령으로 다시 낸다. 등급 X. 닫힌 런의 재작성은 요구하지 않는다 |
-| 지시문 슬롯 예산 초과 | — | 비강등 gap `instruction_slot_over_budget` — 사람이 예산을 고치거나 규칙을 줄인다 |
+| 지시문 슬롯 예산 초과 | — | **관측만** — 보고서에 `used/budget` 과 파일별 수가 남고 gap 도 등급도 없다. 매 런 같은 값이라 경보가 아니다 (ADR-H074). 값을 정하는 것은 사람 몫이다 |
 | 필수 섹션 누락 | — | 원장에 기록하고 산출한다 |
 | `배운 점`·`next_run` 80자 미만 | 정책 | 보고서는 쓰되 **exit 8** — 같은 명령으로 다시 낸다. 등급 X. 닫힌 런의 재작성은 되묻지 않는다 |
 | 같은 `run_id` 로 재개해 다시 씀 | — | **덮어쓴다.** 최종본이 맞다 |

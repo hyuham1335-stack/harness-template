@@ -920,7 +920,7 @@ gap 은 effort 와 **따로 센다**:
 마지막 섹션이 새로 붙은 이유는 §11.1이다 — 미캘리브레이션 런과 `verified: false` 어댑터가 보고서에 드러나지 않으면 "조용히 통과"가 된다.
 
 - **08은 diff도 코드도 읽지 않는다.** 서술 입력은 `08_report_data.json` 하나뿐이다.
-- **지시문 검토가 보고서보다 먼저다** (ADR-H056 추기). 메인이 `config.project.instruction_review.skill` 로 원장의 `prose_candidates` 와 이 런의 「배운 점」을 검토하고 `08_instruction_review.json` 을 쓴다. 열린 런에서 파일이 없거나 자진신고가 어긋나면 `report` 는 **exit 8** 이다 — prose 후보는 `absorbed`·`declined`(사유 필수) 중 정확히 한쪽, 흡수는 지시문 목적지가 06 push 이후 실제로 바뀐 `changes` 가 있어야 하고, 흡수된 rule_key 는 원장에 `retire` 로 닫힌다. `instruction_slot_budget` 은 지시문 파일의 최상위 불릿 수로 재고 초과는 비강등 gap 이다.
+- **지시문 검토가 보고서보다 먼저다** (ADR-H056 추기). 메인이 `config.project.instruction_review.skill` 로 원장의 `prose_candidates` 와 이 런의 「배운 점」을 검토하고 `08_instruction_review.json` 을 쓴다. 열린 런에서 파일이 없거나 자진신고가 어긋나면 `report` 는 **exit 8** 이다 — prose 후보는 `absorbed`·`declined`(사유 필수) 중 정확히 한쪽, 흡수는 지시문 목적지가 06 push 이후 실제로 바뀐 `changes` 가 있어야 하고, 흡수된 rule_key 는 원장에 `retire` 로 닫힌다. `instruction_slot_budget` 은 **`rules_read` 증명 대상 집합 전체**(`instruction_file` + `rules_dir` 직속 `*.md` − `rules_exclude`)의 최상위 불릿 수로 재고 **파일별로도 남긴다** ([ADR-H074](../DECISIONS.md)). **번호 목록(`1. `)도 한 칸이다** — 세는 집합이 곧 **워커가 매번 읽고 증명하는 집합**이라야 「규칙을 다른 파일로 옮기면 예산이 비는」 착시가 안 생긴다. **초과는 gap 이 아니라 관측이다** — 지시문 파일 크기는 런 내용과 무관해 매 런 같은 값이 뜨고, 그런 표시는 경보가 아니라 gap 목록 전체를 둔감하게 만든다. 숫자는 보고서 `## 리뷰` 표에 그대로 남는다. 본문은 있는데 불릿이 0이면 `instruction_slot_unmeasured` 는 **그대로 gap** 이다 — 그건 상수가 아니라 「못 잼」의 신호다.
 - **필수 섹션 존재 검사는 결정론이다.** 빠지면 원장에 기록하되 **보고서는 파이프라인을 실패시키지 않는다.**
 - 같은 `run_id`로 재개해 다시 쓰면 **덮어쓴다**(최종본이 맞다). 이미 닫힌 런이면 **덮어쓰기만 하고 exit 0** — 전이는 한 번뿐이다.
 - **런을 닫는 것은 `report`다.** §1의 페이즈 표가 08의 성공 시 다음을 `done`이라 적은 그 전이이고, 전이 조건은 08 자신의 `requires`다. 조건이 안 맞으면 보고서는 쓰되 닫지 않는다(exit 0) — **보고서는 파이프라인을 실패시키지 않는다.**
@@ -1074,7 +1074,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
          (뒤로 갈수록 영구 비용)
 ```
 
-- **기계로 막을 수 있는 규칙을 산문으로 승격하면 exit 8.** 이것이 `config.project.instruction_slot_budget`과 맞물려서, 그 예산이 **진짜 기계가 못 잡는 규칙**에만 쓰이게 만든다.
+- **기계로 막을 수 있는 규칙을 산문으로 승격하면 exit 8.** 이것이 `config.project.instruction_slot_budget`과 맞물려서, 그 예산이 **진짜 기계가 못 잡는 규칙**에만 쓰이게 만든다. 예산이 재는 집합은 지시문 파일 하나가 아니라 **`rules_read` 증명 대상 전체**다 ([ADR-H074](../DECISIONS.md)) — 흡수한 규칙을 `rules_dir` 의 다른 파일로 옮겨도 총량은 그대로 세어진다.
 - **`lint` 승격의 베이스라인은 실행기가 직접 잰다** — `--apply`가 어댑터의 `baseline_cmd`를 돌리고 `baseline_file`의 VCS 변화를 본다. 안 바뀌었으면 `rejected`이고, `rules_changelog.md`에 들어가는 값도 **기계가 잰 것**이다. 모델의 자진 신고는 받되 대조하고 다르면 exit 8 — 07의 `external`과 같은 규율이다. **종료 코드를 성패로 읽지 않는다**(린터가 위반을 찾으면 0이 아니고 그것이 정상이다). 실행 자체가 불가능하면(127·124) `infra`이고 exit 10이라 아무것도 쓰지 않는다. 어댑터에 `baseline_cmd`가 없는 스택은 막지 않되 갭 `promotion_baseline_unverified` + `PASS_WITH_GAPS`다 — **스킵은 통과가 아니다.** 결정은 [ADR-H021](../DECISIONS.md).
 - **승격 자체 게이트는 실행기가 돌린다** — `--apply` 가 changelog 를 쓰기 전에 어댑터의 `lint` · `check` 를 현재 워크트리에서 돌린다. 베이스라인과 달리 **여기서는 종료 코드가 성패다**: 하나라도 0 이 아니면 기계 강제 `applied` 가 전부 `rejected` + 사유가 된다. 127·124 는 `infra` 라 exit 10 이고 아무것도 안 쓴다. 명령이 없으면 갭 `promotion_selfgate_unverified` + `PASS_WITH_GAPS`. 결정은 [ADR-H065](../DECISIONS.md).
 - **중복·충돌**: `promote --scan`이 같은 category의 active 규칙 / anchors 교집합 2개 이상 / 목적지 파일 검색 결과를 **원문과 함께** 제시한다. 판정은 모델이 하되 `verdict` 강제 기록 — `duplicate`면 `action`은 `skip`/`amend`만(**`create` 금지**), `contradicts`면 자동 쓰기 차단 + 에스컬레이션. **"일단 붙이기"를 선택지에서 없앤다.** 런당 `create` 최대 3건 — **미검증 상속값이다 (§11.1).**

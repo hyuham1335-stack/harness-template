@@ -13679,21 +13679,72 @@ class TestInstructionReview08:
 
 
 class TestInstructionSlots:
-    """`instruction_slot_budget` 의 첫 소비자 (ADR-H056 추기).
+    """`instruction_slot_budget` 의 소비자 (ADR-H056 · 계측은 ADR-H074 가 고쳤다).
 
     `CRITICAL:` 라벨은 자기 선언이라 세지 않는다 — 최상위 불릿 수를 잰다.
-    예산 초과는 표시이고 등급은 내리지 않는다.
+    **세는 집합은 `rules_read` 증명 대상 전체**이고 **초과는 관측이지 gap 이 아니다.**
     """
+
+    def _slots(self, repo):
+        return cli._instruction_slots(repo, harness._read_json(
+            repo / "harness/config.json"))
 
     def test_펜스_표_들여쓴_불릿은_세지_않는다(self, repo):
         _rules_md(repo, "# t\n- a\n  - 하위\n```\n- 펜스 안\n```\n"
                         "| - 표 |\n* b\n+ c\n")
-        got = cli._instruction_slots(repo, harness._read_json(
-            repo / "harness/config.json"))
-        assert got["used"] == 3, got
+        assert self._slots(repo)["used"] == 3, self._slots(repo)
 
-    def test_예산을_넘으면_gap_이고_등급은_그대로다(self, repo, request_file,
-                                                    phases):
+    def test_번호_목록도_한_칸이다(self, repo):
+        """**변이 테스트** — 「작업 원칙」 4개가 번호 목록이라 통째로 빠져 있었다.
+
+        파일 자신이 "넷 다 기계가 안 잡는 산문" 이라 적은 가장 비싼 규칙이다.
+        """
+        _rules_md(repo, "# t\n- a\n")
+        before = self._slots(repo)["used"]
+        _rules_md(repo, "# t\n- a\n1. 첫째\n2. 둘째\n")
+        assert self._slots(repo)["used"] == before + 2, self._slots(repo)
+
+    def test_rules_dir_직속_md_도_센다(self, repo):
+        """**변이 테스트** — 규칙을 다른 파일로 옮기면 예산이 비는 착시를 막는다.
+
+        `docs/` 직속 `*.md` 는 워커가 **전원 매번 읽고 sha256 증명까지** 한다.
+        세는 집합이 증명하는 집합과 같아야 한다.
+        """
+        _rules_md(repo, "# t\n- a\n")
+        before = self._slots(repo)["used"]
+        (repo / "docs").mkdir(parents=True, exist_ok=True)
+        (repo / "docs" / "RULES.md").write_text(
+            "# 규칙\n- x\n- y\n- z\n", encoding="utf-8")
+        got = self._slots(repo)
+        assert got["used"] == before + 3, got
+        assert got["per_file"]["docs/RULES.md"] == 3, got
+
+    def test_rules_exclude_는_세지_않는다(self, repo):
+        """하네스 자신이 쓰는 파일은 규칙이 아니다 (백로그 23)."""
+        _rules_md(repo, "# t\n- a\n")
+        before = self._slots(repo)["used"]
+        (repo / "docs").mkdir(parents=True, exist_ok=True)
+        (repo / "docs" / "PIPELINE-LOG.md").write_text(
+            "# 로그\n- 한 줄\n- 두 줄\n", encoding="utf-8")
+        got = self._slots(repo)
+        assert got["used"] == before, got
+        assert "docs/PIPELINE-LOG.md" not in got["per_file"], got
+
+    def test_파일별_수를_남긴다(self, repo):
+        """어느 문서가 비대해졌는지는 합계로 말할 수 없다."""
+        _rules_md(repo, "# t\n- a\n- b\n")
+        got = self._slots(repo)
+        assert got["per_file"] == {"CLAUDE.md": 2}, got
+
+    def test_예산을_넘어도_gap_이_아니라_관측이다(self, repo, request_file,
+                                                  phases):
+        """**ADR-H074 가 뒤집은 테스트.**
+
+        전에는 `instruction_slot_over_budget` 을 단언했다. 클론 4/4런이 같은
+        `17/12` 였고 이 템플릿도 상수다 — **런 내용과 무관한 값**이라 매 런 울리는
+        경보가 됐고, 그런 표시는 gap 목록 전체를 둔감하게 만든다.
+        **숫자는 그대로 보고서에 남는다** — 사라진 것은 경보뿐이다.
+        """
         _rules_md(repo, "# 규칙\n" + "".join("- 규칙 %d\n" % i
                                              for i in range(13)))
         run_id, paths = _enter_08(repo, request_file, phases)
@@ -13701,11 +13752,17 @@ class TestInstructionSlots:
         env = cli.run_report(repo, run_id=run_id)
         assert env["exit"] == 11, env["render"]
         _p, s = st.load(repo, run_id)
-        assert "instruction_slot_over_budget" in s["gaps"], s["gaps"]
+        assert "instruction_slot_over_budget" not in (s.get("gaps") or []), s["gaps"]
         assert s["grade"] == "PASS"
         out = (repo / "docs" / "harness" / "pipeline" / "runs"
                / ("%s.md" % run_id)).read_text(encoding="utf-8")
         assert "13/12" in out, out
+
+    def test_실물_CLAUDE_MD_의_작업_원칙이_세어진다(self):
+        """실물이 깨지면 이 테스트가 먼저 깨진다 — 번호 목록 넷이 빠졌던 자리다."""
+        cfg = harness._read_json(ROOT / "harness" / "config.json")
+        got = cli._instruction_slots(ROOT, cfg)
+        assert got["per_file"]["CLAUDE.md"] >= 17, got
 
     def test_규칙이_산문뿐이면_재지_못했다고_적는다(self, repo, request_file,
                                                    phases):

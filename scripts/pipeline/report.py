@@ -95,10 +95,6 @@ GAP_REASONS = {
     # 08 지시문 검토 (ADR-H056 추기). 앞 셋은 표시이고 등급을 내리지 않는다.
     "instruction_review_manual": ("08 지시문 검토를 스킬 없이 사람이 했다 — "
                                   "config 의 `instruction_review.skill` 이 null 이다"),
-    "instruction_slot_over_budget": ("지시문 파일의 최상위 불릿 수가 "
-                                     "`instruction_slot_budget` 을 넘었다 — 예산을 "
-                                     "고치거나 규칙을 줄인다. 표시이고 등급은 "
-                                     "내리지 않는다"),
     "instruction_slot_unmeasured": ("지시문 파일에 본문은 있는데 최상위 불릿이 "
                                     "0개다 — 규칙 수를 재지 못했다"),
     "instruction_changed": ("08 지시문 검토가 바꾼 지시문 파일이 기능 PR 에 "
@@ -116,8 +112,11 @@ GAP_REASONS = {
 # `adapter_unverified` 는 ADR-H069 에서 들어왔다. 이 gap 이 매 런 등급을 깎는
 # 압력 때문에 ADR-H047 결정 3 이 승격 기준을 "완주 런 3개" 로 낮췄다 — 완주는
 # 실패 경로의 근거가 아니다. 기준은 증거 기반으로 올리고 이 표시는 여기로 내린다.
+# `instruction_slot_over_budget` 은 ADR-H074 가 **걷어냈다** — 아무도 안 내는
+# 어휘를 남기면 그것이 곧 "어휘가 기계를 앞서는" M36 의 거울상이다. 숫자는
+# `_slots_cell` 이 계속 렌더한다.
 NON_DEMOTING_GAPS = ("calibration_stale", "instruction_review_manual",
-                     "instruction_slot_over_budget", "instruction_slot_unmeasured",
+                     "instruction_slot_unmeasured",
                      "instruction_changed", "adapter_unverified")
 
 
@@ -319,8 +318,14 @@ def _slots_cell(state):
     sl = state.get("instruction_slots")
     if not sl:
         return None
-    return "%s/%s (최상위 불릿 / `instruction_slot_budget`)" % (
+    cell = "%s/%s (최상위 불릿 / `instruction_slot_budget`)" % (
         sl.get("used"), sl.get("budget"))
+    # **합계만으로는 어느 문서가 비대해졌는지 말할 수 없다** (ADR-H074). 파일이
+    # 하나뿐이면 합계와 같은 말이라 적지 않는다.
+    per = sl.get("per_file") or {}
+    if len(per) > 1:
+        cell += " — " + " · ".join("`%s` %d" % (k, per[k]) for k in sorted(per))
+    return cell
 
 
 def _declined_lines(state, data):
