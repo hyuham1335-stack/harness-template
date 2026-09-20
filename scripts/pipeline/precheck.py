@@ -89,10 +89,53 @@ def run(root, scope="pr", changed=None, config=None, adapter=None,
                    gaps=gaps)
 
 
+def policy_fingerprint(checks, budget):
+    """정책 실패를 **사유 집합 + 값**으로 적은 것. 실패가 없으면 `None` (백로그 26).
+
+    소유 범위 파일의 내용 해시(`state.fingerprint`)를 쓰지 않는다 — 05 와 06
+    사이에는 수리가 들어가므로 거의 매번 달라지고, 그러면 「사람이 이미 판단한
+    것을 다시 묻지 않는다」가 성립하지 않는다. 사람이 판단한 것은 코드의 바이트가
+    아니라 **무엇이 얼마나 넘었는가**다.
+    """
+    failed = sorted(c["name"] for c in checks
+                    if not c["ok"] and c["kind"] == "policy")
+    if not failed:
+        return None
+    behind = 0
+    for c in checks:
+        if c["name"] == "base":
+            behind = c.get("behind") or 0
+    return {"reasons": failed, "files": budget.get("files"),
+            "lines": budget.get("lines"), "base_behind": behind}
+
+
+# 값이 이 키들에서 하나라도 커졌으면 사람이 본 적 없는 범위다.
+_FP_SCALARS = ("files", "lines", "base_behind")
+
+
+def override_covers(saved, fresh):
+    """사람이 못박은 판단이 이번 실패를 덮는가 (백로그 26).
+
+    덮는 조건은 **사유 집합이 같고 값이 커지지 않았다** 이다. 사유가 늘면 사람이
+    안 본 것이 생긴 것이고, 값이 커지면 같은 사유라도 사람이 본 범위가 아니다.
+    작아진 것은 덮는다 — 더 좁아진 변경을 다시 묻는 것은 마찰만 는다.
+    """
+    if not saved or not fresh:
+        return False
+    if list(saved.get("reasons") or []) != list(fresh.get("reasons") or []):
+        return False
+    for key in _FP_SCALARS:
+        if (fresh.get(key) or 0) > (saved.get(key) or 0):
+            return False
+    return True
+
+
 def _result(exit_, checks, budget, classification, changed, counter_consumed,
             infra=None, gaps=None):
     return {"exit": exit_, "checks": checks, "budget": budget,
             "classification": classification,
+            # 사람이 「그대로 간다」를 고른 것을 못박을 때 쓰는 지문 (백로그 26).
+            "policy_fingerprint": policy_fingerprint(checks, budget),
             "counter_consumed": counter_consumed,
             "changed_count": len(changed),
             "infra_failures": infra or [],

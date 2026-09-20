@@ -383,6 +383,22 @@ def is_entrypoint_file(adapter, rel):
     return False
 
 
+def is_convention_file(adapter, rel):
+    """이 파일이 **스택 관례로 이름이 정해진 파일**인가 (백로그 24).
+
+    진입점 맵보다 넓다. 진입점이 아닌 관례 파일(화면·레이아웃 같은)도 스택이
+    정한 이름을 내보내는데, 어댑터의 진입점 맵은 그것을 담지 못한다 — 담게 하면
+    `missing_entrypoint` 가 계약에 없는 화면을 진입점으로 요구하게 된다.
+    그래서 `is_entrypoint_file` 의 뜻은 그대로 두고 여기서만 넓힌다.
+
+    글롭은 어댑터가 선언하고 코어는 읽기만 한다 (ADR-H031 · ADR-H038).
+    """
+    if is_entrypoint_file(adapter, rel):
+        return True
+    globs = (adapter.get("entrypoint_resolver") or {}).get("convention_globs")
+    return harness.glob_any(globs or [], rel or "")
+
+
 # scoped 가 사실상 full 이 되는 지점. 넘으면 퇴화로 표기한다.
 DEGENERATE_RATIO = 0.9
 

@@ -68,8 +68,10 @@
     "kind": "file-convention",
     "param_styles": ["[]"],
     "_param_styles_note": "계약이 API_SPEC 표기 {id} 로 적은 파라미터를 실제 폴더명 [id] 로도 찾는다 (ADR-H049). 코어는 이 괄호 쌍을 읽기만 한다.",
-    "implied_exports": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "maxDuration", "runtime", "dynamic", "revalidate", "preferredRegion"],
-    "_implied_exports_note": "라우트 파일이 관례로 내보내는 이름 — 계약의 유닛에 다시 적지 않아도 out_of_contract 가 아니다 (ADR-H049). 진입점 관례 파일에만 적용된다.",
+    "implied_exports": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "maxDuration", "runtime", "dynamic", "revalidate", "preferredRegion", "metadata", "generateMetadata", "generateStaticParams", "viewport"],
+    "_implied_exports_note": "관례 파일이 내보내는 이름 — 계약의 유닛에 다시 적지 않아도 out_of_contract 가 아니다 (ADR-H049). map 의 진입점 파일과 convention_globs 에 걸린 파일에만 적용된다.",
+    "convention_globs": ["src/app/**/page.tsx", "src/app/**/layout.tsx"],
+    "_convention_globs_note": "진입점은 아니지만 스택이 이름을 정하는 파일 (백로그 24). map 에 넣으면 missing_entrypoint 가 계약에 없는 화면을 진입점으로 요구하므로 면제 전용으로 따로 선언한다.",
     "map": [
       {"route": "/api/{p}", "file": "src/app/api/{p}/route.ts", "export": "{METHOD}"}
     ]

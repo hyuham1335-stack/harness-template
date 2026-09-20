@@ -252,13 +252,23 @@
           "type": "string"
         },
         "implied_exports": {
-          "description": "진입점 관례 파일이 스택 관례로 내보내는 이름. 계약 유닛에 없어도 out_of_contract 가 아니다 (ADR-H049).",
+          "description": "관례 파일이 스택 관례로 내보내는 이름. 계약 유닛에 없어도 out_of_contract 가 아니다 (ADR-H049).",
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "_implied_exports_note": {
+          "type": "string"
+        },
+        "convention_globs": {
+          "description": "진입점은 아니지만 스택이 이름을 정하는 파일의 글롭. implied_exports 면제가 map 의 진입점 파일 밖으로도 걸린다 (백로그 24).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "_convention_globs_note": {
           "type": "string"
         }
       }

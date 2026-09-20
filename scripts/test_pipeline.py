@@ -5928,6 +5928,78 @@ class TestContractTraceAdapterConventions:
         assert errors == [], errors
 
 
+class TestConventionFilesBeyondTheEntrypointMap:
+    """미구현 백로그 24 — 관례 면제가 **진입점 맵에만** 걸려 있었다.
+
+    [[ADR-H049]] 의 면제는 작동하지만 `is_entrypoint_file()` 이 참일 때만
+    걸리는데 `nextjs-ts` 의 진입점 맵은 API route 하나뿐이다. 그래서 화면
+    파일이 관례로 내보내는 이름이 계약에 없다는 이유로 major 가 됐다 —
+    클론 4런의 `contract-trace` findings 6건 중 5건이 `out_of_contract`
+    major 였고 전부 deferred 로 버려졌다.
+
+    **관례 파일 목록은 어댑터가 선언하고 코어는 읽기만 한다** (ADR-H031 ·
+    ADR-H038). 진입점이 아닌 관례 파일이므로 `is_entrypoint_file` 의 뜻은
+    넓히지 않고 `is_convention_file` 을 따로 둔다.
+
+    **타입 전용 export 는 이 범위 밖이다** — 면제할 것인지 계약이 내부 타입까지
+    열거할 것인지는 결정이 앞선다(백로그 24 본문).
+    """
+
+    PAGE = ("export const dynamic = 'force-dynamic'\n"
+            "export const metadata = {}\n"
+            "export async function generateMetadata() {}\n"
+            "export function generateStaticParams() {}\n"
+            "export const viewport = {}\n"
+            "export default function Page() {}\n")
+
+    def _ooc(self, got):
+        return sorted(f["symbol"] for f in got["findings"]
+                      if f["code"] == "out_of_contract")
+
+    def _write(self, repo, rel, text):
+        f = repo / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+        return rel
+
+    def test_화면_관례_파일의_export_는_한_건도_안_잡힌다(self, repo):
+        rel = self._write(repo, "src/app/items/page.tsx", self.PAGE)
+        got = _trace(repo, _write_contract(repo), changed=[rel])
+        assert self._ooc(got) == [], got["findings"]
+
+    def test_레이아웃도_같다(self, repo):
+        rel = self._write(repo, "src/app/layout.tsx",
+                          "export const metadata = {}\n"
+                          "export default function Layout() {}\n")
+        got = _trace(repo, _write_contract(repo), changed=[rel])
+        assert self._ooc(got) == [], got["findings"]
+
+    def test_관례_파일이_아니면_같은_이름도_잡힌다(self, repo):
+        """면제는 **파일**에 걸린다 — 아무 데서나 `metadata` 를 내보내는 것은 신규 심볼이다."""
+        rel = self._write(repo, "src/lib/meta.ts", "export const metadata = {}\n")
+        got = _trace(repo, _write_contract(repo), changed=[rel])
+        assert self._ooc(got) == ["metadata"], got["findings"]
+
+    def test_어댑터가_관례_글롭을_선언하지_않으면_종전_동작이다(self, repo):
+        rel = self._write(repo, "src/app/items/page.tsx", self.PAGE)
+        config, adapter, _cal = _load(repo)
+        adapter = json.loads(json.dumps(adapter))
+        adapter["entrypoint_resolver"].pop("convention_globs", None)
+        got = tr.run(repo, config, adapter, _write_contract(repo), changed=[rel])
+        assert "dynamic" in self._ooc(got), got["findings"]
+
+    def test_실물_어댑터가_글롭과_이름을_선언한다(self):
+        a = harness._read_json(ROOT / "harness/adapters/nextjs-ts.json")
+        r = a["entrypoint_resolver"]
+        assert r["convention_globs"], r
+        for name in ("metadata", "generateMetadata", "generateStaticParams",
+                     "viewport"):
+            assert name in r["implied_exports"], name
+        errors = harness.validate(
+            a, harness._read_json(ROOT / "harness/adapters/adapter.schema.json"))
+        assert errors == [], errors
+
+
 class TestUntestedEntrypointLink:
     """진입점 폴백은 **그 유닛과 연결된** 진입점만 본다 (G-2).
 
@@ -6642,6 +6714,125 @@ class TestPrecheckBudget:
         got = pc.run(repo, scope="pr")
         assert got["exit"] == 9
         assert got["budget"]["files"] == 11, got["budget"]
+
+
+class TestPrecheckPolicyOverride:
+    """미구현 백로그 26 — 같은 정책을 05·06 에서 두 번 묻지 않는다.
+
+    exit 9 는 상태를 잠그지도 카운터를 쓰지도 않고 오버라이드 플래그도 없었다 —
+    **사람이 「그대로 간다」를 고른 사실이 어디에도 남지 않았다.** §E13 이 재개마다
+    재실행을 요구하므로 06 에서 연속 두 번 묻는 일까지 생긴다. 클론 4런에서
+    3런이 05·06 양쪽에서 exit 9 였고 사람 대기 8.5분이 전체 대기의 30% 였다.
+
+    **검사는 계속 돈다.** 바뀌는 것은 「같은 사유·같은 값이면 다시 묻지 않는다」
+    뿐이고, 넘어간 사실은 `precheck_policy_override` gap 으로 등급이 치른다 —
+    면제는 통과가 아니다 (ADR-H027).
+    """
+
+    def _over(self, repo, files=12):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, files)
+
+    def test_지문이_실패_사유와_값을_담는다(self, repo):
+        self._over(repo)
+        got = pc.run(repo, scope="pr")
+        fp = got["policy_fingerprint"]
+        assert fp["reasons"] == ["예산"], fp
+        assert fp["files"] >= 12 and fp["lines"] >= 12, fp
+
+    def test_통과한_런은_지문이_없다(self, repo):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        got = pc.run(repo, scope="pr")
+        assert got["exit"] == 0 and got["policy_fingerprint"] is None, got
+
+    def test_ack_없이는_종전대로_다시_묻는다(self, repo, request_file):
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        assert cli.run_precheck(repo, scope="pr", phase="05")["exit"] == 9
+        assert cli.run_precheck(repo, scope="pr", phase="06")["exit"] == 9
+
+    def test_ack_한_뒤_같은_지문이면_06_이_묻지_않는다(self, repo, request_file):
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        assert cli.run_precheck(repo, scope="pr", phase="05")["exit"] == 9
+        acked = cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        assert acked["exit"] == 0, acked["render"]
+        env = cli.run_precheck(repo, scope="pr", phase="06")
+        assert env["exit"] == 0, env["render"]
+        assert "precheck_policy_override" in (env["data"].get("gaps") or []), env["data"]
+
+    def test_대기는_런당_한_번뿐이다(self, repo, request_file):
+        """닫힘 조건 — `waiting_human {"reason":"precheck_policy"}` 가 런당 1회 이하."""
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        cli.run_precheck(repo, scope="pr", phase="05")
+        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        cli.run_precheck(repo, scope="pr", phase="06")
+        cli.run_precheck(repo, scope="pr", phase="06")
+        paths, _ = st.load(repo)
+        waits = [e for e in st.read_events(paths)
+                 if e["kind"] == "waiting_human"
+                 and e["data"]["reason"] == "precheck_policy"]
+        assert len(waits) == 1, waits
+
+    def test_값이_나빠지면_다시_묻는다(self, repo, request_file):
+        """오버라이드는 사람이 본 범위까지다 — 더 커진 것은 사람이 안 본 것이다."""
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        cli.run_precheck(repo, scope="pr", phase="05")
+        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        _bulk_change(repo, 30)
+        assert cli.run_precheck(repo, scope="pr", phase="06")["exit"] == 9
+
+    def test_새_사유가_붙으면_다시_묻는다(self, repo, request_file):
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        cli.run_precheck(repo, scope="pr", phase="05")
+        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        _git(repo, "checkout", "-q", "main")
+        env = cli.run_precheck(repo, scope="pr", phase="06")
+        assert env["exit"] == 9, env["render"]
+
+    def test_넘어간_사실이_등급을_내린다(self, repo, request_file):
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        cli.run_precheck(repo, scope="pr", phase="05")
+        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        _, s = st.load(repo)
+        assert s["grade"] == st.GRADES[1], s["grade"]
+        assert "precheck_policy_override" in (s.get("gaps") or []), s.get("gaps")
+
+    def test_ack_는_통과한_런에서는_아무것도_안_남긴다(self, repo, request_file):
+        """넘길 것이 없는데 오버라이드를 적으면 다음 초과를 조용히 삼킨다."""
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        cli.run_init(repo, "x", request_file)
+        env = cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        assert env["exit"] == 0
+        _, s = st.load(repo)
+        assert not (s.get("precheck") or {}).get("policy_override"), s.get("precheck")
+
+    def test_봉투가_고르는_법을_이름으로_알려준다(self, repo, request_file):
+        """사람에게 선택지를 주면서 그것을 못박는 법을 안 적으면 아무도 안 쓴다."""
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        env = cli.run_precheck(repo, scope="pr", phase="05")
+        assert "--ack-policy" in env["render"], env["render"]
+
+    def test_넘어간_런의_봉투가_프로브_면제로_읽히지_않는다(self, repo, request_file):
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        cli.run_precheck(repo, scope="pr", phase="05")
+        env = cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        assert "면제된 프로브" not in env["render"], env["render"]
+        assert "통과가 아니라" in env["render"], env["render"]
+
+    def test_gap_이_이름으로_설명된다(self):
+        import report as rep
+        assert rep.gap_reason("precheck_policy_override"), \
+            "어휘에 없으면 보고서와 PR 본문이 설명하지 못한다"
+        assert not rep.is_non_demoting("precheck_policy_override")
 
 
 class TestPrecheckBranch:
@@ -8858,6 +9049,38 @@ class TestEscalationPlansTheDeltaRound:
         out = cli._review_render(s)
         assert "architecture-reviewer" in out, out
         assert "test-quality-reviewer" in out, out
+
+
+class TestEscalationMenuHasTheCommonAnswer:
+    """미구현 백로그 30 — 가장 자주 나오는 답이 메뉴에 있어야 한다.
+
+    05 수리 상한 초과의 선택지는 셋(계약 결함 의심 · 이대로 진행 · 중단)인데
+    **클론 4런의 에스컬레이션 2런 모두 사람이 「기타」를 골랐고**, 그 답은 둘 다
+    「좁게 보강하고 진행」 계열이었다. 메뉴가 실제 답을 담지 않으면 선택지는
+    기록이 아니라 장식이다.
+
+    `options` 는 표시 전용이다 — `state.escalate` 가 `ESCALATION.md` 와 상태에
+    적을 뿐 분기하는 코드가 없다. 그래서 **문자열이 곧 전부**이고, 그 문자열이
+    실제로 사람에게 간다는 것만 통합으로 한 번 확인한다.
+    """
+
+    NARROW = "좁게 보강하고 진행한다"
+
+    def test_메뉴에_좁은_보강이_있다(self):
+        assert any(self.NARROW in o for o in cli.REVIEW_ESCALATION_OPTIONS), \
+            cli.REVIEW_ESCALATION_OPTIONS
+
+    def test_에스컬레이션한_런이_그_메뉴를_받는다(self, repo, request_file, phases):
+        """상수가 실제 에스컬레이션까지 간다 — 선언만 있고 안 쓰이는 것을 막는다."""
+        peer = TestEscalationPlansTheDeltaRound()
+        run_id, paths = peer._ready(repo, request_file, phases)
+        peer._submit(repo, paths, run_id, "arch", 1, [peer.BLOCK])
+        peer._submit(repo, paths, run_id, "test", 1, [])
+        peer._submit(repo, paths, run_id, "arch", 2, [peer.BLOCK])
+        _, s = st.load(repo, run_id)
+        assert s.get("escalated"), s.get("run_status")
+        assert s["escalation"]["options"] == list(cli.REVIEW_ESCALATION_OPTIONS), \
+            s["escalation"]["options"]
 
 
 class TestFormatRejectCount:

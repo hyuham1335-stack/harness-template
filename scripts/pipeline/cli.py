@@ -3596,6 +3596,18 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
 REVIEW_SUBMIT_TRIES = 2
 
 
+# 05 수리 상한 초과의 선택지 (백로그 30). **가장 자주 나오는 답이 메뉴에 있어야
+# 한다** — 클론 4런의 에스컬레이션 2런 모두 사람이 「기타」를 골랐고 그 답은 둘 다
+# 「좁게 보강하고 진행」 계열이었다. 분기하는 코드는 없고 사람이 읽는 문자열이다.
+REVIEW_ESCALATION_OPTIONS = (
+    "계약 결함을 먼저 의심한다 — 같은 지적이 반복되면 코드가 아니라 "
+    "계약이 틀렸을 수 있다",
+    "좁게 보강하고 진행한다 — 남은 지적 중 좁은 것만 고치고 나머지는 안고 간다",
+    "이대로 진행한다(미해결 지적을 안고 간다)",
+    "중단한다",
+)
+
+
 def _dispatch_fingerprint_stale(root, ctx, node, round_):
     """지시 시점 지문 vs 지금. 다르면 저장된 지문을, 같거나 없으면 None.
 
@@ -3810,9 +3822,7 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             st.escalate(paths, s,
                         "05 의 Critical/Major %d건이 %d회 안에 해소되지 않았다"
                         % (len(blocking), max_decl),
-                        ["계약 결함을 먼저 의심한다 — 같은 지적이 반복되면 "
-                         "코드가 아니라 계약이 틀렸을 수 있다",
-                         "이대로 진행한다(미해결 지적을 안고 간다)", "중단한다"],
+                        list(REVIEW_ESCALATION_OPTIONS),
                         phase="05-code-review")
             return _escalation_envelope("record", paths, s)
         # 다음 회차에 델타가 회계해야 할 목록이다. `record` 가 같은 인자로
@@ -4451,10 +4461,11 @@ def _write_json(path, data):
 
 def cmd_precheck(root, args):
     return st.emit(run_precheck(root, args.scope, args.run_id,
-                               getattr(args, "phase", "05")))
+                               getattr(args, "phase", "05"),
+                               ack_policy=getattr(args, "ack_policy", False)))
 
 
-def run_precheck(root, scope="pr", run_id=None, phase="05"):
+def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
     """05 진입과 06 에서 각 1회, 그리고 **재개마다** 다시 돈다 (§E13).
 
     런 없이도 돈다 — 무료 검사의 요점이 "시작하기 전에 안다"이므로 런을
@@ -4471,6 +4482,9 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
     got = pc.run(root, scope=scope)
 
     if s is not None:
+        # **사람이 이미 고른 것을 다시 묻지 않는다** (백로그 26). 기록과 판정이
+        # 아래 모든 것(슬롯·gap·이벤트·봉투)보다 앞이다 — exit 를 바꾸기 때문이다.
+        _apply_policy_override(paths, s, got, pid, ack_policy)
         # 명세의 state 스키마가 `precheck.at_05` 와 `at_06` 을 나란히 둔다 —
         # 같은 검사가 두 시점에 돌고 **그 사이에 값이 변하기 때문**이다 (§E13).
         # 한 칸에 덮어쓰면 06 이 05 의 예산을 지우고, 무엇이 언제 참이었는지
@@ -4516,6 +4530,38 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
 
 _PRECHECK_PHASE = {"05": "05-code-review", "06": "06-pr"}
 
+# 사람이 정책 exit 9 를 「그대로 간다」로 정한 사실. **면제는 통과가 아니다** —
+# 비강등 목록에 넣지 않아 등급이 그 사실을 치른다 (ADR-H027 · ADR-H071).
+PRECHECK_OVERRIDE_GAP = "precheck_policy_override"
+
+
+def _apply_policy_override(paths, s, got, pid, ack_policy):
+    """사람이 못박은 정책 판단을 적고, 덮이는 실패는 다시 묻지 않는다 (백로그 26).
+
+    exit 9 는 상태를 잠그지도 카운터를 쓰지도 않아 **사람이 「그대로 간다」를 고른
+    사실이 어디에도 남지 않았다.** 그래서 §E13 의 재개 재검사가 06 에서 같은 것을
+    다시 물었다 — 클론 4런에서 사람 대기의 30% 가 그것이었다.
+
+    **검사는 그대로 돈다.** 바뀌는 것은 「같은 사유·같은 값이면 묻지 않는다」뿐이고,
+    넘어간 사실은 gap 으로 남는다.
+    """
+    import precheck as pc
+
+    node = s.setdefault("precheck", {})
+    fresh = got.get("policy_fingerprint")
+    if ack_policy and got["exit"] == 9 and fresh:
+        node["policy_override"] = {"fingerprint": fresh, "phase": pid,
+                                   "at": st.stamp()}
+        st.append_event(paths, "policy_acked", cmd="precheck", phase=pid,
+                        reasons=fresh["reasons"])
+    saved = (node.get("policy_override") or {}).get("fingerprint")
+    if got["exit"] != 9 or not pc.override_covers(saved, fresh):
+        return
+    got["exit"] = 0
+    got["classification"] = None
+    got["policy_override"] = dict(node["policy_override"])
+    got.setdefault("gaps", []).append(PRECHECK_OVERRIDE_GAP)
+
 
 def _base_behind(got):
     """divergence 검사가 센 behind 수. 검사가 안 돌았으면 0 이 아니라 None 이다."""
@@ -4547,6 +4593,14 @@ def _precheck_render(got):
                               "`python scripts/harness.py calibrate` 를 돌린다."
                           % (stale[0]["message"] if stale else gap)]
                 continue
+            if gap == PRECHECK_OVERRIDE_GAP:
+                fp = (got.get("policy_override") or {}).get("fingerprint") or {}
+                lines += ["", "**정책 실패를 사람이 넘기기로 한 상태다: `%s`.** "
+                              "통과가 아니라 넘어간 것이다 — 등급이 "
+                              "`PASS_WITH_GAPS` 로 내려가고 보고서·PR 본문에 "
+                              "이름으로 남는다. 사유·값이 커지면 다시 묻는다."
+                          % ", ".join(fp.get("reasons") or [])]
+                continue
             lines += ["", "**면제된 프로브가 있다: `%s`.** 통과가 아니라 "
                           "미검증이다 — 등급이 `PASS_WITH_GAPS` 로 내려가고 "
                           "보고서·PR 본문에 이름으로 남는다." % gap]
@@ -4564,7 +4618,10 @@ def _precheck_render(got):
                   "읽게 된다."]
     else:
         lines += ["", "**자동으로 쪼개거나 리베이스하지 않는다.** 무엇을 할지 "
-                      "정하고 다시 부른다."]
+                      "정하고 다시 부른다.",
+                  "사람이 **이대로 간다**고 정했으면 같은 명령에 `--ack-policy` 를 "
+                  "붙여 그 판단을 못박는다 — 그래야 06 이 같은 것을 다시 묻지 "
+                  "않는다 (백로그 26). 넘어간 사실은 gap 으로 남는다."]
     return "\n".join(lines)
 
 
@@ -6339,6 +6396,7 @@ def build_parser():
     sp.add_argument("--scope", dest="scope", default="pr",
                     choices=["pr", "worktree"])
     sp.add_argument("--phase", dest="phase", default="05", choices=["05", "06"])
+    sp.add_argument("--ack-policy", dest="ack_policy", action="store_true")
     sp.add_argument("--run-id", dest="run_id", default=None)
 
     sp = sub.add_parser("contract-trace", add_help=False)
