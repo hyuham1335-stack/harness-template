@@ -286,7 +286,7 @@ def _mentions_contract_symbol(unit, contract_symbols):
 
 # ------------------------------------------------------------------ 3단계
 
-def resolve_ambiguous(failures, config, flip_state, roles=None):
+def resolve_ambiguous(failures, config, flip_state, roles=None, adapter=None):
     """ambiguous → primary_role → 동일 시그니처 재발 시 다음 역할 → 계약 결함.
 
     **동시 배정을 하지 않는다.** 같은 하나의 동작을 두고 둘에게 동시에 보내면
@@ -297,6 +297,20 @@ def resolve_ambiguous(failures, config, flip_state, roles=None):
     (ADR-H057). 기록이 없으면 조건부 역할(`when_contract_section`)을 뺀다 — 불린
     적 없는 역할에게 수리를 보내지 않는다. 단언 실패(`kind: test`)는 조건부
     역할을 건너뛴다 — 그 역할은 테스트를 소유하지 않는다.
+
+    **실패 프레임이 하나 이상이고 전부 테스트 파일이면 사다리 맨 앞은 테스트
+    역할이다** (ADR-H072). `ambiguous` 는 예외가 아니라 **기본값**이고 —
+    어댑터의 귀속 규칙이 판정을 못 내면 여기로 온다 — 스텁 픽스처가 원인인
+    실패를 `primary_role` 에 먼저 보내면 구현이 스텁에 맞추려 계약에 없는
+    특수 분기를 프로덕션에 넣는다. 오배정의 대가가 「라운드 하나」가 아니라
+    **프로덕션 코드 오염**이다. `adapter` 가 없으면 물을 수단이 없으므로
+    종전대로 `primary_role` 이 먼저다.
+
+    **배정은 순서 인덱스가 아니라 미시도 집합에서 고른다** (ADR-H072).
+    사다리 순서가 이제 그 실패의 프레임에 따라 라운드마다 달라질 수 있는데
+    `signature()` 는 프레임을 해시에 넣지 않아 같은 sig 가 다른 프레임으로
+    재발한다. 인덱스로 고르면 뒤집힌 사다리가 **한 역할을 통째로 건너뛴다** —
+    ADR-H023 · M33 이 막으려던 「두 역할 중 한쪽만 시도해 보고 끝」 그대로다.
     """
     by_id = {r["id"]: r for r in config.get("roles") or []}
     if roles is None:
@@ -315,15 +329,21 @@ def resolve_ambiguous(failures, config, flip_state, roles=None):
             continue
         ladder = ([i for i in order if not by_id[i].get("when_contract_section")]
                   if f.get("kind") == "test" else order)
+        test_role = (_test_role_id(adapter, config)
+                     if _frames_all_tests(adapter, f) else None)
+        test_first = test_role is not None and test_role in ladder
+        if test_first:
+            ladder = [test_role] + [r for r in ladder if r != test_role]
         node = flip_state.setdefault(f["sig"], {"assigned": [], "count": 0})
         node["count"] += 1
         idx = len(node["assigned"])
-        if idx < len(ladder):
-            owner = ladder[idx]
+        owner = next((r for r in ladder if r not in node["assigned"]), None)
+        if owner is not None:
             node["assigned"].append(owner)
             f["owner"] = owner
             f["owner_reason"] = ("ambiguous → %s" %
-                                 ("primary_role" if idx == 0 else
+                                 (("프레임이 전부 테스트 파일이다" if test_first
+                                   else "primary_role") if idx == 0 else
                                   "동일 시그니처 재발 · 다음 역할로 넘긴다"))
             if idx > 0:
                 f["carry_contract"] = True   # 계약 원문과 현재 시그니처를 함께 준다
@@ -332,6 +352,20 @@ def resolve_ambiguous(failures, config, flip_state, roles=None):
             f["owner_reason"] = "역할을 다 돌았는데 같은 실패다 — 계약 결함으로 재분류"
         out.append(f)
     return out
+
+
+def _frames_all_tests(adapter, failure):
+    """실패 프레임이 하나 이상이고 **전부** 테스트 파일인가 (ADR-H072).
+
+    프레임이 비면 `file` 하나를 본다. 하나라도 앱 프레임이 섞이면 거짓이다 —
+    면제가 아니라 「테스트만 걸렸다」는 좁은 규칙이다.
+    """
+    if not adapter:
+        return False
+    paths = [p for p in (failure.get("frames") or []) if p]
+    if not paths and failure.get("file"):
+        paths = [failure["file"]]
+    return bool(paths) and all(is_test_file(adapter, p) for p in paths)
 
 
 def owner_sig(failure):
@@ -349,7 +383,8 @@ def owner_sig(failure):
     return "%s|%s" % (failure.get("owner"), failure.get("sig"))
 
 
-def dispatch(failures, config, prev_sigs, flip_state, stuck_after=2, roles=None):
+def dispatch(failures, config, prev_sigs, flip_state, stuck_after=2, roles=None,
+             adapter=None):
     """소유자별 배정. 같은 대상을 공유하면 하나만 보낸다.
 
     `prev_sigs` 는 이전 라운드들의 **쌍** 목록이다(`owner_sig`). `stuck_after`
@@ -357,7 +392,8 @@ def dispatch(failures, config, prev_sigs, flip_state, stuck_after=2, roles=None)
     유일한 경로다 — 예전에는 선언만 있고 `2` 가 여기 박혀 있어 값을 3 으로
     바꿔도 동작이 안 변했다.
     """
-    resolved = resolve_ambiguous(failures, config, flip_state, roles=roles)
+    resolved = resolve_ambiguous(failures, config, flip_state, roles=roles,
+                                 adapter=adapter)
     sigs = [f["sig"] for f in resolved]
     pairs = [owner_sig(f) for f in resolved]
     prior = list(prev_sigs or [])
@@ -387,7 +423,7 @@ def dispatch(failures, config, prev_sigs, flip_state, stuck_after=2, roles=None)
     deferred = [{"owner": o, "failure_count": len(by_owner[o]),
                  "reason": "동시 배정 금지 — 대상을 공유한다"}
                 for o in owners if o != chosen]
-    # **미룬 배정은 없던 일이다.** `resolve_ambiguous` 가 올린 flip 인덱스를
+    # **미룬 배정은 없던 일이다.** `resolve_ambiguous` 가 쌓은 배정을
     # 그대로 두면 다음 라운드에 그 실패가 한 역할을 건너뛴다. 정체 체인도
     # 같다 — 나가지 않은 쌍을 쌓으면 다음 라운드의 첫 시도가 곧 정체다.
     for o in (d["owner"] for d in deferred):

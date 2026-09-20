@@ -3150,6 +3150,9 @@ class TestAttribution:
         assert frames == ["src/lib/match.ts"]
 
     def test_ambiguous_goes_to_primary_then_flips(self, repo, config):
+        """**어댑터 없는 경로다** — 테스트 파일인지 물을 수단이 없으면
+        지금대로 `primary_role` 이 먼저다 ([[ADR-H072]]).
+        """
         failures = [{"id": "F-1", "owner": "ambiguous", "sig": "abc",
                      "file": "src/lib/match.test.ts"}]
         flip = {}
@@ -3160,6 +3163,58 @@ class TestAttribution:
         assert second[0]["owner"] == "test", "동일 시그니처 재발이면 다음 역할로 넘긴다"
         third = attr.resolve_ambiguous([dict(failures[0])], config, flip)
         assert third[0]["owner"] == "contract", "또 재발하면 계약 결함으로 재분류한다"
+
+    def test_프레임이_전부_테스트_파일이면_테스트_역할이_먼저다(self, repo,
+                                                              config):
+        """[[ADR-H072]] 결정 3 — `ambiguous` 는 예외가 아니라 **기본값**이다.
+
+        스텁 픽스처가 원인인 실패를 `primary_role` 에 먼저 보내면 구현이
+        스텁에 맞추려 계약에 없는 특수 분기를 프로덕션에 넣는다. 클론 1런이
+        실제로 그랬고 사람이 되돌렸다 — 오배정의 대가가 「라운드 하나」가
+        아니라 **프로덕션 코드 오염**이다 (백로그 27).
+        """
+        _c, adapter, _cal = adapters.load(repo)
+        f = {"id": "F-1", "kind": "test", "owner": "ambiguous", "sig": "t1",
+             "file": "src/lib/match.test.ts",
+             "frames": ["src/lib/match.test.ts"]}
+        got = attr.resolve_ambiguous([dict(f)], config, {}, adapter=adapter)
+        assert got[0]["owner"] == "test", got[0]
+        assert "테스트 파일" in got[0]["owner_reason"], got[0]
+
+    def test_앱_프레임이_섞이면_기본_역할이_먼저다(self, repo, config):
+        """면제가 아니라 **전부** 테스트 파일일 때의 규칙이다."""
+        _c, adapter, _cal = adapters.load(repo)
+        f = {"id": "F-1", "kind": "test", "owner": "ambiguous", "sig": "t2",
+             "file": "src/lib/match.test.ts",
+             "frames": ["src/lib/match.test.ts", "src/lib/match.ts"]}
+        got = attr.resolve_ambiguous([dict(f)], config, {}, adapter=adapter)
+        assert got[0]["owner"] == config["primary_role"], got[0]
+
+    def test_사다리가_뒤집혀도_역할을_건너뛰지_않는다(self, repo, config):
+        """[[ADR-H072]] — 배정은 순서 인덱스가 아니라 **미시도 집합**에서.
+
+        같은 sig 가 다른 프레임으로 재발하면 사다리가 뒤집힌다 —
+        `signature()` 는 프레임을 해시에 넣지 않는다. 인덱스로 고르면 r2 가
+        r1 과 같은 역할을 다시 받고 `impl` 은 한 번도 안 시도된 채 계약
+        결함이 된다 — [[ADR-H023]]·M33 이 막으려던 모양 그대로다.
+        """
+        _c, adapter, _cal = adapters.load(repo)
+        flip = {}
+        only_test = {"id": "F-1", "kind": "test", "owner": "ambiguous",
+                     "sig": "t3", "file": "src/lib/match.test.ts",
+                     "frames": ["src/lib/match.test.ts"]}
+        mixed = dict(only_test,
+                     frames=["src/lib/match.test.ts", "src/lib/match.ts"])
+        r1 = attr.resolve_ambiguous([dict(only_test)], config, flip,
+                                    adapter=adapter)
+        r2 = attr.resolve_ambiguous([dict(mixed)], config, flip,
+                                    adapter=adapter)
+        r3 = attr.resolve_ambiguous([dict(only_test)], config, flip,
+                                    adapter=adapter)
+        assert r1[0]["owner"] == "test", r1[0]
+        assert r2[0]["owner"] == "impl", "이미 시도한 역할을 다시 주지 않는다"
+        assert r2[0].get("carry_contract") is True, r2[0]
+        assert r3[0]["owner"] == "contract", "둘을 다 돌았으면 계약 결함이다"
 
     def test_dispatch_never_assigns_two_owners_that_share_a_target(self, repo, config):
         """핑퐁 방지 — 같은 대상을 두고 둘에게 동시에 보내지 않는다."""
@@ -5941,8 +5996,9 @@ class TestConventionFilesBeyondTheEntrypointMap:
     ADR-H038). 진입점이 아닌 관례 파일이므로 `is_entrypoint_file` 의 뜻은
     넓히지 않고 `is_convention_file` 을 따로 둔다.
 
-    **타입 전용 export 는 이 범위 밖이다** — 면제할 것인지 계약이 내부 타입까지
-    열거할 것인지는 결정이 앞선다(백로그 24 본문).
+    **타입 전용 export 는 [[ADR-H072]] 결정 4 가 닫았다** — `type`·`interface`
+    는 `out_of_contract` 가 아예 안 본다. `enum` 은 런타임 객체를 내보내므로
+    면제가 아니다.
     """
 
     PAGE = ("export const dynamic = 'force-dynamic'\n"
@@ -5987,6 +6043,47 @@ class TestConventionFilesBeyondTheEntrypointMap:
         adapter["entrypoint_resolver"].pop("convention_globs", None)
         got = tr.run(repo, config, adapter, _write_contract(repo), changed=[rel])
         assert "dynamic" in self._ooc(got), got["findings"]
+
+    def test_타입_전용_export_는_계약에_없어도_안_잡힌다(self, repo):
+        """[[ADR-H072]] 결정 4 — 계약은 런타임 심볼을 본다.
+
+        클론 4런의 `out_of_contract` 6건 중 3건이 타입 별칭이었고 전부
+        major · 전부 deferred 였다. 탈출구가 「01 이 내부 타입까지 계약에
+        열거한다」뿐이면 계약이 타입 선언서가 된다 (백로그 24).
+        """
+        rel = self._write(repo, "src/lib/shapes.ts",
+                          "export type ItemRow = { id: string }\n"
+                          "export interface ItemView { id: string }\n")
+        got = _trace(repo, _write_contract(repo), changed=[rel])
+        assert self._ooc(got) == [], got["findings"]
+
+    def test_enum_은_런타임_값이라_그대로_잡힌다(self, repo):
+        """`export enum` 은 런타임 객체를 내보낸다 — 다른 모듈이 값으로 쓴다."""
+        rel = self._write(repo, "src/lib/shapes.ts",
+                          "export enum Status { Open = 'open' }\n")
+        got = _trace(repo, _write_contract(repo), changed=[rel])
+        assert self._ooc(got) == ["Status"], got["findings"]
+
+    def test_런타임_export_는_그대로_잡힌다(self, repo):
+        rel = self._write(repo, "src/lib/shapes.ts",
+                          "export const ROWS = 1\n"
+                          "export function toRow() {}\n")
+        got = _trace(repo, _write_contract(repo), changed=[rel])
+        assert self._ooc(got) == ["ROWS", "toRow"], got["findings"]
+
+    def test_어댑터가_정규식을_덮으면_면제도_어댑터_몫이다(self, repo):
+        """override 정규식에는 `kw` 그룹이 없다 — `groupdict()` 로 읽어
+        터지지 않고, 면제는 그 어댑터가 정한다.
+        """
+        rel = self._write(repo, "src/lib/shapes.ts",
+                          "export type ItemRow = { id: string }\n")
+        config, adapter, _cal = _load(repo)
+        adapter = json.loads(json.dumps(adapter))
+        adapter.setdefault("attribution", {})["public_symbol_regex"] = (
+            r"^\s*export\s+(?:type|const)\s+(?P<name>[^\W\d][\w$]*)")
+        got = tr.run(repo, config, adapter, _write_contract(repo),
+                     changed=[rel])
+        assert self._ooc(got) == ["ItemRow"], got["findings"]
 
     def test_실물_어댑터가_글롭과_이름을_선언한다(self):
         a = harness._read_json(ROOT / "harness/adapters/nextjs-ts.json")
@@ -7085,6 +7182,41 @@ class TestStageNotApplicable:
         assert rep_mod.is_non_demoting("adapter_unverified"), "[[ADR-H069]]"
         assert not rep_mod.is_non_demoting("attribution_unparsed"),             "파싱이 깨진 것은 표시가 아니라 결함이다"
         assert rep_mod.gap_reason("stage_na:docs"), "어휘에 있어야 보고서가 설명한다"
+
+    def test_동봉_어댑터가_구조적_부재와_미룬_부재를_가른다(self):
+        """[[ADR-H072]] 결정 1 — 산문이 말하던 것을 기계가 말하게 한다.
+
+        `self-python` 의 compile·build·e2e 는 이 스택에 **구조적으로** 없다
+        (파이썬에 컴파일 단계가 없고, 빌드 산출물이 없고, E2E 개념이 없다).
+        lint·check 는 **아직 안 들인 것**이라 `absent` 로 남는다 — 그 둘이
+        등급을 깎는 것은 결함이 아니라 어댑터가 비었다는 정확한 신호다.
+        `nextjs-ts` 의 e2e 도 미룬 부재다 — Playwright 는 TRD 의 [Scale]
+        단계이고 러너를 안 깐 것은 구조적 부재가 아니다 (백로그 17 · 22).
+        """
+        def ad(name):
+            return harness._read_json(
+                ROOT / "harness" / "adapters" / ("%s.json" % name))
+
+        sp = ad("self-python")
+        for sid in ("compile", "build", "e2e", "docs"):
+            assert adapters.stage_state(sp, sid) == "na", sid
+        for sid in ("lint", "check"):
+            assert adapters.stage_state(sp, sid) == "absent", sid
+        nx = ad("nextjs-ts")
+        assert adapters.stage_state(nx, "e2e") == "absent"
+        assert adapters.stage_state(nx, "docs") == "na"
+
+    def test_na_선언과_note_가_반대를_말하지_않는다(self):
+        """같은 스테이지에서 `not_applicable`(등급 안 내림)과 `_note`
+        ("통과가 아니다")가 공존하면 doctor 의 두 칸이 서로를 반박한다.
+        """
+        for name in ("self-python", "nextjs-ts", "_template"):
+            a = harness._read_json(
+                ROOT / "harness" / "adapters" / ("%s.json" % name))
+            for sid, spec in (a.get("stages") or {}).items():
+                if str(spec.get("not_applicable") or "").strip():
+                    assert "통과가 아니다" not in (spec.get("_note") or ""), \
+                        "%s.%s" % (name, sid)
 
     def test_게이트는_stage_na_만으로_등급을_내리지_않는다(self, gated, fxdir,
                                                     monkeypatch):
@@ -11133,6 +11265,44 @@ class TestReview07Skip:
         assert not hasattr(rv7, "repaired_before_07")
         assert not hasattr(rv7, "REPAIR_REASONS")
 
+    def test_triage_miss_는_생략을_막지_않는다(self):
+        """[[ADR-H072]] 결정 2 — 빗나간 예측의 벌칙이 **빈손이 보장된 호출**
+        이면 안 된다. 클론 4런 중 1런이 `small → normal` miss 로 07 을
+        `medium` 으로 강제했고 외부는 `disabled`, 05 는 수렴이라 findings 0 에
+        모델 호출 1회만 태웠다 (백로그 25).
+        """
+        miss = {"was": "small", "became": "normal", "at": "05-code-review",
+                "applied": ["01:max_rounds=2"]}
+        got = rv7.decide({"review05": {"status": "ok", "findings_total": 3},
+                          "profile": {"name": "normal", "triage_miss": miss}},
+                         {"status": "disabled"}, {})
+        assert got["skip"] is True, got
+        assert got["skip_reason"] == rv7.SKIP_CLEAN_05, got
+        assert got["effort"] == "skipped", got
+
+    def test_돌게_된_런에서만_triage_miss_가_effort_를_올린다(self):
+        """생략이 아니면 벌칙이 산다 — 건너뛴 관측을 비싼 쪽으로 메운다."""
+        miss = {"was": "small", "became": "normal", "at": "05-code-review",
+                "applied": ["01:max_rounds=2"]}
+        clean = {"review05": {"status": "ok", "findings_total": 0},
+                 "profile": {"name": "normal"}}
+        low = rv7.decide(clean, {"status": "disabled"}, {})
+        assert low["skip"] is False and low["effort"] == "low", low
+        up = rv7.decide({"review05": {"status": "ok", "findings_total": 0},
+                         "profile": {"name": "normal", "triage_miss": miss}},
+                        {"status": "disabled"}, {})
+        assert up["skip"] is False and up["effort"] == "medium", up
+        assert any("예측" in r for r in up["reasons"]), up
+
+    def test_triage_miss_가_감사_런의_high_를_깎지_않는다(self):
+        """벌칙이 감사 표본을 과소측정으로 만들면 안 된다 ([[ADR-H061]])."""
+        miss = {"was": "small", "became": "normal", "at": "05-code-review",
+                "applied": []}
+        got = rv7.decide({"review05": {"status": "ok", "findings_total": 3},
+                          "profile": {"name": "normal", "triage_miss": miss}},
+                         {"status": "disabled"}, {}, audit=True)
+        assert got["skip"] is False and got["effort"] == "high", got
+
     def test_reviewed_이고_major_0_이면_생략한다(self, repo, request_file,
                                                 phases):
         run_id, paths = _enter_07(repo, request_file, phases)
@@ -13814,7 +13984,9 @@ class TestTriageMiss:
                                                           "at": "03-implement",
                                                           "applied": ["01:reviewers=0"]}}},
                              ext, cfg)
-        assert got["effort"] == "medium" and got["skip"] is False, got
+        # [[ADR-H072]] 전에는 여기가 `medium` 강제였다 — 05 가 수렴하고
+        # 외부가 `disabled` 인 이 상태에서 07 은 **빈손이 보장**돼 있었다.
+        assert got["skip"] is True and got["skip_reason"] == "clean_05", got
         assert got["gaps"] == []          # gap 은 miss 시점에 이미 적혔다
         got = rv7_mod.decide({"review05": {"status": "ok", "major": 0},
                               "profile": {"name": "docs"}}, ext, cfg)

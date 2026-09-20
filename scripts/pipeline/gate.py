@@ -312,4 +312,4 @@ def attribute(root, config, adapter, report, state, replay=None, log_text="",
     roles = (((state or {}).get("phases") or {}).get("03-implement") or {}).get(
         "dispatched_roles")
     return attr.dispatch(failures, config, prev, flip, stuck_after=stuck_after,
-                         roles=roles)
+                         roles=roles, adapter=adapter)

@@ -46,9 +46,10 @@
 리뷰어가 봤으니 내장 코드 리뷰가 볼 코드가 없다. **`fix` 레인은 `fix_profile`
 로 생략한다** — 05 의 `gen` 이 수리 하나를 봤다. 단 05 의 지적이 0건이면 low 로
 한 번 돈다 (ADR-H050 · ADR-H053). **00 의 예측이 빗나간 런
-(`profile.triage_miss`)은 `medium` 이다** — 앞 페이즈가 양보를 적용한 채
-지나갔으므로 건너뛴 관측을 비싼 쪽으로 메운다 (ADR-H044). gap 은 miss 시점에
-이미 적혔고 여기서 다시 세지 않는다.
+(`profile.triage_miss`)은 생략 조건이 먼저 이긴다** — 생략되지 않은 런에서만
+effort 를 `medium` 으로 올려 건너뛴 관측을 메운다 (ADR-H044 · ADR-H072).
+생략이 걸린 런에 벌칙으로 한 번 더 부르면 **빈손이 보장된 호출**이다. gap 은
+miss 시점에 이미 적혔고 여기서 다시 세지 않는다.
 
 승격도 여기서 한 번 일어난다. 05 는 후보(`staged`)만 만들었고, **실제 쓰기는
 07 이 런당 한 번** 한다 — dedup 이 로직이 아니라 시점으로 성립하고, 기능 PR
@@ -102,13 +103,14 @@ python scripts/pipeline/cli.py review07 --external {07_external.json} --run-id {
 
 - `review05.status != ok` → **medium** (리뷰 결손을 비싼 쪽으로 메운다)
 - 봇을 켜 놓았는데 `timeout` · `not_a_review` → **low** + 등급 `PASS_WITH_GAPS`
-- 00 의 예측이 빗나갔다 (`profile.triage_miss`) → **medium**
 - `docs` 레인 → **skipped** (`docs_profile`) · `fix` 레인 → **skipped**
   (`fix_profile`, 단 05 지적 0건이면 low)
 - 외부가 `reviewed` 이고 `small` 레인 → **skipped** (`clean_05`)
 - 외부 리뷰에 Major 가 있다 → **low**
 - 05 의 지적이 0건이다 → **low**. 0 은 "봤는데 없었다" 와 "보지 않았다" 를
   가르지 못한다 (ADR-H050)
+- 위 판정이 **끝난 뒤**, 00 의 예측이 빗나갔고(`profile.triage_miss`) 생략이
+  아니면 `low` 를 **medium** 으로 올린다 (ADR-H072). 생략은 그대로 생략이다
 - 그 밖 → **skipped** (`skip_reason: clean_05`). 05 에 Major 가 남았거나
   04·05 에 수리가 있었어도 같다 — 그 Major 는 05 안에서 수리·델타 재리뷰를
   이미 받았고, 두 번째 눈은 감사 런이 산다 (ADR-H059). 봇이 config 로 꺼진

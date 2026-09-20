@@ -19,6 +19,10 @@
 | `missing_journey_spec`    | 계약 `## 여정` 의 스펙 파일에 그 슬러그가 선언돼 있는가 | critical (유예 없음, 03 이 먼저 거부) |
 | `out_of_contract`         | 계약에 없는 신규 public 심볼      | major (첫 3런 warn_only) |
 
+`out_of_contract` 는 **타입 전용 export(`type`·`interface`)를 보지 않는다**
+(ADR-H072). 계약은 런타임 심볼을 보고, 내부 타입까지 계약에 열거하게 하지
+않는다. `enum` 은 런타임 객체를 내보내므로 면제가 아니다.
+
 "첫 3런" 은 **그 검사가 지적을 낸 런**으로 센다 (ADR-H058 · `ledger.in_baseline_for`).
 
 테스트 셋(`untested_*`·`authz_untested`)은 **존재 검사이지 의미 검사가 아니다.**
@@ -95,8 +99,22 @@ CATEGORY = {
 # 이 리포처럼 비ASCII 식별자가 흔한 곳에서 검사가 조용히 아무것도 안 잡는다
 # (§E4 가 인코딩에서 경고하는 것과 같은 자리다). `[^\W\d]` 는 유니코드 word
 # 문자 중 숫자가 아닌 것이다.
-_DEFAULT_PUBLIC = (r"^\s*export\s+(?:async\s+)?(?:function|const|class|type|"
+_DEFAULT_PUBLIC = (r"^\s*export\s+(?:async\s+)?(?P<kw>function|const|class|type|"
                    r"interface|enum)\s+(?P<name>[^\W\d][\w$]*)")
+
+# 런타임에 아무것도 내보내지 않는 키워드 (ADR-H072). 계약이 이름 붙이는 것은
+# 런타임 심볼이고, 내부 타입까지 `## 데이터 형태` 에 열거하게 하면 계약이
+# 타입 선언서가 된다 — 클론 4런의 `out_of_contract` 6건 중 3건이 타입
+# 별칭이었고 전부 major · 전부 deferred 였다.
+#
+# **`enum` 은 여기 없다.** TypeScript 의 `export enum` 은 런타임 객체를
+# 내보내고 다른 모듈이 값으로 import 한다 — 이름이 "타입 전용" 이라고
+# 실제가 그런 것은 아니다.
+#
+# 어댑터가 `attribution.public_symbol_regex` 로 정규식을 덮으면 `kw` 그룹이
+# 없을 수 있다. 그때는 면제가 걸리지 않는다 — 어댑터가 덮었으면 면제도
+# 그 어댑터의 몫이다. `groupdict()` 로 읽어 터지지 않게 한다.
+TYPE_ONLY_KEYWORDS = ("type", "interface")
 
 
 def run(root, config, adapter, contract_path, no_contract=False, changed=None,
@@ -707,6 +725,8 @@ def _out_of_contract(root, adapter, parsed, changed, primary):
         at_entrypoint = bool(implied) and contract_mod.is_convention_file(adapter, rel)
         for m in rx.finditer(text):
             name = m.group("name")
+            if (m.groupdict().get("kw") or "") in TYPE_ONLY_KEYWORDS:
+                continue          # 런타임 심볼이 아니다 (ADR-H072)
             if name in known:
                 continue
             if at_entrypoint and name in implied:

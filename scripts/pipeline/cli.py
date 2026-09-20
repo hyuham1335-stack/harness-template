@@ -611,9 +611,10 @@ def _check_external_bot(config):
     if not ext.get("enabled"):
         return {"name": name, "status": "PASS",
                 "message": "꺼져 있다 — gap 이 아니다. 07 의 내장 리뷰는 05 가 "
-                           "ok 가 아니거나 트리아지가 빗나갔거나 05 지적이 0건이거나 "
-                           "감사 런일 때 돌고, 그 밖은 생략한다 "
-                           "(ADR-H043 · ADR-H059)."}
+                           "ok 가 아니거나 05 지적이 0건이거나 감사 런일 때 "
+                           "돌고, 그 밖은 생략한다 (ADR-H043 · ADR-H059). "
+                           "트리아지가 빗나간 것은 생략을 막지 않고 돌게 된 "
+                           "런의 effort 만 올린다 (ADR-H072)."}
     if not (ext.get("bot_logins") or []):
         return {"name": name, "status": "FAIL",
                 "message": "켜져 있는데 bot_logins 가 비었다 — 07 이 아무도 "
