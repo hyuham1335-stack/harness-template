@@ -109,6 +109,7 @@
 | [[ADR-H066]] | 파일 수 예산은 소스만 센다 | 채택됨 | 구현 | 백로그 13 닫음. 줄 수는 전체 그대로 |
 | [[ADR-H067]] | `risk_undeclared` 는 관측만 | 채택됨 | 구현 | 백로그 5 닫음. 게이트 승격은 표본 대기(백로그 19) |
 | [[ADR-H068]] | 원장은 세션이 말한 worktree 를 따로 적는다 | 채택됨 | 구현 | 클론 `/log` 의 worktree 누락에서 |
+| [[ADR-H069]] | 어댑터 `verified` 는 규칙이 판정을 낸 관측으로 올린다 | 채택됨 | 구현 | [[ADR-H047]] 결정 3 을 강화. `adapter_unverified` 는 비강등으로 |
 
 ---
 
@@ -203,6 +204,7 @@
 | [[ADR-H066]] | `precheck` exit 9 빈도와 그 런이 소스 파일로 넘었는가(`test_files_excluded`) | 클론의 첫 5런 |
 | [[ADR-H067]] | `risk_undeclared` 이벤트 빈도와 그 런의 05·07 지적 — 게이트 승격 여부 | 첫 5런 |
 | [[ADR-H068]] | worktree 에서 커밋한 세션이 `worktrees[].commits` 로 잡혔나, 들여다보기만 한 세션의 칸이 비었나 | 클론의 첫 `/log` 3회 |
+| [[ADR-H069]] | `attribution_rules` 가 실제로 채워지는가 · `attribution_unparsed` 가 한 번이라도 잡히는가 | 클론의 다음 5런 |
 
 백로그 번호는 **고정**이다 — 현황 색인과 실행 순서표가 번호로 가리키므로 닫힌 항목은 지우지 않고 항목 머리에 `닫힘 (날짜 · ADR)` 를 붙인다. 닫힌 사실은 해당 ADR 본문에 추기로 남는다. 새 항목은 20 부터 뒤에 더한다 (2026-09-19 규칙 변경 — 이전 규칙은 "지우고 번호를 당긴다" 였다).
 
@@ -3420,6 +3422,63 @@ Bash 의 `cd <wt> && …` 로만 일어났다. 그래서 `find_root` 순서(`CLA
 들여다보기만 한 세션의 칸이 비었는지를 git 과 대조한다.
 
 관련: [[ADR-H036]] · [[ADR-H007]]
+
+---
+
+### ADR-H069: 어댑터 `verified` 는 규칙이 **판정을 낸** 관측으로 올린다 — 완주는 근거가 아니다
+
+**날짜**: 2026-09-20 · **상태**: 채택됨 · **구현 상태**: 구현됨 (2026-09-20 — `attribution.rules_fired`,
+`harness.ADAPTER_RULE_NAMES` · `observed_rules` · `required_rules`, 04 가 `phases["04-gate"].attribution_rules` 를
+적음, `attribution_unparsed` gap, `adapter_unverified` 를 `NON_DEMOTING_GAPS` 로)
+
+**맥락**: 클론(banana)에서 `verified` 를 `true` 로 올린 커밋 뒤 `test_the_adapter_stays_unverified_until_a_real_run`
+이 계속 빨간불이었다. 파고 보니 값이 근거 없이 올라갔다. [[ADR-H047]] 결정 3 의 기준은 **완주 런 3개 이상**인데,
+어댑터의 `attribution` 필드는 **실패를 분류할 때만** 불린다 — 런이 무사히 끝났다는 것은 그 경로가 한 번도 안 불렸다는
+뜻이다. 그 결정이 스스로 남긴 문장이 이것을 시인한다: *"실패를 만들어 검증한 것이 아니다."*
+
+클론의 런 19개를 전수 조사했다. 저장된 실패 기록 21건이 전부 `kind: "test"` · `AssertionError` 였고 프레임이 모두
+테스트 파일이라 `first_app_frame` 이 늘 `None` 이었다 — **네 규칙 중 무엇도 판정을 낸 적이 없다.** 유일한 진짜 타입
+에러(`20260915-1754-5568` 의 `gates/03_compile.log` exit 2)는 03 에서 수리돼 04 귀속을 거치지 않았다. 규칙이
+**불린 것**과 **결정한 것**은 다른 사실인데 기준이 그 둘을 구분하지 않았다.
+
+H047 이 기준을 그렇게 정한 동기도 기록에 있다: *"15런을 완주한 뒤에도 `verified: false` 였고 그래서 `PASS` 가
+구조적으로 나올 수 없었다(`adapter_unverified` 가 매 런 gap)."* **등급 압력이 기준을 깎은 것**이다.
+
+그리고 파싱이 깨져도 조용하다. 규칙이 한 줄도 못 읽으면 게이트는 멈추지 않고 `kind: "stage"` 대체 기록(`owner:
+"ambiguous"`, "스테이지가 실패했지만 실패 항목을 못 읽었다")으로 넘어간다. 2026-09-03 에 `compile_error_regex` 가
+실물 출력에 0건 매칭이던 버그가 오래 살아남은 구조가 이것이다.
+
+**결정**:
+1. **관측은 판정이 일어난 자리에서 적는다.** 04 가 dispatch 직후
+   `s["phases"]["04-gate"]["attribution_rules"]` 에 합집합으로 쌓는다. 완주 런을 나중에 긁는 스캐너를 만들지
+   않는다 — `gates/gr-N.dispatch.json` 을 여러 런에 걸쳐 읽는 선례가 없고, 이 자리에 적으면 **`--replay` 가 공짜로
+   따라온다**(러너만 갈아끼우고 귀속은 그대로 돈다). 보관된 실물 출력을 되먹이는 것은 지어낸 실패가 아니다.
+2. **무엇이 관측인가는 순수 함수가 정한다.** `attribution.rules_fired(adapter, failures)` 가 실패 기록의
+   **기존 필드만** 보고 집합을 낸다 — `kind == "compile"` 이면 `compile_error_regex`, 거기에 `in_contract` 면
+   `symbol_not_found_patterns`, 테스트 실패에서 `first_app_frame` 이 값을 내면 `app_frame_prefixes` ·
+   `test_file_globs`. 실패 dict 에 키를 더하지 않는다: 기록의 모양이 곧 replay 픽스처의 모양이다([[ADR-H038]]).
+   **불린 것이 아니라 결정한 것만 센다** — 규칙이 틀려 있어도 같은 결과가 나오는 호출은 증거가 아니다.
+3. **승격 기준에 조건을 더한다(대체가 아니다).** 완주 런 ≥ `min_runs` **그리고** 어댑터가 **선언한** 규칙
+   전부가 관측됐을 때만 올린다. 선언하지 않은 규칙은 돌 수가 없으므로 요구하지 않는다. 미달이면 기존대로 exit 3 이고
+   아무것도 바꾸지 않되 **어느 규칙이 비었는지** 출력한다. 근거는 `_verified_note` 와
+   `calibration.adapter_verified_source.rules` 에 굳힌다(`_workspace/` 는 로컬 자료라서 — [[ADR-H047]]).
+4. **`adapter_unverified` 를 `NON_DEMOTING_GAPS` 로 내린다.** `gaps[]` 에는 남아 보고서·PR 본문이 이름을 적되
+   등급을 깎지 않는다. 「아직 안 겪어봤다」는 표시이지 이번 런의 결함이 아니다 — H047 결정 2 가 만든 채널의
+   본래 용법이다. 이것이 H047 이 기준을 낮춰서 풀려 한 문제를 기준을 낮추지 않고 푼다.
+5. **`attribution_unparsed` 는 강등하는 gap 이다.** `kind: "stage"` 대체 기록이 하나라도 있으면 그 런에서 귀속
+   파싱이 실패한 것이다. 결정 4 와 정반대 방향이고 그게 의도다 — **소음은 줄이고 경보는 늘린다.**
+
+**트레이드오프**: 기준이 엄해져서 `verified: true` 가 영영 안 올 수 있다. `symbol_not_found_patterns` 는 impl 이
+계약 시그니처를 어겨 테스트가 컴파일조차 안 될 때만 도는데, 19런 동안 없었다. 그래도 지우지 않는다 — 0회는
+「쓸모없다」가 아니라 「아직 안 왔다」이고, 이것이 없으면 그 실패가 고칠 수 없는 역할로 간다(클론의 FR-020 런이
+`ambiguous → impl` 오배정으로 라운드 하나를 태웠다). ROADMAP §6 은 이미 `false` 를 실패가 아니라 **기본 상태**로
+설계했다. 관측은 `_workspace/` 에 있어 새 클론에서 0 으로 시작한다 — 기존 기준과 같은 성질이라 나빠지는 것은 없다.
+결정 1 은 04 가 런 state 에 키를 하나 더 쓴다는 뜻이다.
+
+**재검토 시점**: 클론의 다음 5런. `attribution_rules` 가 실제로 채워지는지, `attribution_unparsed` 가 한 번이라도
+잡히는지를 본다. 5런 뒤에도 전부 비어 있으면 관측 지점이 틀린 것이다.
+
+관련: [[ADR-H047]](완주 런으로 올리던 기준) · [[ADR-H067]](관측만 하는 채널) · [[ADR-H038]](replay 픽스처)
 
 ---
 

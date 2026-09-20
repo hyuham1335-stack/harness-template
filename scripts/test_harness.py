@@ -632,9 +632,16 @@ class VerifyAdapterTest(DoctorTestBase):
             "measured_at": "2026-01-01T00:00:00+0900", "adapter": "nextjs-ts",
             "adapter_verified": False, "stages": {}, "derived": {}}))
 
-    def _run(self, run_id, adapter="nextjs-ts", statuses=None):
+    # 어댑터가 선언한 귀속 규칙 전부. 이름은 어댑터 필드명과 같은 어휘다
+    # (`attribution.RULE_NAMES`) — 여기 박아 두는 것이 그 어휘를 잠근다.
+    RULES = ["app_frame_prefixes", "compile_error_regex",
+             "symbol_not_found_patterns", "test_file_globs"]
+
+    def _run(self, run_id, adapter="nextjs-ts", statuses=None, rules=None):
         ph = {pid: {"status": (statuses or {}).get(pid, "passed")}
               for pid in self.PHASES}
+        ph["04-gate"]["attribution_rules"] = list(
+            self.RULES if rules is None else rules)
         _write(self.root / "_workspace" / "runs" / run_id / "state.json",
                json.dumps({"run_id": run_id, "run_status": "done",
                            "closed_at": "2026-02-01T00:00:00+0900",
@@ -677,6 +684,45 @@ class VerifyAdapterTest(DoctorTestBase):
     def test_기준은_인자로_낮출_수_있다(self):
         self._run("r0")
         self.assertEqual(0, harness.run_verify_adapter(self.root, min_runs=1))
+        self.assertTrue(self.adapter()["verified"])
+
+    def test_규칙이_하나라도_안_돌았으면_안_올린다(self):
+        """[[ADR-H069]] — 완주 횟수는 실패 경로의 근거가 아니다.
+
+        귀속 필드는 **실패를 분류할 때만** 불린다. 무사히 끝난 런은 그 경로가
+        한 번도 안 불렸다는 뜻이다.
+        """
+        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
+            self._run("r%d" % i, rules=[r for r in self.RULES
+                                        if r != "symbol_not_found_patterns"])
+        self.assertEqual(3, harness.run_verify_adapter(self.root))
+        self.assertFalse(self.adapter()["verified"])
+        self.assertFalse(self._load("harness/calibration.json")["adapter_verified"])
+
+    def test_관측은_런을_가로질러_합쳐진다(self):
+        """한 런이 규칙 전부를 겪을 필요는 없다 — 드문 경로가 섞여 차기도 한다."""
+        for i, rule in enumerate(self.RULES):
+            self._run("r%d" % i, rules=[rule])
+        self.assertEqual(0, harness.run_verify_adapter(self.root))
+        self.assertTrue(self.adapter()["verified"])
+
+    def test_노트가_관측된_규칙을_적는다(self):
+        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
+            self._run("r%d" % i)
+        harness.run_verify_adapter(self.root)
+        note = self.adapter()["_verified_note"]
+        for rule in self.RULES:
+            self.assertIn(rule, note)
+
+    def test_선언하지_않은_규칙은_요구하지_않는다(self):
+        """그 스택에 없는 규칙을 기다리면 영영 안 올라간다."""
+        ad = self.adapter()
+        ad["attribution"]["symbol_not_found_patterns"] = []
+        self.save_adapter(ad)
+        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
+            self._run("r%d" % i, rules=[r for r in self.RULES
+                                        if r != "symbol_not_found_patterns"])
+        self.assertEqual(0, harness.run_verify_adapter(self.root))
         self.assertTrue(self.adapter()["verified"])
 
 

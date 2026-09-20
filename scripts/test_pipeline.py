@@ -3228,6 +3228,66 @@ def _gate(repo, fixture, **kw):
     return cli.run_gate_cmd(repo, phase="04", replay=str(fixture), **kw)
 
 
+class TestRulesFired:
+    """어떤 어댑터 규칙이 **판정을 냈는가** — 불린 것과 결정한 것은 다르다.
+
+    banana 19런의 실패 기록 21건은 전부 프레임이 테스트 파일이라
+    `first_app_frame` 이 늘 `None` 이었다. 규칙은 불렸지만 아무것도 결정하지
+    않았고, 그런데도 `verified` 가 올라갔다 ([[ADR-H069]]).
+    """
+
+    def test_컴파일_기록은_정규식이_매칭됐다는_증거다(self, repo, config):
+        _c, adapter, _cal = adapters.load(repo)
+        log = "src/lib/match.ts(9,3): error TS2322: Type 'string' is not assignable."
+        got = attr.attribute_compile(adapter, config, set(), log)
+        assert attr.rules_fired(adapter, got) == {"compile_error_regex"}
+
+    def test_심볼_강제는_따로_센다(self, repo, config):
+        _c, adapter, _cal = adapters.load(repo)
+        log = ("src/lib/match.test.ts(3,10): error TS2305: "
+               "Module './match' has no exported member 'matchTitle'.")
+        got = attr.attribute_compile(adapter, config, {"matchTitle"}, log)
+        assert attr.rules_fired(adapter, got) == {"compile_error_regex",
+                                                  "symbol_not_found_patterns"}
+
+    def test_앱_프레임이_잡혀야_접두와_glob_이_결정한_것이다(self, repo, config):
+        """단언이 아닌 예외 + 앱 프레임 — `first_app_frame` 이 값을 내는 유일한 경로."""
+        _c, adapter, _cal = adapters.load(repo)
+        units = [{"unit": "u", "file": "src/lib/match.test.ts", "ftype": "TypeError",
+                  "message": "boom", "detail": "at src/lib/match.ts:4"}]
+        got = attr.attribute_tests(adapter, config, set(), units,
+                                   repo_files=["src/lib/match.ts",
+                                               "src/lib/match.test.ts"])
+        assert attr.rules_fired(adapter, got) == {"app_frame_prefixes",
+                                                  "test_file_globs"}
+
+    def test_테스트_프레임만_있으면_아무것도_결정하지_않았다(self, repo, config):
+        """banana 21건이 전부 이 모양이었다 — 관측 0 이어야 한다."""
+        _c, adapter, _cal = adapters.load(repo)
+        units = [{"unit": "u", "file": "src/lib/match.test.ts",
+                  "ftype": "AssertionError", "message": "expected 1 to be 0",
+                  "detail": "at src/lib/match.test.ts:9"}]
+        got = attr.attribute_tests(adapter, config, set(), units,
+                                   repo_files=["src/lib/match.test.ts"])
+        assert attr.rules_fired(adapter, got) == set()
+
+    def test_못_읽은_대체_기록은_규칙이_아니다(self, repo):
+        _c, adapter, _cal = adapters.load(repo)
+        assert attr.rules_fired(adapter, [{"kind": "stage", "frames": []}]) == set()
+
+    def test_실패가_없으면_증거도_없다(self, repo):
+        _c, adapter, _cal = adapters.load(repo)
+        assert attr.rules_fired(adapter, []) == set()
+
+    def test_어댑터가_선언하지_않은_규칙은_관측되지_않는다(self, repo):
+        """선언이 없으면 그 규칙은 돌 수가 없다 — 관측에도 나오면 안 된다."""
+        _c, adapter, _cal = adapters.load(repo)
+        adapter["attribution"] = dict(adapter["attribution"])
+        adapter["attribution"]["symbol_not_found_patterns"] = []
+        got = attr.rules_fired(adapter, [{"kind": "compile", "in_contract": True}])
+        assert got == {"compile_error_regex"}
+
+
 class TestGateLoopStage:
     """**05 의 재게이트는 04 보다 약하지 않다** (ADR-H046).
 
@@ -3389,6 +3449,55 @@ class TestGateReplay:
         env = _gate(repo, fx)
         assert env["exit"] == 4
         assert env["data"]["repair_dispatch"]["owner"] == "impl"
+
+
+    def test_귀속_규칙_관측이_런에_남는다(self, gated, fxdir):
+        """승격 판정의 증거는 **판정이 일어난 순간**에 적힌다 ([[ADR-H069]]).
+
+        완주 런을 나중에 긁는 대신 여기서 적으면 `--replay` 가 공짜로 따라온다
+        — 러너만 갈아끼우고 귀속은 그대로 돌기 때문이다.
+        """
+        repo, paths, s = gated
+        stages = dict(ALL_PASS, compile={"exit": 2})
+        log = ("src/lib/match.test.ts(3,10): error TS2305: "
+               "Module './match' has no exported member 'matchTitle'.")
+        fx = make_fixture(fxdir, "rules-observed", stages, stdouts={"compile": log})
+        _gate(repo, fx)
+        _, after = st.load(repo, paths.run_id)
+        got = (after["phases"]["04-gate"] or {}).get("attribution_rules")
+        assert got == ["compile_error_regex", "symbol_not_found_patterns"], got
+
+    def test_규칙_관측은_회차를_거듭해도_중복되지_않는다(self, gated, fxdir):
+        repo, paths, s = gated
+        stages = dict(ALL_PASS, compile={"exit": 2})
+        log = "src/lib/match.ts(9,3): error TS2322: Type 'string' is not assignable."
+        fx = make_fixture(fxdir, "rules-twice", stages, stdouts={"compile": log})
+        _gate(repo, fx)
+        _gate(repo, fx)
+        _, after = st.load(repo, paths.run_id)
+        assert after["phases"]["04-gate"]["attribution_rules"] == ["compile_error_regex"]
+
+    def test_통과한_회차는_관측을_남기지_않는다(self, gated, fxdir):
+        """실패가 없었던 것과 규칙이 돌았다는 것은 다른 사실이다."""
+        repo, paths, s = gated
+        _gate(repo, make_fixture(fxdir, "rules-pass", dict(ALL_PASS)))
+        _, after = st.load(repo, paths.run_id)
+        assert (after["phases"]["04-gate"] or {}).get("attribution_rules") == []
+
+    def test_실패_항목을_못_읽으면_gap_이_붙는다(self, gated, fxdir):
+        """파싱이 깨져도 게이트는 멈추지 않는다 — 표시가 없으면 조용히 산다.
+
+        2026-09-03 에 `compile_error_regex` 가 실물 출력에 0건 매칭이던 버그가
+        오래 살아남은 구조가 이것이다 ([[ADR-H069]]).
+        """
+        repo, paths, s = gated
+        stages = dict(ALL_PASS, lint={"exit": 1})
+        fx = make_fixture(fxdir, "unparsed", stages,
+                          stdouts={"lint": "무엇인지 알 수 없는 출력"})
+        _gate(repo, fx)
+        _, after = st.load(repo, paths.run_id)
+        assert "attribution_unparsed" in (after.get("gaps") or []), after.get("gaps")
+        assert after["grade"] == "PASS_WITH_GAPS"
 
     def test_scoped_selector_is_a_path_not_a_test_name(self, gated, fxdir):
         """M16 — 이름 필터는 파일 수집을 줄이지 못한다."""
@@ -6621,11 +6730,11 @@ class TestStageNotApplicable:
 
     NA = {"cmd": None, "not_applicable": "문서 빌드 산출물이 없다."}
 
-    def _adapter(self, repo, **stages):
+    def _adapter(self, repo, verified=True, **stages):
         p = repo / "harness" / "adapters" / "nextjs-ts.json"
         ad = json.loads(p.read_text(encoding="utf-8"))
         ad["stages"].update(stages)
-        ad["verified"] = True
+        ad["verified"] = verified
         p.write_text(json.dumps(ad, ensure_ascii=False), encoding="utf-8")
 
     def test_선언이_있으면_na_이고_없거나_비면_absent_다(self):
@@ -6643,6 +6752,8 @@ class TestStageNotApplicable:
         assert rep_mod.is_non_demoting("stage_na:docs")
         assert rep_mod.is_non_demoting("calibration_stale")
         assert not rep_mod.is_non_demoting("stage_absent:e2e")
+        assert rep_mod.is_non_demoting("adapter_unverified"), "[[ADR-H069]]"
+        assert not rep_mod.is_non_demoting("attribution_unparsed"),             "파싱이 깨진 것은 표시가 아니라 결함이다"
         assert rep_mod.gap_reason("stage_na:docs"), "어휘에 있어야 보고서가 설명한다"
 
     def test_게이트는_stage_na_만으로_등급을_내리지_않는다(self, gated, fxdir,
@@ -6661,6 +6772,24 @@ class TestStageNotApplicable:
         assert "stage_absent:docs" not in report["gaps"]
         assert [g for g in report["gaps"] if not rep_mod.is_non_demoting(g)] == [], \
             report["gaps"]
+        assert report["grade"] == "PASS", report["gaps"]
+
+
+    def test_미검증_어댑터는_이름만_남기고_등급을_안_깎는다(self, gated, fxdir,
+                                                     monkeypatch):
+        """[[ADR-H069]] — [[ADR-H047]] 은 **바로 이 압력 때문에** 승격 기준을 낮췄다.
+
+        기준을 낮추는 대신 gap 을 비강등으로 내린다. `verified: false` 는
+        「아직 안 겪어봤다」는 표시이지 이번 런의 결함이 아니다.
+        """
+        repo, paths, s = gated
+        monkeypatch.setattr(contract_mod, "DEGENERATE_RATIO", 2.0)
+        self._adapter(repo, verified=False, e2e=dict(self.NA), docs=dict(self.NA),
+                      build={"cmd": ["run", "build"]})
+        _gate(repo, make_fixture(fxdir, "unverified-pass", dict(ALL_PASS)))
+        report = json.loads((paths.run_dir / "04_gate_report.json")
+                            .read_text(encoding="utf-8"))
+        assert "adapter_unverified" in report["gaps"], "이름은 남아야 한다"
         assert report["grade"] == "PASS", report["gaps"]
 
     def test_PR_본문의_건너뛴_게이트에_남는다(self, repo, request_file, phases):
