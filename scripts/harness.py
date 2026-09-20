@@ -523,9 +523,11 @@ def _check_adapter(root, config, report):
             stale.append(other.name)
     notes = []
     if not adapter.get("verified"):
-        notes.append("verified:false 다 — 실제 프로젝트에서 어댑터를 소비하는 게이트로 "
-                     "완주시킨 뒤에만 true 로 올린다. 지금은 정적으로 검사한 것까지만 참이다. "
-                     "완주 런이 %d 이상이면 `python scripts/harness.py verify-adapter` 로 올린다."
+        notes.append("verified:false 다 — 지금은 정적으로 검사한 것까지만 참이다. "
+                     "완주 런 %d 이상 **그리고** 어댑터가 선언한 귀속 규칙이 전부 실물 "
+                     "실패에서 판정을 낸 뒤에 `python scripts/harness.py verify-adapter` "
+                     "가 올린다 (ADR-H069). 완주만으로는 올라가지 않는다 — 그 필드들은 "
+                     "실패를 분류할 때만 불린다."
                      % ADAPTER_VERIFY_MIN_RUNS)
     if stale:
         notes.append("다른 어댑터가 스키마를 어긴다: %s" % ", ".join(stale))

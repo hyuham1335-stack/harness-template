@@ -752,10 +752,19 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
         notes.append("**어댑터가 `verified: false` 다** — 실패 경로가 실물에서 "
                      "돈 적이 없다. 이 런의 초록불은 그만큼만 말한다.")
         ready = data.get("adapter_verify") or {}
-        if ready.get("qualified", 0) >= ready.get("min_runs", 1) > 0:
-            notes.append("**기준 충족** — 전 페이즈 passed 완주 런 %d / 기준 %d. "
+        missing = ready.get("rules_missing") or []
+        if missing:
+            # 완주 수만 보고 "명령 한 번만 치면 된다" 고 적으면 거짓말이다 —
+            # 그 상태로 치면 exit 3 이다 (ADR-H069).
+            notes.append("**귀속 규칙이 아직 판정을 낸 적 없다** — %s. "
+                         "이 규칙이 실물 실패에서 한 번 돌면 `verify-adapter` 가 "
+                         "근거와 함께 올린다." % ", ".join("`%s`" % m for m in missing))
+        elif ready.get("qualified", 0) >= ready.get("min_runs", 1) > 0:
+            notes.append("**기준 충족** — 전 페이즈 passed 완주 런 %d / 기준 %d 이고 "
+                         "귀속 규칙이 전부 실물에서 판정을 냈다. "
                          "`python scripts/harness.py verify-adapter` 로 올린다 "
-                         "(ADR-H047 결정 3)." % (ready["qualified"], ready["min_runs"]))
+                         "(ADR-H047 결정 3 · ADR-H069)." % (ready["qualified"],
+                                                           ready["min_runs"]))
     if "calibration_stale" in gaps:
         notes.append("**측정 뒤 완주 런이 기준 이상 쌓였다** (`calibration_stale`) — "
                      "다음 런 전에 `python scripts/harness.py calibrate` 로 다시 "

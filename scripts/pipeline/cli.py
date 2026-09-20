@@ -4890,9 +4890,12 @@ def run_report(root, out=None, run_id=None):
     # `verify-adapter` 기준 충족도 기계 사실이다 — 보고서가 말하지 않으면
     # 기준을 넘은 뒤에도 `adapter_unverified` 가 영구 gap 으로 남는다.
     if not _adapter.get("verified"):
+        _missing = (harness.required_rules(_adapter)
+                    - harness.observed_rules(root, _config.get("adapter")))
         data["adapter_verify"] = {
             "qualified": len(harness.qualified_runs(root, _config.get("adapter"))),
-            "min_runs": harness.ADAPTER_VERIFY_MIN_RUNS}
+            "min_runs": harness.ADAPTER_VERIFY_MIN_RUNS,
+            "rules_missing": sorted(_missing)}
     # 소요는 `events.jsonl` 의 유도값이고, 08 시점에 그 파일은 이미 완결이다
     # — 미완 구간이 없다. 비용은 그 반대라 **있으면** 적고 아니면 `미계측` 이다
     # (ADR-H032 · ADR-H052 결정 2).
