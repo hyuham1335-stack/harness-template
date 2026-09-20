@@ -703,7 +703,8 @@ def _out_of_contract(root, adapter, parsed, changed, primary):
         text = _added_lines(root, rel)
         if text is None:
             continue
-        at_entrypoint = bool(implied) and contract_mod.is_entrypoint_file(adapter, rel)
+        # 진입점 맵 밖의 관례 파일(화면·레이아웃)도 같은 면제를 받는다 (백로그 24).
+        at_entrypoint = bool(implied) and contract_mod.is_convention_file(adapter, rel)
         for m in rx.finditer(text):
             name = m.group("name")
             if name in known:

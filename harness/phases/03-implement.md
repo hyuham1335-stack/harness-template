@@ -24,8 +24,8 @@
     {"id": "dispatched_roles", "from": "config.roles[].when_contract_section",
      "claims": "${run.dir}/03_claims.json", "on_fail": 8},
     {"id": "rules_read_sha", "from": "config.project.instruction_file",
-     "and": "config.project.rules_dir", "claims": "${run.dir}/03_claims.json",
-     "on_fail": 8},
+     "and": "config.project.rules_dir", "except": "config.project.rules_exclude",
+     "claims": "${run.dir}/03_claims.json", "on_fail": 8},
     {"id": "clean_ownership", "from": "config.roles",
      "except": "config.main_owned_paths",
      "claims": "${run.dir}/03_claims.json", "on_fail": 8},
@@ -69,9 +69,9 @@
    아무것도 못 찾고 통과한다.
    **`## 유닛`·`## 진입점` 은 최상위 `- ` 불릿 하나에 항목 하나다.** `### `
    헤딩·들여쓴 불릿·산문은 파서가 유닛으로 세지 않는다 — 유닛이 0 인 계약은
-   `record` 가 exit 8 로 거부한다 (ADR-H049). 라우트 파일이 관례로 내보내는
-   `POST`·`maxDuration` 같은 이름은 어댑터 `implied_exports` 가 말하므로
-   유닛에 다시 적지 않는다. 진입점 경로의 파라미터는 `{id}` 로 적어도
+   `record` 가 exit 8 로 거부한다 (ADR-H049). 관례 파일(어댑터의 진입점 맵과
+   `convention_globs`)이 스택 관례로 내보내는 이름은 어댑터 `implied_exports` 가
+   말하므로 유닛에 다시 적지 않는다. 진입점 경로의 파라미터는 `{id}` 로 적어도
    어댑터 `param_styles` 가 실제 폴더명(`[id]`)으로 찾는다.
    **`## 여정` 은 어댑터에 e2e 스테이지가 있고, 이 런으로 PRD 유저 스토리 하나의 AC 가
    전부 충족될 때만 1개다. 그 밖에는 "없음" 이다.** 형식은 유닛과 같은 `스펙 파일 · 여정
@@ -126,12 +126,14 @@
 
 ## 읽을 곳
 - {config.project.instruction_file}
-- {config.project.rules_dir}/ 의 직속 .md
+- {config.project.rules_dir}/ 의 직속 .md — 단 {config.project.rules_exclude} 는 뺀다
 - 계약 파일 (위)
 - .claude/agent-memory/{role.id}/
 
 위 두 줄의 파일은 **읽은 뒤 sha256 을 계산해** 제출의 `rules_read` 에
 `{path, sha256}` 로 적는다 — 게이트가 현재 해시와 대조한다 (ADR-H055).
+`rules_exclude` 는 하네스 자신이 쓰는 산출물이라 규칙이 아니다 — 대조 대상이
+아니고, 읽을 필요도 없다.
 
 ## 제출
 {역할별 JSON — 아래 제출 형식}

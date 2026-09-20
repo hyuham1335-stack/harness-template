@@ -1927,6 +1927,100 @@ class TestCrossVerifySource:
         assert any("plan-reviewer" in (c.get("message") or "") for c in bad), bad
 
 
+class TestCrossVerifyChecksMatchThePrompt:
+    """미구현 백로그 21 — 02 의 프롬프트와 검사기가 같은 문서를 가리킨다.
+
+    `02-cross-verify.md` 는 `quote` 를 **리뷰어 자신의 `.raw.md`** 부분문자열로
+    요구하는데 `_record_02` 는 **`01_plan.md`** 와 대조했다. 프롬프트대로 쓰면
+    findings 수만큼 실패한다 — 클론 4런에서 02 가 돈 3런 중 2런이
+    `check_fail {"errors": 5}` → `format_reject` → 재제출이었다.
+
+    **검사기 쪽이 맞다.** 02 의 `produces` 에 raw 가 없어 raw 대조는 애초에
+    기계가 못 하고, 02 의 primary 는 MCP 도구라 그 프롬프트를 우리가 못 고친다 —
+    그 도구는 플랜 텍스트를 받아 리뷰하므로 quote 가 플랜에서 나온다.
+    그래서 **프롬프트를 검사기에 맞춘다.**
+    """
+
+    def _phase_text(self):
+        return (ROOT / "harness" / "phases" / "02-cross-verify.md").read_text(
+            encoding="utf-8")
+
+    def test_페이즈_파일이_플랜_원문을_인용하라고_적는다(self):
+        text = self._phase_text()
+        assert "01_plan.md" in text, \
+            "무엇을 인용하라는 것인지 프롬프트가 이름으로 말해야 한다"
+        assert "이 원문의 **부분문자열**" not in text, \
+            "리뷰어 자신의 원문을 가리키면 `_record_02` 와 다른 문서다"
+
+    def test_페이즈_파일이_기계가_못_하는_검사를_약속하지_않는다(self):
+        """`produces` 에 raw 가 없어 헤딩 개수 대조는 실행기가 할 수 없다.
+        선언만 있고 코드가 안 읽는 것이 이 하네스가 가장 싫어하는 모양이다."""
+        text = self._phase_text()
+        assert "헤딩 개수와 `findings` 개수가 같아야 한다" not in text
+        assert "`.raw.md` 대조에서 잡힌다" not in text
+
+    def test_교차검증기_지시가_02_에서는_플랜을_인용하게_한다(self):
+        """`plan-reviewer` 는 01 과 공유다 — 01 은 raw 대조가 맞으므로
+        통째로 바꾸지 않고 02 분기를 더한다."""
+        text = (ROOT / ".claude" / "agents" / "plan-reviewer.md").read_text(
+            encoding="utf-8")
+        assert "raw 원문의 부분문자열" in text, "01 의 규칙은 그대로다"
+        assert "02" in text and "01_plan.md" in text, \
+            "02 로 불렸을 때 무엇을 인용할지 적혀 있어야 한다"
+
+
+class TestCrossVerifyVocabulary:
+    """미구현 백로그 21 곁가지 — 02 가 `mode`·`severity` 어휘를 검사하지 않았다.
+
+    `_record_02` 는 `verdict.check_review` 를 부르지 않는다. 그럴 수도 없다 —
+    그 함수는 `raw_text` 를 필수로 받아 quote 대조와 **헤딩 개수 대조**를
+    내장하고, 02 는 raw 를 산출물로 받지 않아 `01_plan.md` 를 넘길 수밖에 없다.
+    그러면 헤딩이 0개라 findings 가 하나만 있어도 전 제출이 exit 8 이다.
+    어휘 검사만 떼어내 두 자리가 같은 것을 말하게 한다.
+    """
+
+    def _submit(self, repo, paths, payload):
+        v = paths.run_dir / "02_verdict.json"
+        v.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return cli.run_record(repo, phase="02", file=str(v), reviewer=None,
+                              round_=None)
+
+    def _converge_01(self, repo, paths):
+        _submit_plan(repo, paths, _risky_plan("schema"))
+        return _submit_review(repo, paths, _review("plan"))
+
+    def test_어휘_검사는_하나의_함수다(self):
+        assert cli.verdict.check_vocabulary({"reviewer": "xv", "mode": "primary",
+                                    "findings": []}) == []
+        assert cli.verdict.check_vocabulary({"reviewer": "main"}), "작성자 자기 리뷰"
+        assert cli.verdict.check_vocabulary({"reviewer": "xv", "mode": "secondary"})
+        assert cli.verdict.check_vocabulary(
+            {"reviewer": "xv", "findings": [{"id": "F-1", "severity": "blocker"}]})
+
+    def test_02_가_어휘_밖_mode_를_되돌린다(self, run01):
+        repo, paths, s = run01
+        self._converge_01(repo, paths)
+        env = self._submit(repo, paths, {"reviewer": "xv", "mode": "secondary",
+                                         "status": "ok", "findings": [],
+                                         "adopted": [], "resolved_from_previous": []})
+        assert env["exit"] == 8, (env["exit"], env.get("render"))
+        assert any("mode" in e for e in (env.get("data") or {}).get("errors") or []), \
+            env.get("data")
+
+    def test_02_가_어휘_밖_severity_를_되돌린다(self, run01):
+        repo, paths, s = run01
+        self._converge_01(repo, paths)
+        env = self._submit(repo, paths, {
+            "reviewer": "xv", "mode": "primary", "status": "ok",
+            "findings": [{"id": "F-1", "severity": "blocker", "title": "x"}],
+            "adopted": [{"id": "F-1", "verdict": "accept"}],
+            "resolved_from_previous": []})
+        assert env["exit"] == 8, (env["exit"], env.get("render"))
+        assert any("severity" in e
+                   for e in (env.get("data") or {}).get("errors") or []), \
+            env.get("data")
+
+
 class TestCrossVerifyTransientFailure:
     """primary 가 **있는데 지금 응답을 못 하는 것**은 부재가 아니다.
 
@@ -2636,6 +2730,47 @@ class TestRecord03RulesRead:
         got = [e for e in st.read_events(paths)
                if e["kind"] == "check_fail" and e["data"].get("rules_read")]
         assert got, "무엇이 빠졌는지가 원장에 있어야 한다"
+
+    def test_하네스_자신이_쓰는_파일은_규칙_집합에_없다(self, repo):
+        """미구현 백로그 23 — `docs/PIPELINE-LOG.md` 는 `/log` 가 쓰는 파일이다.
+
+        `rules_dir` 직속 `*.md` 를 통째로 규칙으로 보면 **하네스 자신의 쓰기**가
+        모든 역할의 증명을 무효로 만든다. 제외 목록은 config 가 정한다 —
+        클론이 자기 파일을 더할 수 있어야 하기 때문이다.
+        """
+        (repo / "docs").mkdir(exist_ok=True)
+        (repo / "docs" / "PRD.md").write_text("# PRD\n", encoding="utf-8")
+        (repo / "docs" / "PIPELINE-LOG.md").write_text("# 로그\n", encoding="utf-8")
+        config = harness._read_json(repo / harness.CONFIG_REL)
+        assert "docs/PIPELINE-LOG.md" in (config["project"]["rules_exclude"]), \
+            config["project"]
+        got = cli._rules_read_expected(repo, config)
+        assert set(got) == {"CLAUDE.md", "docs/PRD.md"}, got
+
+    def test_런_중_log_가_돌아도_제출이_통과한다(self, repo, request_file, phases,
+                                                monkeypatch):
+        """`/log` 한 번이 모든 역할의 증명을 무효로 만들던 경로다 (백로그 23).
+
+        실측: 클론 4런 중 2런이 `rules_read` 사유로 `format_reject`.
+        """
+        (repo / "docs").mkdir(exist_ok=True)
+        (repo / "docs" / "PIPELINE-LOG.md").write_text("# 로그\n", encoding="utf-8")
+        run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
+        _assert_error_in_tests(repo)
+        rr = _rules_read(repo)
+        (repo / "docs" / "PIPELINE-LOG.md").write_text(
+            "# 로그\n\n## 5. 발생한 문제와 해결\n\n- 한 줄 승격\n", encoding="utf-8")
+        env = self._submit(repo, run_id, claims, _claims(
+            test=["src/lib/match.test.ts"], rules_read=rr))
+        assert env["exit"] != 8, env["render"]
+
+    def test_제외_목록은_지시문_목적지_판정과_같은_출처다(self, repo):
+        """`_instruction_destination` 은 **존재가 아니라 경로로** 가른다 —
+        집합을 통째로 합치면 그 차이가 지워진다. 공유하는 것은 제외 목록뿐이다."""
+        config = harness._read_json(repo / harness.CONFIG_REL)
+        assert cli._instruction_destination(config, "docs/PRD.md")
+        assert not cli._instruction_destination(config, "docs/PIPELINE-LOG.md"), \
+            "하네스가 쓰는 파일은 지시문 검토가 고칠 곳이 아니다"
 
     def test_03_본문과_에이전트_정의가_같은_것을_말한다(self, repo):
         p03 = (ROOT / "harness" / "phases" / "03-implement.md").read_text(encoding="utf-8")
@@ -5793,6 +5928,78 @@ class TestContractTraceAdapterConventions:
         assert errors == [], errors
 
 
+class TestConventionFilesBeyondTheEntrypointMap:
+    """미구현 백로그 24 — 관례 면제가 **진입점 맵에만** 걸려 있었다.
+
+    [[ADR-H049]] 의 면제는 작동하지만 `is_entrypoint_file()` 이 참일 때만
+    걸리는데 `nextjs-ts` 의 진입점 맵은 API route 하나뿐이다. 그래서 화면
+    파일이 관례로 내보내는 이름이 계약에 없다는 이유로 major 가 됐다 —
+    클론 4런의 `contract-trace` findings 6건 중 5건이 `out_of_contract`
+    major 였고 전부 deferred 로 버려졌다.
+
+    **관례 파일 목록은 어댑터가 선언하고 코어는 읽기만 한다** (ADR-H031 ·
+    ADR-H038). 진입점이 아닌 관례 파일이므로 `is_entrypoint_file` 의 뜻은
+    넓히지 않고 `is_convention_file` 을 따로 둔다.
+
+    **타입 전용 export 는 이 범위 밖이다** — 면제할 것인지 계약이 내부 타입까지
+    열거할 것인지는 결정이 앞선다(백로그 24 본문).
+    """
+
+    PAGE = ("export const dynamic = 'force-dynamic'\n"
+            "export const metadata = {}\n"
+            "export async function generateMetadata() {}\n"
+            "export function generateStaticParams() {}\n"
+            "export const viewport = {}\n"
+            "export default function Page() {}\n")
+
+    def _ooc(self, got):
+        return sorted(f["symbol"] for f in got["findings"]
+                      if f["code"] == "out_of_contract")
+
+    def _write(self, repo, rel, text):
+        f = repo / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+        return rel
+
+    def test_화면_관례_파일의_export_는_한_건도_안_잡힌다(self, repo):
+        rel = self._write(repo, "src/app/items/page.tsx", self.PAGE)
+        got = _trace(repo, _write_contract(repo), changed=[rel])
+        assert self._ooc(got) == [], got["findings"]
+
+    def test_레이아웃도_같다(self, repo):
+        rel = self._write(repo, "src/app/layout.tsx",
+                          "export const metadata = {}\n"
+                          "export default function Layout() {}\n")
+        got = _trace(repo, _write_contract(repo), changed=[rel])
+        assert self._ooc(got) == [], got["findings"]
+
+    def test_관례_파일이_아니면_같은_이름도_잡힌다(self, repo):
+        """면제는 **파일**에 걸린다 — 아무 데서나 `metadata` 를 내보내는 것은 신규 심볼이다."""
+        rel = self._write(repo, "src/lib/meta.ts", "export const metadata = {}\n")
+        got = _trace(repo, _write_contract(repo), changed=[rel])
+        assert self._ooc(got) == ["metadata"], got["findings"]
+
+    def test_어댑터가_관례_글롭을_선언하지_않으면_종전_동작이다(self, repo):
+        rel = self._write(repo, "src/app/items/page.tsx", self.PAGE)
+        config, adapter, _cal = _load(repo)
+        adapter = json.loads(json.dumps(adapter))
+        adapter["entrypoint_resolver"].pop("convention_globs", None)
+        got = tr.run(repo, config, adapter, _write_contract(repo), changed=[rel])
+        assert "dynamic" in self._ooc(got), got["findings"]
+
+    def test_실물_어댑터가_글롭과_이름을_선언한다(self):
+        a = harness._read_json(ROOT / "harness/adapters/nextjs-ts.json")
+        r = a["entrypoint_resolver"]
+        assert r["convention_globs"], r
+        for name in ("metadata", "generateMetadata", "generateStaticParams",
+                     "viewport"):
+            assert name in r["implied_exports"], name
+        errors = harness.validate(
+            a, harness._read_json(ROOT / "harness/adapters/adapter.schema.json"))
+        assert errors == [], errors
+
+
 class TestUntestedEntrypointLink:
     """진입점 폴백은 **그 유닛과 연결된** 진입점만 본다 (G-2).
 
@@ -6507,6 +6714,125 @@ class TestPrecheckBudget:
         got = pc.run(repo, scope="pr")
         assert got["exit"] == 9
         assert got["budget"]["files"] == 11, got["budget"]
+
+
+class TestPrecheckPolicyOverride:
+    """미구현 백로그 26 — 같은 정책을 05·06 에서 두 번 묻지 않는다.
+
+    exit 9 는 상태를 잠그지도 카운터를 쓰지도 않고 오버라이드 플래그도 없었다 —
+    **사람이 「그대로 간다」를 고른 사실이 어디에도 남지 않았다.** §E13 이 재개마다
+    재실행을 요구하므로 06 에서 연속 두 번 묻는 일까지 생긴다. 클론 4런에서
+    3런이 05·06 양쪽에서 exit 9 였고 사람 대기 8.5분이 전체 대기의 30% 였다.
+
+    **검사는 계속 돈다.** 바뀌는 것은 「같은 사유·같은 값이면 다시 묻지 않는다」
+    뿐이고, 넘어간 사실은 `precheck_policy_override` gap 으로 등급이 치른다 —
+    면제는 통과가 아니다 (ADR-H027).
+    """
+
+    def _over(self, repo, files=12):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, files)
+
+    def test_지문이_실패_사유와_값을_담는다(self, repo):
+        self._over(repo)
+        got = pc.run(repo, scope="pr")
+        fp = got["policy_fingerprint"]
+        assert fp["reasons"] == ["예산"], fp
+        assert fp["files"] >= 12 and fp["lines"] >= 12, fp
+
+    def test_통과한_런은_지문이_없다(self, repo):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        got = pc.run(repo, scope="pr")
+        assert got["exit"] == 0 and got["policy_fingerprint"] is None, got
+
+    def test_ack_없이는_종전대로_다시_묻는다(self, repo, request_file):
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        assert cli.run_precheck(repo, scope="pr", phase="05")["exit"] == 9
+        assert cli.run_precheck(repo, scope="pr", phase="06")["exit"] == 9
+
+    def test_ack_한_뒤_같은_지문이면_06_이_묻지_않는다(self, repo, request_file):
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        assert cli.run_precheck(repo, scope="pr", phase="05")["exit"] == 9
+        acked = cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        assert acked["exit"] == 0, acked["render"]
+        env = cli.run_precheck(repo, scope="pr", phase="06")
+        assert env["exit"] == 0, env["render"]
+        assert "precheck_policy_override" in (env["data"].get("gaps") or []), env["data"]
+
+    def test_대기는_런당_한_번뿐이다(self, repo, request_file):
+        """닫힘 조건 — `waiting_human {"reason":"precheck_policy"}` 가 런당 1회 이하."""
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        cli.run_precheck(repo, scope="pr", phase="05")
+        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        cli.run_precheck(repo, scope="pr", phase="06")
+        cli.run_precheck(repo, scope="pr", phase="06")
+        paths, _ = st.load(repo)
+        waits = [e for e in st.read_events(paths)
+                 if e["kind"] == "waiting_human"
+                 and e["data"]["reason"] == "precheck_policy"]
+        assert len(waits) == 1, waits
+
+    def test_값이_나빠지면_다시_묻는다(self, repo, request_file):
+        """오버라이드는 사람이 본 범위까지다 — 더 커진 것은 사람이 안 본 것이다."""
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        cli.run_precheck(repo, scope="pr", phase="05")
+        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        _bulk_change(repo, 30)
+        assert cli.run_precheck(repo, scope="pr", phase="06")["exit"] == 9
+
+    def test_새_사유가_붙으면_다시_묻는다(self, repo, request_file):
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        cli.run_precheck(repo, scope="pr", phase="05")
+        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        _git(repo, "checkout", "-q", "main")
+        env = cli.run_precheck(repo, scope="pr", phase="06")
+        assert env["exit"] == 9, env["render"]
+
+    def test_넘어간_사실이_등급을_내린다(self, repo, request_file):
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        cli.run_precheck(repo, scope="pr", phase="05")
+        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        _, s = st.load(repo)
+        assert s["grade"] == st.GRADES[1], s["grade"]
+        assert "precheck_policy_override" in (s.get("gaps") or []), s.get("gaps")
+
+    def test_ack_는_통과한_런에서는_아무것도_안_남긴다(self, repo, request_file):
+        """넘길 것이 없는데 오버라이드를 적으면 다음 초과를 조용히 삼킨다."""
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        cli.run_init(repo, "x", request_file)
+        env = cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        assert env["exit"] == 0
+        _, s = st.load(repo)
+        assert not (s.get("precheck") or {}).get("policy_override"), s.get("precheck")
+
+    def test_봉투가_고르는_법을_이름으로_알려준다(self, repo, request_file):
+        """사람에게 선택지를 주면서 그것을 못박는 법을 안 적으면 아무도 안 쓴다."""
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        env = cli.run_precheck(repo, scope="pr", phase="05")
+        assert "--ack-policy" in env["render"], env["render"]
+
+    def test_넘어간_런의_봉투가_프로브_면제로_읽히지_않는다(self, repo, request_file):
+        self._over(repo)
+        cli.run_init(repo, "x", request_file)
+        cli.run_precheck(repo, scope="pr", phase="05")
+        env = cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
+        assert "면제된 프로브" not in env["render"], env["render"]
+        assert "통과가 아니라" in env["render"], env["render"]
+
+    def test_gap_이_이름으로_설명된다(self):
+        import report as rep
+        assert rep.gap_reason("precheck_policy_override"), \
+            "어휘에 없으면 보고서와 PR 본문이 설명하지 못한다"
+        assert not rep.is_non_demoting("precheck_policy_override")
 
 
 class TestPrecheckBranch:
@@ -8630,6 +8956,131 @@ class TestReview05SeverityRaisedGrant:
         node = s["counters"]["review_repair"]
         assert len(node.get("grants") or []) == 1, node
         assert s.get("escalated"), "실효 상한 3 을 다 썼다"
+
+
+class TestEscalationPlansTheDeltaRound:
+    """미구현 백로그 20 — 에스컬레이션 경로도 다음 라운드의 델타를 세우고 간다.
+
+    05 판정의 `escalate` 분기가 `rounds_planned[round+1]` 을 쓰기 **전에**
+    return 해서, 재개된 3라운드가 `_planned_for_round` 의 폴백(전원)을 받았다.
+    클론 4런에서 에스컬레이션 2런 모두 `round_reviewers = {"1":4, "2":1, "3":4}`
+    였고 **r3 수확은 major 0 · critical 0** 인 반면 r2(델타 1인)는 둘 다 major
+    1건을 잡았다 — 좁은 재리뷰는 무는데 넓은 재확인은 안 문다.
+
+    **고칠 곳이 둘이다.** 상태(`rounds_planned`)만 고치면 05 패킷은 여전히
+    라우팅 전원을 이름 짓고 `_planned_guard` 가 그중 셋을 exit 8 로 되돌린다 —
+    봉투와 검사가 같은 것을 봐야 한다 (M38).
+    """
+
+    BLOCK = {"id": "F-1", "category": "TX_BOUNDARY", "severity": "major",
+             "target_role": "impl", "title": "트랜잭션 경계가 없다",
+             "quote": "트랜잭션이 없다"}
+
+    ROUTED = {"reviewers": [{"code": "arch", "skill": "architecture-reviewer",
+                             "matched_count": 1},
+                            {"code": "test", "skill": "test-quality-reviewer",
+                             "matched_count": 1}],
+              "dropped": [], "capped": False}
+
+    def _ready(self, repo, request_file, phases):
+        ldg.seed(repo)
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        cli.run_contract_trace(repo, run_id=run_id)
+        paths, s = st.load(repo, run_id)
+        node = s["phases"]["05-code-review"]
+        node["planned"] = ["arch", "test"]
+        node["routing"] = json.loads(json.dumps(self.ROUTED))
+        node["mode"] = "fanout"
+        st.save(paths, s)
+        return run_id, paths
+
+    def _submit(self, repo, paths, run_id, code, round_, findings, resolved=()):
+        name = ("05_review_%s.json" % code if round_ == 1
+                else "05_review_%s_r%d.json" % (code, round_))
+        j = paths.run_dir / name
+        j.write_text(json.dumps({
+            "reviewer": code, "round": round_, "status": "ok",
+            "by_checklist": {"전부": list(findings)},
+            "resolved_from_previous": list(resolved),
+            "need_more_context": []}, ensure_ascii=False), encoding="utf-8")
+        body = "".join("## %s\n\n%s\n" % (f["severity"], f["quote"])
+                       for f in findings)
+        j.with_name(name.replace(".json", ".raw.md")).write_text(
+            "# 리뷰\n\n" + body, encoding="utf-8")
+        return cli.run_record(repo, "05", str(j), reviewer=code,
+                              round_=round_, run_id=run_id)
+
+    def test_에스컬레이션_뒤_3라운드도_델타_한_명이다(self, repo, request_file,
+                                                    phases):
+        run_id, paths = self._ready(repo, request_file, phases)
+        self._submit(repo, paths, run_id, "arch", 1, [self.BLOCK])
+        env = self._submit(repo, paths, run_id, "test", 1, [])
+        assert env["exit"] == 4, env["render"]
+        _, s = st.load(repo, run_id)
+        node = s["phases"]["05-code-review"]
+        assert node["rounds_planned"]["2"] == ["arch"], node["rounds_planned"]
+
+        self._submit(repo, paths, run_id, "arch", 2, [self.BLOCK])
+        _, s = st.load(repo, run_id)
+        assert s.get("escalated"), "예산 2 를 다 썼으면 에스컬레이션이다"
+        planned = (s["phases"]["05-code-review"].get("rounds_planned") or {}).get("3")
+        assert planned == ["arch"], (
+            "에스컬레이션이 델타를 안 세우면 3라운드가 전원 재팬아웃한다", planned)
+
+    def test_델타_라운드의_패킷은_한_명만_이름_짓는다(self):
+        s = {"counters": {"review_repair": {"used": 2, "max": 2}},
+             "phases": {"05-code-review": {
+                 "mode": "fanout", "planned": ["arch", "test"],
+                 "rounds_planned": {"3": ["arch"]},
+                 "routing": json.loads(json.dumps(self.ROUTED))}}}
+        out = cli._review_render(s)
+        assert "architecture-reviewer" in out, out
+        assert "test-quality-reviewer" not in out, (
+            "부르지 않을 리뷰어를 패킷이 이름 지으면 그 제출이 exit 8 로 튕긴다",
+            out)
+
+    def test_1라운드_패킷은_전원을_이름_짓는다(self):
+        """좁히기는 델타 라운드에만 걸린다 — 1라운드는 키가 없어 전원 폴백이다."""
+        s = {"counters": {},
+             "phases": {"05-code-review": {
+                 "mode": "fanout", "planned": ["arch", "test"],
+                 "routing": json.loads(json.dumps(self.ROUTED))}}}
+        out = cli._review_render(s)
+        assert "architecture-reviewer" in out, out
+        assert "test-quality-reviewer" in out, out
+
+
+class TestEscalationMenuHasTheCommonAnswer:
+    """미구현 백로그 30 — 가장 자주 나오는 답이 메뉴에 있어야 한다.
+
+    05 수리 상한 초과의 선택지는 셋(계약 결함 의심 · 이대로 진행 · 중단)인데
+    **클론 4런의 에스컬레이션 2런 모두 사람이 「기타」를 골랐고**, 그 답은 둘 다
+    「좁게 보강하고 진행」 계열이었다. 메뉴가 실제 답을 담지 않으면 선택지는
+    기록이 아니라 장식이다.
+
+    `options` 는 표시 전용이다 — `state.escalate` 가 `ESCALATION.md` 와 상태에
+    적을 뿐 분기하는 코드가 없다. 그래서 **문자열이 곧 전부**이고, 그 문자열이
+    실제로 사람에게 간다는 것만 통합으로 한 번 확인한다.
+    """
+
+    NARROW = "좁게 보강하고 진행한다"
+
+    def test_메뉴에_좁은_보강이_있다(self):
+        assert any(self.NARROW in o for o in cli.REVIEW_ESCALATION_OPTIONS), \
+            cli.REVIEW_ESCALATION_OPTIONS
+
+    def test_에스컬레이션한_런이_그_메뉴를_받는다(self, repo, request_file, phases):
+        """상수가 실제 에스컬레이션까지 간다 — 선언만 있고 안 쓰이는 것을 막는다."""
+        peer = TestEscalationPlansTheDeltaRound()
+        run_id, paths = peer._ready(repo, request_file, phases)
+        peer._submit(repo, paths, run_id, "arch", 1, [peer.BLOCK])
+        peer._submit(repo, paths, run_id, "test", 1, [])
+        peer._submit(repo, paths, run_id, "arch", 2, [peer.BLOCK])
+        _, s = st.load(repo, run_id)
+        assert s.get("escalated"), s.get("run_status")
+        assert s["escalation"]["options"] == list(cli.REVIEW_ESCALATION_OPTIONS), \
+            s["escalation"]["options"]
 
 
 class TestFormatRejectCount:

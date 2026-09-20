@@ -177,7 +177,7 @@ stdout은 **항상 단일 JSON 봉투 하나**, stderr는 원시 도구 출력. 
 | `retry --phase --counter --reason` | 카운터 증가 + 한계·stuck 강제 | 0 / 7 |
 | `escalate` / `resume --ack --answer-file` | 상태 잠금 / 사람 답변 수용 후 해제 | 10 / 0 |
 | `contract-trace --run-id` | 계약 심볼 ↔ 코드 대조. `no_contract`면 스킵 | 0 / 8 |
-| `precheck --scope pr` | 예산 · 브랜치 · base divergence · 인프라. **05 진입과 06에서 각 1회.** `files_max` 는 어댑터 `attribution.test_file_globs` 에 걸리지 않은 **소스 파일만** 세고(제외 수는 `test_files_excluded`), `lines_max` 는 전체 줄 수다 (ADR-H066) | 0 / 9 / 10 |
+| `precheck --scope pr [--ack-policy]` | 예산 · 브랜치 · base divergence · 인프라. **05 진입과 06에서 각 1회.** `files_max` 는 어댑터 `attribution.test_file_globs` 에 걸리지 않은 **소스 파일만** 세고(제외 수는 `test_files_excluded`), `lines_max` 는 전체 줄 수다 (ADR-H066). `--ack-policy` 는 exit 9 를 낸 그 정책 판단을 사람이 「그대로 간다」로 정했다고 못박는다 — 사유와 값을 `precheck.policy_override` 에 적고 exit 0 + `precheck_policy_override` gap 으로 내려간다 (ADR-H071) | 0 / 9 / 10 |
 | `approve --phase 06 [--revoke] [--auto]` | 승인을 이벤트로 못박고 지문·등급 기록 | 0 / 3 |
 | `mask --file --out` | 외부로 나가는 페이로드 마스킹 | 0 / 1 |
 | `promote --scan/--stage/--apply/--flush` | 재집계 → 적재 → 실제 쓰기 + 자체 게이트 → 잔여 종결 | 0 / 4 / 6 / 8 / 10 (베이스라인·자체 게이트 실행 불가 — **상태를 잠그지 않고** 아무것도 안 쓴다) |
@@ -242,7 +242,9 @@ docs/harness/pipeline/runs/{run_id}.md          # 08 보고서
                        "2":{"planned":1,"ok":1,"failed":[]}},
              "mode":"merged|fanout","major":0,"need_more_context":[],
              "dropped_by_enforcement":0,"truncated":false},
- "precheck":{"at_05":{"files":7,"lines":213,"base_behind":0,"infra":{}},"at_06":{}},
+ "precheck":{"at_05":{"files":7,"lines":213,"base_behind":0,"infra":{}},"at_06":{},
+             "policy_override":{"fingerprint":{"reasons":["예산"],"files":12,"lines":300,"base_behind":0},
+                                "phase":"05-code-review","at":"..."}},
  "phases":{"05-code-review":{"risk_undeclared":["data"]}},
  "repair":{"by_main":2,"by_agent":1,"main_cap":3,"regressions_after_main":0,"escalated_to_agent":false},
  "approval":{"06":{"granted":true,"mode":"user|auto","fingerprint":"…",
@@ -258,7 +260,7 @@ docs/harness/pipeline/runs/{run_id}.md          # 08 보고서
  "calibration":{"present":true,"partial":false,"adapter_verified":false}}
 ```
 
-`precheck.at_05.files` 는 **소스 파일 수**다 — 테스트 제외 수 `test_files_excluded` 는 `phases.<pid>.precheck.budget` 에만 남는다 (ADR-H066). `phases.05-code-review.risk_undeclared` 는 관측 기록이고 등급에 들지 않는다 (ADR-H067).
+`precheck.at_05.files` 는 **소스 파일 수**다 — 테스트 제외 수 `test_files_excluded` 는 `phases.<pid>.precheck.budget` 에만 남는다 (ADR-H066). `phases.05-code-review.risk_undeclared` 는 관측 기록이고 등급에 들지 않는다 (ADR-H067). `precheck.policy_override` 는 사람이 정책 exit 9 를 「그대로 간다」로 정한 사실이고, 그 지문은 **실패 사유 집합과 값**이다 — 같은 사유·같은 값(또는 더 작은 값)이면 다시 묻지 않고, 값이 커지거나 새 사유가 붙으면 다시 묻는다. 넘어간 사실은 `precheck_policy_override` gap 으로 등급이 치른다 (ADR-H071).
 
 **컨텍스트 관리**: 게이트 로그 전문은 파일에만, stdout에는 소유자별 브리프(실패당 60줄 상한)만. 매 `next`의 `render` 헤더에 300자 이내로 재주입(INV 요약 / 소유권 표 / 남은 예산 / 금지 목록). 플랜 갱신은 **전체 재작성이 아니라 부분 편집**으로 해서 전문이 라운드마다 다시 쌓이지 않게 한다.
 
@@ -748,7 +750,7 @@ severity 상승 규칙이 의도 밖에서 발화한다.
 
 | # | 단계 | 실패 시 |
 |---|---|---|
-| 1 | `precheck --scope pr` 재확인 (예산·divergence·마이그레이션·인프라) | 예산 exit 9 / behind exit 9 / 의미 충돌 exit 10 |
+| 1 | `precheck --scope pr` 재확인 (예산·divergence·마이그레이션·인프라) | 예산 exit 9 / behind exit 9 / 의미 충돌 exit 10. **05 에서 `--ack-policy` 로 못박은 것과 같은 사유·같은 값이면 다시 묻지 않는다** (ADR-H071) |
 | 2 | 브랜치 — `${config.vcs.branch_pattern}` 매칭, HEAD가 `config.vcs.protected`에 없음 | exit 3. **브랜치를 자동 생성하지 않는다** |
 | 3 | 원격 브랜치 fetch — non-fast-forward 여부 | non-FF면 **에스컬레이션**(force-push 금지, §E8) |
 | 4 | PR 본문 조립 + `mask` | secret 파일이 없으면 패턴 마스킹만 + 원장 기록 |
@@ -1208,7 +1210,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 ### E13. 재개 불변식
 
 - 각 페이즈는 **선행 산출물 존재를 진입 조건으로 검사**하고 없으면 거부한다.
-- **재개 시 반드시 다시 검사하는 것**: 워크트리 지문 · 계약 파일 sha256(§E3) · `precheck`(예산·divergence는 그 사이 변한다) · PR 상태(§E8).
+- **재개 시 반드시 다시 검사하는 것**: 워크트리 지문 · 계약 파일 sha256(§E3) · `precheck`(예산·divergence는 그 사이 변한다) · PR 상태(§E8). **검사는 재개마다 돌지만 같은 것을 두 번 묻지는 않는다** — 정책 exit 9 를 사람이 `--ack-policy` 로 못박았고 사유·값이 그대로면 `precheck_policy_override` gap 으로 넘어간다 (ADR-H071). 값이 커지거나 새 사유가 붙으면 그것은 사람이 본 적 없는 범위이므로 다시 묻는다.
 - **`record`는 멱등이 아니다.** 이미 `passed`인 페이즈에 다시 `record`하면 **exit 3.** 재작업은 `retry`를 통해서만.
 - **`_workspace/runs/{run_id}/`는 어떤 실패에서도 보존한다.** 성공해도 지우지 않는다. 지우는 것은 계약 파일뿐이고 그것도 06에서 한 번이다.
 - **실행 중 상태를 파일로 외재화한다** — `started_at`만으로는 "돌고 있다"와 "죽었다"가 갈리지 않아 감독하는 쪽이 살아 있는 페이즈의 산출물을 지울 수 있다. 생존 판정은 heartbeat로 하고 stale 임계를 함께 기록한다 ([ADR-H006](../DECISIONS.md)).
@@ -1315,7 +1317,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 
 | 페이즈 | 실패 | 분류 | 대처 |
 |---|---|---|---|
-| 05 | `precheck` 예산 초과(파일 수는 테스트 제외) / base behind | 정책 | **exit 9 즉시 사용자 판단.** 자동 분할·자동 리베이스 금지 |
+| 05 | `precheck` 예산 초과(파일 수는 테스트 제외) / base behind | 정책 | **exit 9 즉시 사용자 판단.** 자동 분할·자동 리베이스 금지. 사람이 「그대로 간다」를 고르면 `--ack-policy` 로 못박는다 — 그래야 06 이 같은 것을 다시 묻지 않는다 (ADR-H071) |
 | 05 | `infra_preflight` 프로브 실패 | infra | 카운터 미소모, 즉시 에스컬레이션. 회귀 전량이 빨간불이 되는 것을 막는다 (§E9) |
 | 05 | 프로브 실패로 스킵된 검증 + 관련 diff 있음 | 비차단 | `PASS_WITH_GAPS` + PR·보고서 명시. `--strict-migration`이면 중단 |
 | 05 | 계약 부재 | — | `no_contract` 모드로 진행, 보고서에 명시 (§E3) |

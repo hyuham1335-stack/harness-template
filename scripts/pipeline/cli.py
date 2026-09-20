@@ -1809,7 +1809,13 @@ def _contract_drift_lines(node, s):
 
 
 def _review_render(s):
-    """봉투가 **누가 리뷰하는지와 무엇이 빠졌는지**를 말한다."""
+    """봉투가 **누가 리뷰하는지와 무엇이 빠졌는지**를 말한다.
+
+    **이 라운드의 계획만 이름 짓는다** (백로그 20). 라우팅은 런 단위로
+    얼어 있고 델타 재리뷰는 그중 한 명이다 — 전원을 나열하면 봉투가 부르는
+    사람과 `_planned_guard` 가 받는 사람이 갈라져 나머지 제출이 exit 8 로
+    튕긴다. 1라운드는 `rounds_planned` 에 키가 없어 전원 폴백이다.
+    """
     node = (s.get("phases") or {}).get("05-code-review") or {}
     routed = node.get("routing")
     if not routed:
@@ -1824,6 +1830,15 @@ def _review_render(s):
                   "변경 경로가 `config.reviewers[].when` 어디에도 걸리지 않았다. "
                   "라우팅 결함일 수 있으니 보고서에 남긴다."]
         return "\n".join(lines)
+    # **이 라운드의 계획으로 좁힌다** (백로그 20). 라우팅에 없는 코드가
+    # 계획에 오르면(`next` 가 여러 번 불려 집합이 줄어든 경우) 좁히지
+    # 않는다 — 스킬 경로를 모르는 이름을 지우는 것보다 전원을 적는 쪽이 덜
+    # 나쁘고, 그 불일치는 `_planned_guard` 가 그 자리에서 말한다.
+    round_ = ((s.get("counters") or {}).get("review_repair") or {}).get("used", 0) + 1
+    planned = _planned_for_round(node, round_)
+    narrowed = [r for r in routed["reviewers"] if r["code"] in planned]
+    if narrowed and len(narrowed) == len(planned):
+        routed = dict(routed, reviewers=narrowed)
     lines.append("모드: **%s** (%s)"
                  % (node.get("mode"),
                     "단일 에이전트가 체크리스트를 순차 적용한다"
@@ -2974,9 +2989,11 @@ def _record_02(root, paths, s, phase_item, ctx, file, reviewer, round_):
     except (OSError, ValueError) as exc:
         return st.envelope("record", False, 8, s, {}, "JSON 을 읽지 못했다: %s" % exc, None)
 
-    errors = []
-    if payload.get("reviewer") == "main":
-        errors.append("reviewer 가 main 이다 — 독립 관측이 아니다")
+    # **어휘 검사는 05 와 같은 함수다** (백로그 21). `check_review` 를 통째로
+    # 부를 수는 없다 — 그 함수는 `raw_text` 로 quote·헤딩 개수를 대조하는데
+    # 02 의 `produces` 에 `.raw.md` 가 없어 넘길 원문이 없다. 02 가 대조하는
+    # 원문은 **플랜**이고, 그 사실은 아래 quote 검사와 페이즈 파일이 같이 말한다.
+    errors = verdict.check_vocabulary(payload)
     plan_text = (paths.run_dir / "01_plan.md").read_text(encoding="utf-8")
     for f in payload.get("findings") or []:
         q = f.get("quote")
@@ -3288,27 +3305,45 @@ def _findings_lines(findings):
                      for f in findings)
 
 
+def _rules_excluded(config):
+    """규칙이 **아닌** 파일의 경로 집합 — `config.project.rules_exclude`.
+
+    `rules_read` 집합과 지시문 목적지 판정이 **이것만** 공유한다 (백로그 23).
+    두 판정의 나머지는 의도적으로 다르다 — 하나는 존재로, 하나는 경로로 가른다.
+    """
+    return {Path(p).as_posix()
+            for p in ((config.get("project") or {}).get("rules_exclude") or [])}
+
+
 def _rules_read_expected(root, config):
     """워커가 읽었어야 할 규칙 파일 → 현재 sha256 (ADR-H055).
 
     `config.project.instruction_file` 과 `rules_dir` **직속** `*.md` 다. 재귀가
     아니다 — `docs/harness/**` 는 ADR 2600줄·원장·런 보고서이고 그것을 읽으라는
     뜻이 아니다. 없는 파일은 항목을 만들지 않는다.
+
+    **하네스 자신이 쓰는 파일은 뺀다** (`rules_exclude`, 백로그 23). `/log` 가
+    `docs/PIPELINE-LOG.md` 를 한 번 쓰면 그 런의 모든 역할이 이미 낸 증명을
+    잃었다 — 규칙이 바뀐 것이 아니라 하네스가 자기 산출물을 쓴 것이다.
     """
     root = Path(root)
     proj = config.get("project") or {}
+    skip = _rules_excluded(config)
     out = {}
     inst = proj.get("instruction_file")
-    if inst:
+    if inst and Path(inst).as_posix() not in skip:
         sha = st._sha256_file(root / inst)
         if sha:
             out[Path(inst).as_posix()] = sha
     rules_dir = proj.get("rules_dir")
     if rules_dir and (root / rules_dir).is_dir():
         for p in sorted((root / rules_dir).glob("*.md")):
+            rel = p.relative_to(root).as_posix()
+            if rel in skip:
+                continue
             sha = st._sha256_file(p)
             if sha:
-                out[p.relative_to(root).as_posix()] = sha
+                out[rel] = sha
     return out
 
 
@@ -3561,6 +3596,18 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
 REVIEW_SUBMIT_TRIES = 2
 
 
+# 05 수리 상한 초과의 선택지 (백로그 30). **가장 자주 나오는 답이 메뉴에 있어야
+# 한다** — 클론 4런의 에스컬레이션 2런 모두 사람이 「기타」를 골랐고 그 답은 둘 다
+# 「좁게 보강하고 진행」 계열이었다. 분기하는 코드는 없고 사람이 읽는 문자열이다.
+REVIEW_ESCALATION_OPTIONS = (
+    "계약 결함을 먼저 의심한다 — 같은 지적이 반복되면 코드가 아니라 "
+    "계약이 틀렸을 수 있다",
+    "좁게 보강하고 진행한다 — 남은 지적 중 좁은 것만 고치고 나머지는 안고 간다",
+    "이대로 진행한다(미해결 지적을 안고 간다)",
+    "중단한다",
+)
+
+
 def _dispatch_fingerprint_stale(root, ctx, node, round_):
     """지시 시점 지문 vs 지금. 다르면 저장된 지문을, 같거나 없으면 None.
 
@@ -3763,18 +3810,21 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             node["severity_raised_grant"] = {"round": round_, "keys": raised}
         used, _max, exceeded = st.counter_inc(s, _loop_counter(front), max_decl,
                                               "review_blocking", paths=paths)
+        # **다음 라운드의 델타는 에스컬레이션 여부보다 앞에서 정한다** (백로그 20).
+        # 전에는 이 두 줄이 `if exceeded:` 뒤에 있어 에스컬레이션 경로가 키를
+        # 안 세우고 return 했고, 재개된 라운드가 `_planned_for_round` 의
+        # 폴백(전원)을 받아 **리뷰어 전원이 다시 돌았다.** 사람이 「이대로
+        # 진행한다」를 골라 돌아와도 수리 대상은 같으므로 델타도 같다.
+        delta = _delta_reviewer(blocking, planned, slot)
+        node.setdefault("rounds_planned", {})[str(round_ + 1)] = [delta]
         if exceeded:
             _loop_on_exceed(front)
             st.escalate(paths, s,
                         "05 의 Critical/Major %d건이 %d회 안에 해소되지 않았다"
                         % (len(blocking), max_decl),
-                        ["계약 결함을 먼저 의심한다 — 같은 지적이 반복되면 "
-                         "코드가 아니라 계약이 틀렸을 수 있다",
-                         "이대로 진행한다(미해결 지적을 안고 간다)", "중단한다"],
+                        list(REVIEW_ESCALATION_OPTIONS),
                         phase="05-code-review")
             return _escalation_envelope("record", paths, s)
-        delta = _delta_reviewer(blocking, planned, slot)
-        node.setdefault("rounds_planned", {})[str(round_ + 1)] = [delta]
         # 다음 회차에 델타가 회계해야 할 목록이다. `record` 가 같은 인자로
         # 부르는 함수이므로 봉투와 검사가 같은 것을 본다 (M38).
         prev_open = _previous_open(node.get("rounds") or {}, round_ + 1, delta)
@@ -4411,10 +4461,11 @@ def _write_json(path, data):
 
 def cmd_precheck(root, args):
     return st.emit(run_precheck(root, args.scope, args.run_id,
-                               getattr(args, "phase", "05")))
+                               getattr(args, "phase", "05"),
+                               ack_policy=getattr(args, "ack_policy", False)))
 
 
-def run_precheck(root, scope="pr", run_id=None, phase="05"):
+def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
     """05 진입과 06 에서 각 1회, 그리고 **재개마다** 다시 돈다 (§E13).
 
     런 없이도 돈다 — 무료 검사의 요점이 "시작하기 전에 안다"이므로 런을
@@ -4431,6 +4482,9 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
     got = pc.run(root, scope=scope)
 
     if s is not None:
+        # **사람이 이미 고른 것을 다시 묻지 않는다** (백로그 26). 기록과 판정이
+        # 아래 모든 것(슬롯·gap·이벤트·봉투)보다 앞이다 — exit 를 바꾸기 때문이다.
+        _apply_policy_override(paths, s, got, pid, ack_policy)
         # 명세의 state 스키마가 `precheck.at_05` 와 `at_06` 을 나란히 둔다 —
         # 같은 검사가 두 시점에 돌고 **그 사이에 값이 변하기 때문**이다 (§E13).
         # 한 칸에 덮어쓰면 06 이 05 의 예산을 지우고, 무엇이 언제 참이었는지
@@ -4476,6 +4530,38 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
 
 _PRECHECK_PHASE = {"05": "05-code-review", "06": "06-pr"}
 
+# 사람이 정책 exit 9 를 「그대로 간다」로 정한 사실. **면제는 통과가 아니다** —
+# 비강등 목록에 넣지 않아 등급이 그 사실을 치른다 (ADR-H027 · ADR-H071).
+PRECHECK_OVERRIDE_GAP = "precheck_policy_override"
+
+
+def _apply_policy_override(paths, s, got, pid, ack_policy):
+    """사람이 못박은 정책 판단을 적고, 덮이는 실패는 다시 묻지 않는다 (백로그 26).
+
+    exit 9 는 상태를 잠그지도 카운터를 쓰지도 않아 **사람이 「그대로 간다」를 고른
+    사실이 어디에도 남지 않았다.** 그래서 §E13 의 재개 재검사가 06 에서 같은 것을
+    다시 물었다 — 클론 4런에서 사람 대기의 30% 가 그것이었다.
+
+    **검사는 그대로 돈다.** 바뀌는 것은 「같은 사유·같은 값이면 묻지 않는다」뿐이고,
+    넘어간 사실은 gap 으로 남는다.
+    """
+    import precheck as pc
+
+    node = s.setdefault("precheck", {})
+    fresh = got.get("policy_fingerprint")
+    if ack_policy and got["exit"] == 9 and fresh:
+        node["policy_override"] = {"fingerprint": fresh, "phase": pid,
+                                   "at": st.stamp()}
+        st.append_event(paths, "policy_acked", cmd="precheck", phase=pid,
+                        reasons=fresh["reasons"])
+    saved = (node.get("policy_override") or {}).get("fingerprint")
+    if got["exit"] != 9 or not pc.override_covers(saved, fresh):
+        return
+    got["exit"] = 0
+    got["classification"] = None
+    got["policy_override"] = dict(node["policy_override"])
+    got.setdefault("gaps", []).append(PRECHECK_OVERRIDE_GAP)
+
 
 def _base_behind(got):
     """divergence 검사가 센 behind 수. 검사가 안 돌았으면 0 이 아니라 None 이다."""
@@ -4507,6 +4593,14 @@ def _precheck_render(got):
                               "`python scripts/harness.py calibrate` 를 돌린다."
                           % (stale[0]["message"] if stale else gap)]
                 continue
+            if gap == PRECHECK_OVERRIDE_GAP:
+                fp = (got.get("policy_override") or {}).get("fingerprint") or {}
+                lines += ["", "**정책 실패를 사람이 넘기기로 한 상태다: `%s`.** "
+                              "통과가 아니라 넘어간 것이다 — 등급이 "
+                              "`PASS_WITH_GAPS` 로 내려가고 보고서·PR 본문에 "
+                              "이름으로 남는다. 사유·값이 커지면 다시 묻는다."
+                          % ", ".join(fp.get("reasons") or [])]
+                continue
             lines += ["", "**면제된 프로브가 있다: `%s`.** 통과가 아니라 "
                           "미검증이다 — 등급이 `PASS_WITH_GAPS` 로 내려가고 "
                           "보고서·PR 본문에 이름으로 남는다." % gap]
@@ -4524,7 +4618,10 @@ def _precheck_render(got):
                   "읽게 된다."]
     else:
         lines += ["", "**자동으로 쪼개거나 리베이스하지 않는다.** 무엇을 할지 "
-                      "정하고 다시 부른다."]
+                      "정하고 다시 부른다.",
+                  "사람이 **이대로 간다**고 정했으면 같은 명령에 `--ack-policy` 를 "
+                  "붙여 그 판단을 못박는다 — 그래야 06 이 같은 것을 다시 묻지 "
+                  "않는다 (백로그 26). 넘어간 사실은 gap 으로 남는다."]
     return "\n".join(lines)
 
 
@@ -5010,8 +5107,12 @@ def _instruction_destination(config, rel):
     """지시문 목적지인가 — `_rules_read_expected` 의 집합 ∪ `.claude/agent-memory/**`.
 
     존재가 아니라 경로로 가른다 — 검토가 `rules_dir` 에 새 파일을 만들 수 있다.
+    **공유하는 것은 제외 목록 하나뿐이다** (백로그 23) — 하네스가 쓰는 파일은
+    지시문 검토가 고칠 곳도 아니다.
     """
     rel = Path(rel).as_posix()
+    if rel in _rules_excluded(config):
+        return False
     proj = config.get("project") or {}
     inst = proj.get("instruction_file")
     if inst and rel == Path(inst).as_posix():
@@ -6295,6 +6396,7 @@ def build_parser():
     sp.add_argument("--scope", dest="scope", default="pr",
                     choices=["pr", "worktree"])
     sp.add_argument("--phase", dest="phase", default="05", choices=["05", "06"])
+    sp.add_argument("--ack-policy", dest="ack_policy", action="store_true")
     sp.add_argument("--run-id", dest="run_id", default=None)
 
     sp = sub.add_parser("contract-trace", add_help=False)
