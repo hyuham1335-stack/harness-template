@@ -339,8 +339,10 @@ glob 안인가. `touches_source` 는 자진신고다.
 **예측은 검증된다.** `source: triage` 는 03·04·05 의 `_refresh_profile` 재판정에
 **밀린다**(`user` 는 안 밀린다). 상향(`docs → small/normal`, `small → normal`)이면
 앞 페이즈가 양보를 적용한 채 지나간 것이라 `triage_miss` 이벤트 + gap
-`triage_miss:<적용된 양보>` + `PASS_WITH_GAPS`, 07 의 내장 리뷰가 `medium` 으로
-메운다. 하향은 관측을 더 한 것이라 gap 이 아니고 `profile.previous` 만 남는다.
+`triage_miss:<적용된 양보>` + `PASS_WITH_GAPS`. **07 의 내장 리뷰는 생략
+조건이 먼저 이긴다** — 생략되지 않은 런에서만 effort 를 `medium` 으로 올려 메운다
+([[ADR-H072]]). 빈손이 보장된 페이즈를 벌칙으로 한 번 더 부르지 않는다.
+하향은 관측을 더 한 것이라 gap 이 아니고 `profile.previous` 만 남는다.
 docs 레인은 계약이 없어 재판정이 조기 반환하므로 **03(claims 제출)과 05(라우팅
 직전) 두 자리가 소스 변경을 따로 묻는다** — 03 에서 잡히면 exit 3 으로 계약을
 쓰고 역할 패킷을 받는다. 실제로 적용된 양보만 `profile.applied` 에 쌓이고 gap
@@ -545,6 +547,10 @@ flowchart LR
 
 **3. 못 정하면 `ambiguous` → `config.primary_role` → 동일 sig 재발 시 다음 역할로 flip.**
 
+**실패 프레임이 하나 이상이고 전부 테스트 파일이면 사다리 맨 앞은 테스트 역할이다** ([[ADR-H072]]). 귀속 규칙이 판정을 못 내는 것이 예외가 아니라 **기본값**이고, 스텁 픽스처가 원인인 실패를 `primary_role` 에 먼저 보내면 구현이 스텁에 맞추려 계약에 없는 분기를 프로덕션에 넣는다 — 오배정의 대가가 「라운드 하나」가 아니라 **프로덕션 코드 오염**이다. 어댑터나 테스트 역할을 모르면 지금대로 `primary_role` 이 먼저다.
+
+**배정은 위치가 아니라 미시도 집합에서 고른다** ([[ADR-H072]]) — 사다리에서 **아직 시도하지 않은 첫 역할**을 고른다. 사다리 순서가 그 실패의 프레임에 따라 라운드마다 달라질 수 있고(시그니처는 프레임을 해시에 넣지 않는다), 순서 인덱스로 고르면 뒤집힌 사다리가 **한 역할을 통째로 건너뛴다** — [[ADR-H023]]·M33 이 막으려던 「두 역할 중 한쪽만 시도해 보고 끝」 그대로다.
+
 사다리는 **이 런에 디스패치된 역할**로만 만든다 (ADR-H057) — 부르지 않은 조건부 역할에게 수리를 보내지 않고, 단언 실패(`kind: test`)는 테스트를 소유하지 않는 조건부 역할을 건너뛴다. `ui` 가 디스패치된 런의 사다리는 impl → test → ui → 계약 결함이라 `loop.max: 3` 안에서 계약 결함에 못 닿을 수 있다 — 아래 주의와 같은 이유로 값을 올리지 않는다.
 
 > **flip 과 정체 감지는 더 이상 같은 조건이 아니다.** 둘 다 "동일 sig 2회" 를 쓰던 동안 flip 은 언제나 stuck 과 같은 순간에 일어났고, ambiguous 실패는 구조적으로 두 역할 중 한쪽만 시도해 보고 멈췄다. 정체 감지가 쌍을 세면서 사다리(`primary_role` → 다음 역할 → 계약 결함)를 다 오를 수 있다. 다만 그 사다리를 오르는 동안 **수리 예산(`loop.max: 3`)이 먼저 닫는 경우가 있다** — 의도한 것이다. "예산을 다 썼다" 가 "같은 자리를 맴돈다" 보다 정직한 이유다 (M33).
@@ -623,7 +629,7 @@ stateDiagram-v2
 | 오류 어휘 상수를 테스트가 쓴다 | `untested_error_symbol` | 테스트 본문에 `상수`. Major, 테스트 역할 — **유예 없음** |
 | `[역할]` 태그 진입점의 거부 테스트 | `authz_untested` | 그 진입점의 테스트 파일에 `attribution.authz_denied_pattern`. Major, 테스트 역할 — **유예 없음**. 패턴이 없으면 이 검사만 스킵 |
 | 여정의 스펙이 슬러그를 선언 | `missing_journey_spec` | 계약 `## 여정` 의 스펙 파일이 실재하고 슬러그가 `describe`/`test.describe` 문자열 인자나 `export` 이름으로 있다(주석은 안 센다). Critical, 테스트 역할 — **유예 없음**, 03 이 먼저 거부 (ADR-H058 추기) |
-| 계약에 없는 신규 public 심볼 | `out_of_contract` | Major — **첫 3런 `warn_only`**. 계약이 이름 붙인 것은 유닛·오류 어휘뿐 아니라 `config.contract.sections.data_shapes` 절의 **타입·상수**도 포함한다 (M57 — 그 절이 파서에 등록된 적이 없어 P8 의 지적 6/6 이 구조적 오탐이었다) |
+| 계약에 없는 신규 public 심볼 | `out_of_contract` | Major — **첫 3런 `warn_only`**. 계약이 이름 붙인 것은 유닛·오류 어휘뿐 아니라 `config.contract.sections.data_shapes` 절의 **타입·상수**도 포함한다 (M57 — 그 절이 파서에 등록된 적이 없어 P8 의 지적 6/6 이 구조적 오탐이었다). **타입 전용 export(`type`·`interface`)는 이 검사에서 뺀다** ([[ADR-H072]]) — 계약은 런타임 심볼을 보고, 내부 타입까지 계약에 열거하게 하지 않는다. **`enum` 은 면제가 아니다** — TypeScript 의 `export enum` 은 런타임 객체를 내보낸다. 계약에 적힌 타입은 여전히 `symbols()` 의 `known` 으로 먼저 걸러지므로 이 면제가 바꾸는 것은 **계약에 없는** 타입의 처리뿐이다 |
 
 - **「데이터 형태」 절은 형태로 거른다.** 백틱 안의 첫 심볼이 PascalCase 또는 UPPER_SNAKE 인 것만 센다 — 그 절은 산문이 섞여 있어 필드명·내장(`map`·`any`)·경로가 함께 백틱에 온다. 형태 없이 다 모으면 `symbols()` 가 넓어져 **오탐 대신 미탐**이 생긴다: 흔한 낱말이 계약 산문에 있다는 이유로 진짜 위반이 조용히 통과한다.
 - **컨테이너명 + 심볼명 쌍으로 검색한다.** 심볼명만 보면 흔한 이름이 다른 파일에 있어 **거짓 통과**한다. 컨테이너를 못 찾으면 `unknown`으로 낙하시킨다.
@@ -687,7 +693,7 @@ stateDiagram-v2
 > **미검증 상속값** — 위 블록의 `max: 2` · `stuck_after_identical: 2` · `max_per_run: 3`과 그 판정 기준 세 숫자는 원본에서 왔고 이 리포에서 재본 적이 없다 (§11.1).
 
 - **Critical/Major만** 대상. Minor는 원장 적재 후 보고서로. `CONTRACT_DEFECT`는 수리가 아니라 **에스컬레이션**이다.
-- 배정은 **04의 소유자 라우팅 재사용** — 단일 소유자, `ambiguous`는 `primary_role` 우선, 동일 sig 재발 시 flip.
+- 배정은 **04의 소유자 라우팅 재사용** — 단일 소유자, `ambiguous`는 `primary_role` 우선(단, 프레임이 전부 테스트 파일이면 테스트 역할이 먼저다, [[ADR-H072]]), 동일 sig 재발 시 flip.
 - **수리 작성자도 지시 키를 받는다** ([[ADR-H064]]). blocking 으로 exit 4 를 낼 때 서로 다른 `target_role` 마다 `05:r{n}:repair:{role}` 로 지시하고(`n` 은 `review_repair` 사용 횟수), 봉투에 `## 모델 등급` 절을 붙인다. 슬롯은 `roles` 다. `target_role` 이 없는 지적(`CONTRACT_DEFECT`)은 키를 받지 않는다 — 에이전트 기동이 아니다.
 - 수리가 발생하면 지문이 바뀌어 영수증이 stale → 06이 자동으로 막는다. **"재게이트를 잊는" 실패 모드가 구조적으로 불가능**하다.
 - 수리 후: `gate --stage scoped` → **전체 회귀 1회**(인프라 확인 선행, §E9) → 승인 알림.
@@ -1133,6 +1139,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 - 판정은 **심볼명 문자열 + 진입점 경로** 둘 다 실패할 때만.
 - **첫 3런은 `warn`으로만 기록하고 finding으로 올리지 않는다.** 오탐률을 보고 나서 승격한다.
 - 같은 원칙을 `out_of_contract`에도 적용한다(생성 코드가 오탐을 만든다).
+- **타입 전용 export 는 유예가 아니라 면제다** ([[ADR-H072]]). `type`·`interface` 는 `out_of_contract` 가 아예 안 본다 — 유예는 「오탐률을 보고 승격한다」이고 이것은 「검사 대상이 아니다」라 성격이 다르다. `enum` 은 런타임 객체라 그대로 검사한다.
 - **"첫 3런" 은 검사별이고, 오탐 이력이 있는 두 검사(`untested_contract_item`·`out_of_contract`)에만 둔다** (ADR-H058) — 그 검사가 지적(`warn_only` 포함)을 낸 런 수로 센다(`ledger.in_baseline_for`). 원장 전체 런 수로 재면 새 검사가 물려받은 원장에서 첫 런부터 baseline 을 벗어난다.
 
 > **미검증 상속값** — "첫 3런"은 원본에서 왔고 이 리포에서 재본 적이 없다. 첫 세 런의 원장이 실제 오탐률을 만든다.
@@ -1295,7 +1302,7 @@ prose  → config.project.rules_dir  →  agent-memory/{role}  →  config.proje
 | 전역 | 인코딩 · 경로 길이 | 정책 | 모든 I/O UTF-8, 240자 초과는 `lint-phases`가 거부 (§E4) |
 | 00 | `profile` 어휘 밖 · `expected_paths` 가 원문에 없음 · `docs` 인데 docs glob 밖 경로 | 제출물 | exit 8, 재제출 |
 | 00 | 모델이 `unclear` | 판단 | exit 9 — 3지선다를 사람에게. 고른 값을 `decided_by: "user"` 로 재제출 |
-| 00 → 03·05 | 예측이 상향으로 빗나감 | 정책 | `triage_miss` gap + `PASS_WITH_GAPS` + 07 `medium`. docs 레인의 03 은 exit 3 으로 계약을 요구한다 |
+| 00 → 03·05 | 예측이 상향으로 빗나감 | 정책 | `triage_miss` gap + `PASS_WITH_GAPS` + 07 은 **생략되지 않았을 때만** `medium` ([[ADR-H072]]). docs 레인의 03 은 exit 3 으로 계약을 요구한다 |
 | 01 | `drift_score > 0` | 제출물 | exit 4 + 원문 인용과 함께 재조정 패킷 |
 | 01 | quote 위조 / 단조성 위반 | 제출물 | exit 8, 재제출(카운터 소모) |
 | 01 | 라운드 상한 초과 | 정책 | exit 7 → 에스컬레이션 3지선다 |

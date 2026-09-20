@@ -135,6 +135,13 @@ def decide(state, external, config, audit=False):
     먼저 걸린 분기가 뒤 분기의 gap 을 삼킨다 — 05 가 degraded 이고 외부가
     무응답인 런에서 결손 둘 중 하나만 보고서에 남았다 (G-5). 분기 순서를
     바꾸는 것은 고치는 것이 아니라 **구멍을 옮기는 것**이다.
+
+    **`triage_miss` 는 사슬 안에 없다** (ADR-H072). 벌칙을 분기로 두면
+    생략 조건보다 앞서서, 외부가 `disabled` 이고 05 가 수렴한 런 —
+    즉 **빈손이 보장된 런** — 까지 07 을 한 번 더 부른다. 사슬이 끝난 뒤
+    돌게 된 런에만 effort 를 올린다. 사슬을 재배치하는 것이 아니라
+    사슬 **밖**에 두는 것이라 위의 G-5 와 같은 구멍이 생기지 않는다 —
+    `gaps` 는 사슬보다 앞에서 이미 끝났다.
     """
     r05 = state.get("review05") or {}
     profile = ((state.get("profile") or {}).get("id")
@@ -159,15 +166,6 @@ def decide(state, external, config, audit=False):
         effort = "medium"
         reasons.append("05 가 `%s` 다 — 리뷰 결손을 비싼 쪽으로 메운다."
                        % r05.get("status"))
-    elif triage_miss:
-        # 00 의 예측이 빗나가 앞 페이즈가 양보를 적용한 채 지나갔다 (ADR-H044).
-        # gap 은 miss 시점에 이미 `state.gaps` 에 있다 — 여기서 다시 세지 않는다.
-        effort = "medium"
-        reasons.append("트리아지 예측이 빗나갔다 (%s → %s, %s) — 건너뛴 관측(%s)을 "
-                       "비싼 쪽으로 메운다."
-                       % (triage_miss.get("was"), triage_miss.get("became"),
-                          triage_miss.get("at"),
-                          ", ".join(triage_miss.get("applied") or []) or "없음"))
     elif enabled and not reviewed:
         effort = "low"
         reasons.append("외부 리뷰가 `%s` 다 — 켜 놓은 관측기가 없는 것이라 "
@@ -214,6 +212,19 @@ def decide(state, external, config, audit=False):
                        "봤고 Major 는 05 안에서 수리·델타 재리뷰를 받았다. 내장 "
                        "리뷰를 생략한다 (ADR-H043 · ADR-H059). 등급은 내려가지 "
                        "않는다.")
+
+    if triage_miss and not skip and effort == "low":
+        # 00 의 예측이 빗나가 앞 페이즈가 양보를 적용한 채 지나갔다 (ADR-H044).
+        # gap 은 miss 시점에 이미 `state.gaps` 에 있다 — 여기서 다시 세지 않는다.
+        # **생략된 런은 올리지 않는다** (ADR-H072) — 생략 조건을 만족한 런에서
+        # 07 은 빈손이 보장돼 있고, 벌칙으로 부르면 그 호출이 관측을 안 낳는다.
+        # `audit` 보다 앞이어야 한다 — 뒤면 감사 런의 high 를 medium 으로 내린다.
+        effort = "medium"
+        reasons.append("트리아지 예측이 빗나갔다 (%s → %s, %s) — 건너뛴 관측(%s)을 "
+                       "비싼 쪽으로 메운다."
+                       % (triage_miss.get("was"), triage_miss.get("became"),
+                          triage_miss.get("at"),
+                          ", ".join(triage_miss.get("applied") or []) or "없음"))
 
     if audit:
         # 생략하면 escaped_05 를 셀 수 없다. 그래서 5런에 1회는 강제한다.

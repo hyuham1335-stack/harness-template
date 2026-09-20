@@ -107,7 +107,7 @@ low)이고, 03 은 impl·test 둘 다 부른다 — 재현 테스트는 test 역
 | `expected_paths` 가 원문에 없다 | exit 8 — 원문 그대로 인용해 다시 낸다 |
 | `docs` 인데 docs glob 밖 경로 | exit 8 — `small`/`normal` 로 다시 내거나 경로를 뺀다 |
 | `unclear` | exit 9 — 4지선다(`docs` · `fix` · `small` · `normal`). 사람이 고른 값을 `decided_by: "user"` 로 재제출 |
-| 예측이 03·05 에서 빗나감(상향) | `triage_miss` gap · `PASS_WITH_GAPS` · 07 내장 리뷰 `medium`. 03 의 docs 레인에서 소스가 바뀌었으면 exit 3 — 계약을 쓰고 `next` 로 역할 패킷을 받는다 |
+| 예측이 03·05 에서 빗나감(상향) | `triage_miss` gap · `PASS_WITH_GAPS` · 07 내장 리뷰는 **생략되지 않았을 때만** `medium` (ADR-H072). 03 의 docs 레인에서 소스가 바뀌었으면 exit 3 — 계약을 쓰고 `next` 로 역할 패킷을 받는다 |
 
 **`config.triage` 의 임계값 셋과 `config.models` 의 등급 표는 전부 미검증
 초기값이다.** 첫 세 런의 `00_triage.json` 과 `triage_miss` 이벤트가 그것을

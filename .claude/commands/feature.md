@@ -256,9 +256,10 @@ python scripts/pipeline/cli.py review07 --external <07_external.json> --run-id <
 **effort 를 네가 고르지 마라.** 결정론이어야 `escaped_05` 가 근거가 된다.
 봉투가 **`skipped`** 를 주면 `/code-review` 를 부르지 않는다 — `07_pr_review.json`
 을 `code_review: "skipped"` · findings 빈 배열로 내고 바로 `record` 로 간다.
-깨끗한 런(05 ok · `triage_miss` 없음 · 외부 Major 없음 · 05 지적이 0건이 아님 ·
-감사 런 아님)이 그렇고, 일반 정합성은 05 의 `gen` 이 이미 봤다 (ADR-H043 ·
-ADR-H059). "Major 잔여" 와 "04·05 수리 있음" 은 더 이상 트리거가 아니다. 승격은 그
+깨끗한 런(05 ok · 외부 Major 없음 · 05 지적이 0건이 아님 · 감사 런 아님)이
+그렇고, 일반 정합성은 05 의 `gen` 이 이미 봤다 (ADR-H043 · ADR-H059).
+**`triage_miss` 는 생략을 막지 않는다** (ADR-H072) — 빗나간 예측의 벌칙은
+돌게 된 런의 effort 를 올리는 것이지 빈손 보장된 호출을 더하는 것이 아니다. "Major 잔여" 와 "04·05 수리 있음" 은 더 이상 트리거가 아니다. 승격은 그
 뒤에 그대로 돈다.
 
 ```bash
