@@ -8632,6 +8632,99 @@ class TestReview05SeverityRaisedGrant:
         assert s.get("escalated"), "실효 상한 3 을 다 썼다"
 
 
+class TestEscalationPlansTheDeltaRound:
+    """미구현 백로그 20 — 에스컬레이션 경로도 다음 라운드의 델타를 세우고 간다.
+
+    05 판정의 `escalate` 분기가 `rounds_planned[round+1]` 을 쓰기 **전에**
+    return 해서, 재개된 3라운드가 `_planned_for_round` 의 폴백(전원)을 받았다.
+    클론 4런에서 에스컬레이션 2런 모두 `round_reviewers = {"1":4, "2":1, "3":4}`
+    였고 **r3 수확은 major 0 · critical 0** 인 반면 r2(델타 1인)는 둘 다 major
+    1건을 잡았다 — 좁은 재리뷰는 무는데 넓은 재확인은 안 문다.
+
+    **고칠 곳이 둘이다.** 상태(`rounds_planned`)만 고치면 05 패킷은 여전히
+    라우팅 전원을 이름 짓고 `_planned_guard` 가 그중 셋을 exit 8 로 되돌린다 —
+    봉투와 검사가 같은 것을 봐야 한다 (M38).
+    """
+
+    BLOCK = {"id": "F-1", "category": "TX_BOUNDARY", "severity": "major",
+             "target_role": "impl", "title": "트랜잭션 경계가 없다",
+             "quote": "트랜잭션이 없다"}
+
+    ROUTED = {"reviewers": [{"code": "arch", "skill": "architecture-reviewer",
+                             "matched_count": 1},
+                            {"code": "test", "skill": "test-quality-reviewer",
+                             "matched_count": 1}],
+              "dropped": [], "capped": False}
+
+    def _ready(self, repo, request_file, phases):
+        ldg.seed(repo)
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        cli.run_contract_trace(repo, run_id=run_id)
+        paths, s = st.load(repo, run_id)
+        node = s["phases"]["05-code-review"]
+        node["planned"] = ["arch", "test"]
+        node["routing"] = json.loads(json.dumps(self.ROUTED))
+        node["mode"] = "fanout"
+        st.save(paths, s)
+        return run_id, paths
+
+    def _submit(self, repo, paths, run_id, code, round_, findings, resolved=()):
+        name = ("05_review_%s.json" % code if round_ == 1
+                else "05_review_%s_r%d.json" % (code, round_))
+        j = paths.run_dir / name
+        j.write_text(json.dumps({
+            "reviewer": code, "round": round_, "status": "ok",
+            "by_checklist": {"전부": list(findings)},
+            "resolved_from_previous": list(resolved),
+            "need_more_context": []}, ensure_ascii=False), encoding="utf-8")
+        body = "".join("## %s\n\n%s\n" % (f["severity"], f["quote"])
+                       for f in findings)
+        j.with_name(name.replace(".json", ".raw.md")).write_text(
+            "# 리뷰\n\n" + body, encoding="utf-8")
+        return cli.run_record(repo, "05", str(j), reviewer=code,
+                              round_=round_, run_id=run_id)
+
+    def test_에스컬레이션_뒤_3라운드도_델타_한_명이다(self, repo, request_file,
+                                                    phases):
+        run_id, paths = self._ready(repo, request_file, phases)
+        self._submit(repo, paths, run_id, "arch", 1, [self.BLOCK])
+        env = self._submit(repo, paths, run_id, "test", 1, [])
+        assert env["exit"] == 4, env["render"]
+        _, s = st.load(repo, run_id)
+        node = s["phases"]["05-code-review"]
+        assert node["rounds_planned"]["2"] == ["arch"], node["rounds_planned"]
+
+        self._submit(repo, paths, run_id, "arch", 2, [self.BLOCK])
+        _, s = st.load(repo, run_id)
+        assert s.get("escalated"), "예산 2 를 다 썼으면 에스컬레이션이다"
+        planned = (s["phases"]["05-code-review"].get("rounds_planned") or {}).get("3")
+        assert planned == ["arch"], (
+            "에스컬레이션이 델타를 안 세우면 3라운드가 전원 재팬아웃한다", planned)
+
+    def test_델타_라운드의_패킷은_한_명만_이름_짓는다(self):
+        s = {"counters": {"review_repair": {"used": 2, "max": 2}},
+             "phases": {"05-code-review": {
+                 "mode": "fanout", "planned": ["arch", "test"],
+                 "rounds_planned": {"3": ["arch"]},
+                 "routing": json.loads(json.dumps(self.ROUTED))}}}
+        out = cli._review_render(s)
+        assert "architecture-reviewer" in out, out
+        assert "test-quality-reviewer" not in out, (
+            "부르지 않을 리뷰어를 패킷이 이름 지으면 그 제출이 exit 8 로 튕긴다",
+            out)
+
+    def test_1라운드_패킷은_전원을_이름_짓는다(self):
+        """좁히기는 델타 라운드에만 걸린다 — 1라운드는 키가 없어 전원 폴백이다."""
+        s = {"counters": {},
+             "phases": {"05-code-review": {
+                 "mode": "fanout", "planned": ["arch", "test"],
+                 "routing": json.loads(json.dumps(self.ROUTED))}}}
+        out = cli._review_render(s)
+        assert "architecture-reviewer" in out, out
+        assert "test-quality-reviewer" in out, out
+
+
 class TestFormatRejectCount:
     """[[ADR-H052]] 결정 3 — 형식 반려(exit 8 재제출)를 이벤트로 세고 08 에 적는다.
 

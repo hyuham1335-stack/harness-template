@@ -1809,7 +1809,13 @@ def _contract_drift_lines(node, s):
 
 
 def _review_render(s):
-    """봉투가 **누가 리뷰하는지와 무엇이 빠졌는지**를 말한다."""
+    """봉투가 **누가 리뷰하는지와 무엇이 빠졌는지**를 말한다.
+
+    **이 라운드의 계획만 이름 짓는다** (백로그 20). 라우팅은 런 단위로
+    얼어 있고 델타 재리뷰는 그중 한 명이다 — 전원을 나열하면 봉투가 부르는
+    사람과 `_planned_guard` 가 받는 사람이 갈라져 나머지 제출이 exit 8 로
+    튕긴다. 1라운드는 `rounds_planned` 에 키가 없어 전원 폴백이다.
+    """
     node = (s.get("phases") or {}).get("05-code-review") or {}
     routed = node.get("routing")
     if not routed:
@@ -1824,6 +1830,15 @@ def _review_render(s):
                   "변경 경로가 `config.reviewers[].when` 어디에도 걸리지 않았다. "
                   "라우팅 결함일 수 있으니 보고서에 남긴다."]
         return "\n".join(lines)
+    # **이 라운드의 계획으로 좁힌다** (백로그 20). 라우팅에 없는 코드가
+    # 계획에 오르면(`next` 가 여러 번 불려 집합이 줄어든 경우) 좁히지
+    # 않는다 — 스킬 경로를 모르는 이름을 지우는 것보다 전원을 적는 쪽이 덜
+    # 나쁘고, 그 불일치는 `_planned_guard` 가 그 자리에서 말한다.
+    round_ = ((s.get("counters") or {}).get("review_repair") or {}).get("used", 0) + 1
+    planned = _planned_for_round(node, round_)
+    narrowed = [r for r in routed["reviewers"] if r["code"] in planned]
+    if narrowed and len(narrowed) == len(planned):
+        routed = dict(routed, reviewers=narrowed)
     lines.append("모드: **%s** (%s)"
                  % (node.get("mode"),
                     "단일 에이전트가 체크리스트를 순차 적용한다"
@@ -3763,6 +3778,13 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             node["severity_raised_grant"] = {"round": round_, "keys": raised}
         used, _max, exceeded = st.counter_inc(s, _loop_counter(front), max_decl,
                                               "review_blocking", paths=paths)
+        # **다음 라운드의 델타는 에스컬레이션 여부보다 앞에서 정한다** (백로그 20).
+        # 전에는 이 두 줄이 `if exceeded:` 뒤에 있어 에스컬레이션 경로가 키를
+        # 안 세우고 return 했고, 재개된 라운드가 `_planned_for_round` 의
+        # 폴백(전원)을 받아 **리뷰어 전원이 다시 돌았다.** 사람이 「이대로
+        # 진행한다」를 골라 돌아와도 수리 대상은 같으므로 델타도 같다.
+        delta = _delta_reviewer(blocking, planned, slot)
+        node.setdefault("rounds_planned", {})[str(round_ + 1)] = [delta]
         if exceeded:
             _loop_on_exceed(front)
             st.escalate(paths, s,
@@ -3773,8 +3795,6 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
                          "이대로 진행한다(미해결 지적을 안고 간다)", "중단한다"],
                         phase="05-code-review")
             return _escalation_envelope("record", paths, s)
-        delta = _delta_reviewer(blocking, planned, slot)
-        node.setdefault("rounds_planned", {})[str(round_ + 1)] = [delta]
         # 다음 회차에 델타가 회계해야 할 목록이다. `record` 가 같은 인자로
         # 부르는 함수이므로 봉투와 검사가 같은 것을 본다 (M38).
         prev_open = _previous_open(node.get("rounds") or {}, round_ + 1, delta)
