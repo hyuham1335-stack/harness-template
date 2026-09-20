@@ -9,8 +9,7 @@
     {"kind": "file", "path": "${run.dir}/01_plan.md", "min_bytes": 200}
   ],
   "produces": [
-    {"key": "verdict", "path": "${run.dir}/02_verdict.json", "kind": "json",
-     "schema": "verdict"}
+    {"key": "verdict", "path": "${run.dir}/02_verdict.json", "kind": "json"}
   ],
   "skip_when": "state.cross_verify.mode == \"skipped\"",
   "on_skip": {"status": "skipped", "grade": "PASS_WITH_GAPS",

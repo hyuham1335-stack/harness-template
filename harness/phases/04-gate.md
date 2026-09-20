@@ -15,10 +15,8 @@
      "mode": "fail"}
   ],
   "produces": [
-    {"key": "gate_report", "path": "${run.dir}/04_gate_report.json", "kind": "json",
-     "schema": "gate_report"},
-    {"key": "attribution", "path": "${run.dir}/attribution.json", "kind": "json",
-     "schema": "attribution"}
+    {"key": "gate_report", "path": "${run.dir}/04_gate_report.json", "kind": "json"},
+    {"key": "attribution", "path": "${run.dir}/attribution.json", "kind": "json"}
   ],
   "gate": {
     "runner": "adapter", "fail_fast": true, "rerun_failed_once": true,

@@ -9,10 +9,9 @@
     {"kind": "state", "pointer": "pr.pushed", "equals": true}
   ],
   "produces": [
-    {"key": "pr_review", "path": "${run.dir}/07_pr_review.json", "kind": "json",
-     "schema": "pr_review"},
+    {"key": "pr_review", "path": "${run.dir}/07_pr_review.json", "kind": "json"},
     {"key": "promo_applied", "path": "${run.dir}/07_promo_applied.json",
-     "kind": "json", "schema": "promotions"}
+     "kind": "json"}
   ],
   "gate": {"runner": "none"},
   "submit_checks": [
@@ -215,7 +214,14 @@ finding 은 **05 와 같은 스키마**를 쓴다 — **`rule_slug` 규칙도 �
 - `source` 는 닫힌 어휘다 — `code-review` · `external` · `human`
 - **`human` 은 수리 대상이 아니라 보고 대상이다.** 파이프라인이 사람과
   논쟁하지 않는다
-- `quote` 는 외부 리뷰 **원문의 부분문자열**이어야 한다. 05 와 같은 검사다
+- **`source: "external"` 인 finding 의 `quote` 는 봇 페이로드 원문의
+  부분문자열이어야 한다** — 아니면 exit 8. `review07 --external` 이 받은 파일을
+  `07_external.raw.json` 으로 남기고 `record` 가 그것과 대조한다. 05 와 같은
+  검사다. **`code-review` 와 `human` 은 대조하지 않는다** — 전자의 원문은 내장
+  리뷰어의 출력이라 저장되지 않고 후자는 수리 대상이 아니라 보고 대상이다.
+  건초더미가 없는 것을 검사한 척하지 않는다. 봇 원문이 없는 런에서
+  `source: "external"` 을 쓰면 그것 자체가 exit 8 이다 — **밖이 말했다는 주장인데
+  밖의 기록이 없으면 대조 불가능한 주장이다**
 - `change_requested: true` 인데 findings 가 비면 exit 8 — 무엇을 고치라는
   것인지 없이 차단만 하는 제출이다
 - **네가 그 자리에서 고쳤으면 `"resolution": "repaired"` 와

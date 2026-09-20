@@ -9,8 +9,7 @@
      "sha256_pointer": "request.sha256"}
   ],
   "produces": [
-    {"key": "triage", "path": "${run.dir}/00_triage.json", "kind": "json",
-     "schema": "triage"}
+    {"key": "triage", "path": "${run.dir}/00_triage.json", "kind": "json"}
   ],
   "submit_checks": [
     {"id": "triage_profile_vocabulary", "on_fail": 8},
