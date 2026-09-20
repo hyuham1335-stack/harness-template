@@ -38,6 +38,19 @@ git show --stat --format="%H%n%s%n%n%b" <sha>
 `base_branch` 면 브랜치 전체, `head_recent` 면 그냥 최근 것이다. **셋은 서로
 다른 뜻이고, 섞으면 숫자가 거짓이 된다.**
 
+**worktree 에서 한 일은 `worktrees[]` 칸에 있다.** 세션 `cwd` 는 main 이어도
+`cd <wt> && …` 로 일한 worktree 마다 `path` · `branch` · `commits` ·
+`commits_since` · `run` 이 따로 적힌다. 최상위 칸만 읽으면 그 세션은 "아무것도
+안 한 세션"으로 보인다.
+
+- `worktrees` 키가 **없으면** 트랜스크립트를 못 읽은 것이다(`worktrees_skipped`
+  가 이유를 말한다). `[]` 이면 읽었고 만진 worktree 가 없었다. 둘을 같게 적지 않는다.
+- `merges[]` 는 그 세션이 **머지(또는 머지를 풀)** 했다는 뜻이지 브랜치 커밋을
+  만들었다는 뜻이 아니다. 커밋의 출처는 그 sha 가 든 `worktrees[].commits` 쪽이다.
+- 한 sha 가 여러 줄에 보이면 `worktrees[]` 쪽 줄을 출처로 삼는다.
+- `worktrees[].commits_since.session_start` 가 있으면 그 칸은 **세션 시작 이후 커밋만** 센 것이다.
+  칸이 있는데 `commits` 가 비었으면 그 세션은 그 worktree 를 들여다보기만 했다.
+
 ## 2. §5 에 한 줄을 올린다
 
 `docs/PIPELINE-LOG.md` 의 `## 5. 발생한 문제와 해결` 표에 행을 추가한다.
