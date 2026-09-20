@@ -29,6 +29,11 @@
           "minimum": 0
         },
         "rules_dir": {"type": "string"},
+        "rules_exclude": {
+          "description": "rules_dir 직속이지만 규칙이 아닌 파일 — 하네스 자신이 쓰는 산출물이다. rules_read 기대 집합과 지시문 목적지 판정이 같이 뺀다. /log 한 번이 그 런의 모든 역할의 증명을 무효로 만들던 경로다 (미구현 백로그 23). 클론은 자기 파일을 여기 더한다.",
+          "type": "array",
+          "items": {"type": "string"}
+        },
         "instruction_review": {
           "description": "08 끝 지시문 검토 (ADR-H056). skill 은 메인이 부를 스킬 이름이고 불투명 문자열이다 — 존재를 검사하지 않는다. 스킬이 없는 환경은 null 로 두고 사람이 검토한다(비강등 gap instruction_review_manual). 끄는 스위치는 없다 — 열린 런의 08 은 늘 08_instruction_review.json 을 요구한다.",
           "type": "object",

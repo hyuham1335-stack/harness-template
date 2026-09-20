@@ -7,6 +7,7 @@
     "instruction_file": "CLAUDE.md",
     "instruction_slot_budget": 12,
     "rules_dir": "docs",
+    "rules_exclude": ["docs/PIPELINE-LOG.md"],
     "instruction_review": {"skill": "claude-md-management:revise-claude-md"},
     "secret_files": [".env.local", ".env"]
   },

@@ -3305,27 +3305,45 @@ def _findings_lines(findings):
                      for f in findings)
 
 
+def _rules_excluded(config):
+    """규칙이 **아닌** 파일의 경로 집합 — `config.project.rules_exclude`.
+
+    `rules_read` 집합과 지시문 목적지 판정이 **이것만** 공유한다 (백로그 23).
+    두 판정의 나머지는 의도적으로 다르다 — 하나는 존재로, 하나는 경로로 가른다.
+    """
+    return {Path(p).as_posix()
+            for p in ((config.get("project") or {}).get("rules_exclude") or [])}
+
+
 def _rules_read_expected(root, config):
     """워커가 읽었어야 할 규칙 파일 → 현재 sha256 (ADR-H055).
 
     `config.project.instruction_file` 과 `rules_dir` **직속** `*.md` 다. 재귀가
     아니다 — `docs/harness/**` 는 ADR 2600줄·원장·런 보고서이고 그것을 읽으라는
     뜻이 아니다. 없는 파일은 항목을 만들지 않는다.
+
+    **하네스 자신이 쓰는 파일은 뺀다** (`rules_exclude`, 백로그 23). `/log` 가
+    `docs/PIPELINE-LOG.md` 를 한 번 쓰면 그 런의 모든 역할이 이미 낸 증명을
+    잃었다 — 규칙이 바뀐 것이 아니라 하네스가 자기 산출물을 쓴 것이다.
     """
     root = Path(root)
     proj = config.get("project") or {}
+    skip = _rules_excluded(config)
     out = {}
     inst = proj.get("instruction_file")
-    if inst:
+    if inst and Path(inst).as_posix() not in skip:
         sha = st._sha256_file(root / inst)
         if sha:
             out[Path(inst).as_posix()] = sha
     rules_dir = proj.get("rules_dir")
     if rules_dir and (root / rules_dir).is_dir():
         for p in sorted((root / rules_dir).glob("*.md")):
+            rel = p.relative_to(root).as_posix()
+            if rel in skip:
+                continue
             sha = st._sha256_file(p)
             if sha:
-                out[p.relative_to(root).as_posix()] = sha
+                out[rel] = sha
     return out
 
 
@@ -5032,8 +5050,12 @@ def _instruction_destination(config, rel):
     """지시문 목적지인가 — `_rules_read_expected` 의 집합 ∪ `.claude/agent-memory/**`.
 
     존재가 아니라 경로로 가른다 — 검토가 `rules_dir` 에 새 파일을 만들 수 있다.
+    **공유하는 것은 제외 목록 하나뿐이다** (백로그 23) — 하네스가 쓰는 파일은
+    지시문 검토가 고칠 곳도 아니다.
     """
     rel = Path(rel).as_posix()
+    if rel in _rules_excluded(config):
+        return False
     proj = config.get("project") or {}
     inst = proj.get("instruction_file")
     if inst and rel == Path(inst).as_posix():

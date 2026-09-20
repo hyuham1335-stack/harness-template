@@ -2731,6 +2731,47 @@ class TestRecord03RulesRead:
                if e["kind"] == "check_fail" and e["data"].get("rules_read")]
         assert got, "무엇이 빠졌는지가 원장에 있어야 한다"
 
+    def test_하네스_자신이_쓰는_파일은_규칙_집합에_없다(self, repo):
+        """미구현 백로그 23 — `docs/PIPELINE-LOG.md` 는 `/log` 가 쓰는 파일이다.
+
+        `rules_dir` 직속 `*.md` 를 통째로 규칙으로 보면 **하네스 자신의 쓰기**가
+        모든 역할의 증명을 무효로 만든다. 제외 목록은 config 가 정한다 —
+        클론이 자기 파일을 더할 수 있어야 하기 때문이다.
+        """
+        (repo / "docs").mkdir(exist_ok=True)
+        (repo / "docs" / "PRD.md").write_text("# PRD\n", encoding="utf-8")
+        (repo / "docs" / "PIPELINE-LOG.md").write_text("# 로그\n", encoding="utf-8")
+        config = harness._read_json(repo / harness.CONFIG_REL)
+        assert "docs/PIPELINE-LOG.md" in (config["project"]["rules_exclude"]), \
+            config["project"]
+        got = cli._rules_read_expected(repo, config)
+        assert set(got) == {"CLAUDE.md", "docs/PRD.md"}, got
+
+    def test_런_중_log_가_돌아도_제출이_통과한다(self, repo, request_file, phases,
+                                                monkeypatch):
+        """`/log` 한 번이 모든 역할의 증명을 무효로 만들던 경로다 (백로그 23).
+
+        실측: 클론 4런 중 2런이 `rules_read` 사유로 `format_reject`.
+        """
+        (repo / "docs").mkdir(exist_ok=True)
+        (repo / "docs" / "PIPELINE-LOG.md").write_text("# 로그\n", encoding="utf-8")
+        run_id, paths, claims = self._enter(repo, request_file, monkeypatch)
+        _assert_error_in_tests(repo)
+        rr = _rules_read(repo)
+        (repo / "docs" / "PIPELINE-LOG.md").write_text(
+            "# 로그\n\n## 5. 발생한 문제와 해결\n\n- 한 줄 승격\n", encoding="utf-8")
+        env = self._submit(repo, run_id, claims, _claims(
+            test=["src/lib/match.test.ts"], rules_read=rr))
+        assert env["exit"] != 8, env["render"]
+
+    def test_제외_목록은_지시문_목적지_판정과_같은_출처다(self, repo):
+        """`_instruction_destination` 은 **존재가 아니라 경로로** 가른다 —
+        집합을 통째로 합치면 그 차이가 지워진다. 공유하는 것은 제외 목록뿐이다."""
+        config = harness._read_json(repo / harness.CONFIG_REL)
+        assert cli._instruction_destination(config, "docs/PRD.md")
+        assert not cli._instruction_destination(config, "docs/PIPELINE-LOG.md"), \
+            "하네스가 쓰는 파일은 지시문 검토가 고칠 곳이 아니다"
+
     def test_03_본문과_에이전트_정의가_같은_것을_말한다(self, repo):
         p03 = (ROOT / "harness" / "phases" / "03-implement.md").read_text(encoding="utf-8")
         assert "rules_read_sha" in p03 and "rules_read" in p03
