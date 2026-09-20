@@ -2989,9 +2989,11 @@ def _record_02(root, paths, s, phase_item, ctx, file, reviewer, round_):
     except (OSError, ValueError) as exc:
         return st.envelope("record", False, 8, s, {}, "JSON 을 읽지 못했다: %s" % exc, None)
 
-    errors = []
-    if payload.get("reviewer") == "main":
-        errors.append("reviewer 가 main 이다 — 독립 관측이 아니다")
+    # **어휘 검사는 05 와 같은 함수다** (백로그 21). `check_review` 를 통째로
+    # 부를 수는 없다 — 그 함수는 `raw_text` 로 quote·헤딩 개수를 대조하는데
+    # 02 의 `produces` 에 `.raw.md` 가 없어 넘길 원문이 없다. 02 가 대조하는
+    # 원문은 **플랜**이고, 그 사실은 아래 quote 검사와 페이즈 파일이 같이 말한다.
+    errors = verdict.check_vocabulary(payload)
     plan_text = (paths.run_dir / "01_plan.md").read_text(encoding="utf-8")
     for f in payload.get("findings") or []:
         q = f.get("quote")

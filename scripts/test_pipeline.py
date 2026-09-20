@@ -1927,6 +1927,100 @@ class TestCrossVerifySource:
         assert any("plan-reviewer" in (c.get("message") or "") for c in bad), bad
 
 
+class TestCrossVerifyChecksMatchThePrompt:
+    """미구현 백로그 21 — 02 의 프롬프트와 검사기가 같은 문서를 가리킨다.
+
+    `02-cross-verify.md` 는 `quote` 를 **리뷰어 자신의 `.raw.md`** 부분문자열로
+    요구하는데 `_record_02` 는 **`01_plan.md`** 와 대조했다. 프롬프트대로 쓰면
+    findings 수만큼 실패한다 — 클론 4런에서 02 가 돈 3런 중 2런이
+    `check_fail {"errors": 5}` → `format_reject` → 재제출이었다.
+
+    **검사기 쪽이 맞다.** 02 의 `produces` 에 raw 가 없어 raw 대조는 애초에
+    기계가 못 하고, 02 의 primary 는 MCP 도구라 그 프롬프트를 우리가 못 고친다 —
+    그 도구는 플랜 텍스트를 받아 리뷰하므로 quote 가 플랜에서 나온다.
+    그래서 **프롬프트를 검사기에 맞춘다.**
+    """
+
+    def _phase_text(self):
+        return (ROOT / "harness" / "phases" / "02-cross-verify.md").read_text(
+            encoding="utf-8")
+
+    def test_페이즈_파일이_플랜_원문을_인용하라고_적는다(self):
+        text = self._phase_text()
+        assert "01_plan.md" in text, \
+            "무엇을 인용하라는 것인지 프롬프트가 이름으로 말해야 한다"
+        assert "이 원문의 **부분문자열**" not in text, \
+            "리뷰어 자신의 원문을 가리키면 `_record_02` 와 다른 문서다"
+
+    def test_페이즈_파일이_기계가_못_하는_검사를_약속하지_않는다(self):
+        """`produces` 에 raw 가 없어 헤딩 개수 대조는 실행기가 할 수 없다.
+        선언만 있고 코드가 안 읽는 것이 이 하네스가 가장 싫어하는 모양이다."""
+        text = self._phase_text()
+        assert "헤딩 개수와 `findings` 개수가 같아야 한다" not in text
+        assert "`.raw.md` 대조에서 잡힌다" not in text
+
+    def test_교차검증기_지시가_02_에서는_플랜을_인용하게_한다(self):
+        """`plan-reviewer` 는 01 과 공유다 — 01 은 raw 대조가 맞으므로
+        통째로 바꾸지 않고 02 분기를 더한다."""
+        text = (ROOT / ".claude" / "agents" / "plan-reviewer.md").read_text(
+            encoding="utf-8")
+        assert "raw 원문의 부분문자열" in text, "01 의 규칙은 그대로다"
+        assert "02" in text and "01_plan.md" in text, \
+            "02 로 불렸을 때 무엇을 인용할지 적혀 있어야 한다"
+
+
+class TestCrossVerifyVocabulary:
+    """미구현 백로그 21 곁가지 — 02 가 `mode`·`severity` 어휘를 검사하지 않았다.
+
+    `_record_02` 는 `verdict.check_review` 를 부르지 않는다. 그럴 수도 없다 —
+    그 함수는 `raw_text` 를 필수로 받아 quote 대조와 **헤딩 개수 대조**를
+    내장하고, 02 는 raw 를 산출물로 받지 않아 `01_plan.md` 를 넘길 수밖에 없다.
+    그러면 헤딩이 0개라 findings 가 하나만 있어도 전 제출이 exit 8 이다.
+    어휘 검사만 떼어내 두 자리가 같은 것을 말하게 한다.
+    """
+
+    def _submit(self, repo, paths, payload):
+        v = paths.run_dir / "02_verdict.json"
+        v.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return cli.run_record(repo, phase="02", file=str(v), reviewer=None,
+                              round_=None)
+
+    def _converge_01(self, repo, paths):
+        _submit_plan(repo, paths, _risky_plan("schema"))
+        return _submit_review(repo, paths, _review("plan"))
+
+    def test_어휘_검사는_하나의_함수다(self):
+        assert cli.verdict.check_vocabulary({"reviewer": "xv", "mode": "primary",
+                                    "findings": []}) == []
+        assert cli.verdict.check_vocabulary({"reviewer": "main"}), "작성자 자기 리뷰"
+        assert cli.verdict.check_vocabulary({"reviewer": "xv", "mode": "secondary"})
+        assert cli.verdict.check_vocabulary(
+            {"reviewer": "xv", "findings": [{"id": "F-1", "severity": "blocker"}]})
+
+    def test_02_가_어휘_밖_mode_를_되돌린다(self, run01):
+        repo, paths, s = run01
+        self._converge_01(repo, paths)
+        env = self._submit(repo, paths, {"reviewer": "xv", "mode": "secondary",
+                                         "status": "ok", "findings": [],
+                                         "adopted": [], "resolved_from_previous": []})
+        assert env["exit"] == 8, (env["exit"], env.get("render"))
+        assert any("mode" in e for e in (env.get("data") or {}).get("errors") or []), \
+            env.get("data")
+
+    def test_02_가_어휘_밖_severity_를_되돌린다(self, run01):
+        repo, paths, s = run01
+        self._converge_01(repo, paths)
+        env = self._submit(repo, paths, {
+            "reviewer": "xv", "mode": "primary", "status": "ok",
+            "findings": [{"id": "F-1", "severity": "blocker", "title": "x"}],
+            "adopted": [{"id": "F-1", "verdict": "accept"}],
+            "resolved_from_previous": []})
+        assert env["exit"] == 8, (env["exit"], env.get("render"))
+        assert any("severity" in e
+                   for e in (env.get("data") or {}).get("errors") or []), \
+            env.get("data")
+
+
 class TestCrossVerifyTransientFailure:
     """primary 가 **있는데 지금 응답을 못 하는 것**은 부재가 아니다.
 

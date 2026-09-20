@@ -187,12 +187,14 @@ def rule_key(f):
 MODES = ("primary", "fallback")
 
 
-def check_review(payload, raw_text, previous_open, blocking=BLOCKING):
-    """리뷰어 제출의 판정. 반환: {"ok","exit","errors","keys","blocking"}
+def check_vocabulary(payload):
+    """`reviewer` · `mode` · `primary_error` · `severity` 의 닫힌 어휘. 반환: [오류]
 
-    `blocking` 은 **라운드를 강제하는 심각도**다. 05 는 기본값(critical·major)
-    이고, 01 은 페이즈 선언 `converge.blocking_severities` 에서 읽어 넘긴다
-    (ADR-H041) — 02 가 Critical 만 01 로 되돌리므로 01 도 같은 문턱을 쓴다.
+    `check_review` 와 **02 가 같이 쓴다.** 02 는 이 함수만 따로 부른다 —
+    `check_review` 는 `raw_text` 를 필수로 받아 quote 대조와 헤딩 개수 대조를
+    내장하는데, 02 의 `produces` 에 `.raw.md` 가 없어 넘길 원문이 없다.
+    어휘 검사까지 같이 잃으면 02 의 `mode` · `severity` 가 무검증으로 남는다
+    (미구현 백로그 21).
     """
     errors = []
     reviewer = payload.get("reviewer")
@@ -214,11 +216,24 @@ def check_review(payload, raw_text, previous_open, blocking=BLOCKING):
                       "**폴백으로 갈아탄 이유**이지 primary 가 성공한 런의 "
                       "기록이 아니다" % mode)
 
+    for f in payload.get("findings") or []:
+        if f.get("severity") not in SEVERITIES:
+            errors.append("%s 의 severity 가 어휘 밖이다: %r"
+                          % (f.get("id"), f.get("severity")))
+    return errors
+
+
+def check_review(payload, raw_text, previous_open, blocking=BLOCKING):
+    """리뷰어 제출의 판정. 반환: {"ok","exit","errors","keys","blocking"}
+
+    `blocking` 은 **라운드를 강제하는 심각도**다. 05 는 기본값(critical·major)
+    이고, 01 은 페이즈 선언 `converge.blocking_severities` 에서 읽어 넘긴다
+    (ADR-H041) — 02 가 Critical 만 01 로 되돌리므로 01 도 같은 문턱을 쓴다.
+    """
+    errors = check_vocabulary(payload)
+
     findings = payload.get("findings") or []
     for f in findings:
-        sev = f.get("severity")
-        if sev not in SEVERITIES:
-            errors.append("%s 의 severity 가 어휘 밖이다: %r" % (f.get("id"), sev))
         quote = f.get("quote")
         if quote and normalize_ws(quote) not in normalize_ws(raw_text):
             errors.append("%s 의 quote 가 리뷰어 원문에 없다 — 옮겨 적는 쪽이 "
