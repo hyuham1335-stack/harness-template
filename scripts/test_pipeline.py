@@ -6637,16 +6637,20 @@ class TestPrecheckInfra:
 
 
 def _done_run(repo, run_id, closed_at, adapter="nextjs-ts", phases=None,
-              statuses=None):
+              statuses=None, rules=None):
     """완주 런 하나를 `_workspace/runs/` 에 상태로 세운다.
 
     `phases` 는 페이즈 id 목록이고 전부 `passed` 다 — `statuses` 로 일부를
     덮는다. 완주 판정(`run_status: done`)과 페이즈 상태는 다른 사실이다.
+    `rules` 는 04 가 적은 귀속 규칙 관측이다 ([[ADR-H069]]) — 기본은 전부 봤다.
     """
     d = repo / "_workspace" / "runs" / run_id
     d.mkdir(parents=True, exist_ok=True)
     ph = {pid: {"status": (statuses or {}).get(pid, "passed")}
           for pid in (phases or [])}
+    if "04-gate" in ph:
+        ph["04-gate"]["attribution_rules"] = list(
+            harness.ADAPTER_RULE_NAMES if rules is None else rules)
     (d / "state.json").write_text(json.dumps({
         "run_id": run_id, "run_status": "done", "closed_at": closed_at,
         "adapter": {"id": adapter}, "phases": ph}, ensure_ascii=False),
@@ -6833,6 +6837,25 @@ class TestAdapterVerifyReady:
         text = (repo / "docs" / "harness" / "pipeline" / "runs"
                 / ("%s.md" % run_id)).read_text(encoding="utf-8")
         assert "기준 충족" in text and "verify-adapter" in text, text
+
+    def test_규칙이_비면_기준_충족이라고_말하지_않는다(self, repo, request_file,
+                                                phases):
+        """[[ADR-H069]] — 완주 수만 보고 「명령 한 번만 치면 된다」고 하면 거짓말이다.
+
+        그 상태로 `verify-adapter` 를 치면 exit 3 이다. 보고서는 **무엇이
+        비었는지**를 말해야 한다.
+        """
+        ids = harness.phase_ids(repo)
+        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
+            _done_run(repo, "q%d" % i, "2026-02-%02dT00:00:00+0900" % (i + 1),
+                      phases=ids, rules=["compile_error_regex"])
+        run_id, paths = _enter_08(repo, request_file, phases)
+        _report_data(paths)
+        cli.run_report(repo, run_id=run_id)
+        text = (repo / "docs" / "harness" / "pipeline" / "runs"
+                / ("%s.md" % run_id)).read_text(encoding="utf-8")
+        assert "기준 충족" not in text, text
+        assert "test_file_globs" in text, text
 
     def test_기준_미만이면_적지_않는다(self, repo, request_file, phases):
         self._runs(repo, harness.ADAPTER_VERIFY_MIN_RUNS - 1)
