@@ -161,9 +161,13 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 | **어댑터 `verified`** | **`false` 다.** 동봉 어댑터가 셋 다 `false` 이고, 그것이 정직한 값이다. 2차 파일럿이 `nextjs-ts` 로 15런을 완주했지만 그 값은 파일럿 리포의 것이다 — 클론은 `python scripts/harness.py verify-adapter` 로 올린다 — 완주 런 ≥ 3 **그리고** 어댑터가 선언한 귀속 규칙이 **전부 실물 실패에서 판정을 낸** 뒤에야 `true` 다 ([ADR-H069](DECISIONS.md)가 [ADR-H047](DECISIONS.md) 결정 3 을 강화했다 — 완주 횟수는 실패 경로의 근거가 아니다). `verified: false` 는 이제 등급을 깎지 않는다. 측정 뒤 완주 런이 5 이상 쌓이면 `precheck` 가 `calibration_stale` 로 재측정을 권한다(등급 X) |
 | **`calibration.json`** | **템플릿은 영구 미측정** ([ADR-H039](DECISIONS.md)). 클론이 첫 `calibrate` 로 채우고, 그 뒤로는 `promote --flush` 가 런마다 `tests_ran_floor` 를 올린다 ([ADR-H047](DECISIONS.md)) — 2차 파일럿은 1회 측정값(14)이 652개 시점까지 고정돼 급감 감지가 꺼져 있었다 |
 | **승격 자체 게이트** | **코드만 있다** ([ADR-H065](DECISIONS.md)). `promote --apply` 가 어댑터의 `lint` · `check` 를 돌리지만 실제 `applied` 승격은 아직 0건이다. 이 리포의 `self-python` 은 두 명령이 `null` 이라 여기서는 언제나 gap `promotion_selfgate_unverified` 다 |
-| **`risk_undeclared`** | **관측만, 표본 0** ([ADR-H067](DECISIONS.md)). 05 가 01 의 `risk` 신고와 켜진 리뷰어를 대조해 기록한다. 등급 · gap · exit 는 건드리지 않는다 |
-| **`files_max` 는 소스만 센다** | **미실측** ([ADR-H066](DECISIONS.md)). 2차 파일럿 exit 9 여섯 번 중 몇 번이 이 규칙으로 통과했을지 재지 않았다 — 클론의 첫 5런 exit 9 비율이 검사한다 |
-| **`findings.jsonl` · 승격 임계** | **템플릿 표본 0.** 2차 파일럿 표본(15런 · 140행 · 판정 13회 전부 skip)은 [ADR-H051](DECISIONS.md) · [ADR-H054](DECISIONS.md) 에 근거로만 남겼다. `THRESHOLDS` 여섯 숫자는 아직 바꾸지 않는다 — 시한 뒤 skip 은 이제 gap 이다 |
+| **`risk_undeclared`** | **관측만. 템플릿 표본 0** ([ADR-H067](DECISIONS.md)). 05 가 01 의 `risk` 신고와 켜진 리뷰어를 대조해 기록한다. 등급 · gap · exit 는 건드리지 않는다. **클론 표본 2/4런** — 클론 리포 `banana-island-ops` 의 4런(`20260919-2342-9258` · `-2343-d42d` · `-2343-1c04` · `20260920-0107-4265`, 2026-09-20) 에서 둘 다 `{reviewers:["data"]}` 였고 그 `data` 가 실제 지적을 냈다(minor 2 · major 1). §7-7 의 기준 5런에는 아직 못 미친다. 숫자는 그 리포의 `docs/harness/PILOT-LOG.md` 가 정본이다 |
+| **`files_max` 는 소스만 센다** | **템플릿 미실측** ([ADR-H066](DECISIONS.md)). 2차 파일럿 exit 9 여섯 번 중 몇 번이 이 규칙으로 통과했을지 재지 않았다. **클론 실측: 4런 중 3런이 그래도 exit 9**(클론 리포 `banana-island-ops` 의 4런(`20260919-2342-9258` · `-2343-d42d` · `-2343-1c04` · `20260920-0107-4265`, 2026-09-20), `at_05` 파일 12·13·13 · `at_06` 13·14·14). 테스트를 뺀 뒤에도 `files_max` 10 을 넘는다 — **값을 바꾸든 예측을 바꾸든 3/4런이 넘는 상한은 상한이 아니다.** 값은 여기서 정하지 않는다 ([ADR-H007](DECISIONS.md)) |
+| **`findings.jsonl` · 승격 임계** | **템플릿 표본 0.** 2차 파일럿 표본(15런 · 140행 · 판정 13회 전부 skip)은 [ADR-H051](DECISIONS.md) · [ADR-H054](DECISIONS.md) 에 근거로만 남겼다. **클론 원장 236행 / 17런** — `resolution: deferred` 71%, 최다 `rule_slug` 는 `nothing_locked` 37건. `THRESHOLDS` 여섯 숫자는 **여전히 바꾸지 않는다** — 남의 원장으로 자기 임계를 정하지 않는 것이 [ADR-H039](DECISIONS.md) 다. 시한 뒤 skip 은 이제 gap 이다 |
+
+> **이 표에 클론의 숫자가 들어올 때는 어느 리포의 몇 런인지를 적는다.** 값을 상속하지
+> 않기 위해서다 ([ADR-H039](DECISIONS.md)) — 템플릿의 상수는 그 숫자로 바뀌지 않고,
+> 바뀌는 것은 「재봤나 아직인가」뿐이다.
 
 **어댑터 `verified: true` 를 기다리지 않기로 했다.** 승격 조건은 *"`attribution` 의
 실패 경로가 실물 러너 출력에서 돈다"* 인데, 파일럿에서 일곱 런 연속 자연 실패가 오지
@@ -179,6 +183,10 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 
 ## 7. 이어서 볼 열린 질문
 
+> **「클론 4런」** 은 아래 전체에서 한 가지를 가리킨다 — 리포 `banana-island-ops` 의 `20260919-2342-9258` · `-2343-d42d` ·
+> `-2343-1c04` · `20260920-0107-4265` (2026-09-20). 숫자의 정본은 **그 리포의** `docs/harness/PILOT-LOG.md` 이고,
+> 여기에는 값이 아니라 「재봤나 아직인가」만 올린다 ([ADR-H039](DECISIONS.md)).
+
 파일럿이 답을 못 낸 채 넘긴 것들이다. **값을 지금 정하지 않는다** — 재지 않은 것을
 근거로 상수를 정하지 않는 것이 [ADR-H007](DECISIONS.md) 의 규율이다.
 
@@ -187,20 +195,32 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 2. **`instruction_slot_budget` 의 값.** 소비자는 생겼다 — 08 이 지시문 파일의
    최상위 불릿 수를 재고 초과를 비강등 gap 으로 적는다 ([ADR-H056](DECISIONS.md) 추기).
    값 12 는 미검증 상속값이고 이 템플릿의 `CLAUDE.md` 도 넘는다. **첫 검토 런들의
-   `used/budget` 을 본 뒤에** 값을 정한다
+   `used/budget` 을 본 뒤에** 값을 정한다. **클론 실측이 왔다** — **클론 4런** 이
+   **4/4 런 모두 `used 17 / budget 12`** 로 `instruction_slot_over_budget` 을 달았다.
+   즉 이 gap 은 런 내용과 무관한 상수이고, 그 상태로 등급을 깎으면 등급이 신호를 잃는다.
+   **선택지는 둘이다 — 값을 그 프로젝트에 맞게 올리거나, 초과를 비강등 gap 으로 내리거나.**
+   어느 쪽인지는 여기서 정하지 않는다 (미구현 백로그 22)
 3. **승격 임계 여섯 숫자.** 승격 축이 `rule_key` 로 바뀐 뒤([ADR-H034](DECISIONS.md))
    3런에 판정하기로 했는데, 그 3런은 클론한 프로젝트에서 돈다
 4. **리뷰어 호출 고정비.** 실행기의 계수가 형식 교정 왕복과 07 내장 리뷰를 안 세서
    실측과 갈렸다. 원장이 쌓이면 답이 나온다. **01 의 2라운드 이후·전이가 바로 내는
    다음 페이즈 지시·05 `merged`·승격 판정이 계수 밖이던 것은 닫혔다**
    ([ADR-H042](DECISIONS.md)). 05 수리 작성자도 이제 `05:r{n}:repair:{role}` 키로 센다 — 전에는
-   03 재제출에 섞였다 ([ADR-H064](DECISIONS.md)). 남은 것은 형식 교정 왕복이다
+   03 재제출에 섞였다 ([ADR-H064](DECISIONS.md)). 남은 것은 형식 교정 왕복이다 —
+   **클론 실측 4회** (**클론 4런** — 02 `format_reject` 2 · 03 `format_reject` 2).
+   그런데 넷 다 모델의 실수가 아니었다: 02 는 프롬프트와 검사기가 서로 다른 문서를 가리켜서,
+   03 은 `rules_read` 대조가 병렬 런을 상정하지 않아서였다 (미구현 백로그 21 · 23).
+   **왕복을 세기 전에 왕복을 만드는 쪽을 고쳐야 계수가 뜻을 갖는다**
 5. **트리아지 임계값 셋과 모델 등급 표.** `config.triage` 의 `small_max_paths` ·
    `normal_min_chars` · `model_call_when_undecided` 와 `config.models` 의 슬롯별
    등급은 실측 없이 고른 초기값이다 ([ADR-H044](DECISIONS.md)). 첫 세 런의
    `00_triage.json` 과 `triage_miss` 이벤트가 검사한다 — miss 가 docs 예측에서만
    나면 docs 규칙이 헐거운 것이고, 모델 호출이 매 런 나면 규칙이 너무 좁은 것이다.
    **2차 파일럿 15런의 값은 [ADR-H054](DECISIONS.md) 에 있다** — `small` 2런, `triage_miss` 0.
+   **클론에서 첫 miss 가 났다** (**클론 4런** 중 1런): `small → normal`,
+   계약 units 4 가 `profile.small_max_units` 3 을 넘었다. 벌칙이 `triage_miss:01:max_rounds=2`
+   gap 하나로 끝나지 않는다는 것도 같이 드러났다 — 그 miss 가 `review07.py` 에서 07 을
+   `effort: "medium"` 으로 **강제**해 빈손일 것이 보장된 페이즈를 한 번 더 불렀다 (미구현 백로그 25).
    등급표는 [ADR-H061](DECISIONS.md) 로 1차 개정했다 (작성자 sonnet · 검사자 normal opus ·
    effort 는 에이전트 프론트매터) — 여전히 실측 0 이다. 05 수리 작성자는 04 수리와 같은 `roles`
    슬롯이다 ([ADR-H064](DECISIONS.md))
@@ -213,7 +233,12 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
    클론의 첫 5런에서 이것이 난 런에 05·07 이 그 관점의 지적을 냈으면 게이트(02 강제 또는 gap)로
    올리고, 없었으면 매핑을 좁힌다. 비슷하게 첫 3런의 `routing.dropped` 에 `arch` 가 얼마나 자주
    오르는지, 그 런에 구조 지적이 새어 나갔는지 본다 — `test` 를 앞세운 대가가 구조 리뷰 누락이고,
-   새면 상한을 4→5 로 올린다 ([ADR-H062](DECISIONS.md))
+   새면 상한을 4→5 로 올린다 ([ADR-H062](DECISIONS.md)).
+   **클론 4런의 답**: `risk_undeclared` 는 **2런**에서 났고 둘 다
+   지목된 `data` 가 실제 지적을 냈다(minor 2 · major 1) — 신호는 있으나 **5런 기준 미달이라
+   게이트로 올리지 않는다.** `arch` 는 **3/4런에서 dropped**, 돈 1런의 수확은 **minor 4 · major 0**
+   이었다 — **상한을 4→5 로 올릴 근거는 이 표본에 없다.** 구조 지적이 새어 나간 증거가
+   없기 때문이다. [ADR-H062](DECISIONS.md) 는 그대로 둔다
 
 ---
 
