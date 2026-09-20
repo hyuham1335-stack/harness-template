@@ -31,7 +31,13 @@ import verdict  # noqa: E402
 
 SKILLS_REL = ".claude/skills"
 
-DEFAULT_CAPS = {"fix": 1, "small": 1, "normal": 3}
+# **`profile_caps` 에 기본값을 두지 않는다** (ADR-H025 · ADR-H073). 예전에는
+# `DEFAULT_CAPS = {"fix":1,"small":1,"normal":3}` 이 있었고 `config.json` 은
+# `{"docs":1,"fix":1,"small":2,"normal":4}` 였다 — 두 출처가 어긋난 채로,
+# config 가 이겨서 **무해했기 때문에** 아무도 눈치채지 못했다. 그것이 M36 의
+# 모양 그대로다. 폴백이 곧 새 하드코딩이라 지웠고, 빠진 선언은 `validate` 가
+# 기동 전에 잡는다 (lint-phases · doctor 양쪽에 배선돼 있다).
+CAP_LANES = ("docs", "fix", "small", "normal")
 DEFAULT_MERGE_BELOW = 150
 DEFAULT_FINDINGS_MAX = 50
 
@@ -52,6 +58,14 @@ def validate(root, config):
     런 중간에 알게 되면 앞 페이즈에 쓴 시간이 이미 낭비된 뒤다 (§E10 첫 행).
     """
     errors = []
+    # **리뷰어가 0개여도 이것은 본다** — `_cap` 은 라우팅이 비어도 불린다.
+    caps = (config.get("review") or {}).get("profile_caps") or {}
+    missing = [lane for lane in CAP_LANES if lane not in caps]
+    if missing:
+        errors.append("config.review.profile_caps 에 레인이 빠졌다: %s — "
+                      "기본값으로 낙하하지 않는다 (ADR-H025 · ADR-H073)"
+                      % ", ".join(missing))
+
     reviewers = config.get("reviewers") or []
     if not reviewers:
         # 리뷰어가 0개인 것은 설정 오류일 수도, 의도일 수도 있다. 막지 않고
@@ -150,8 +164,17 @@ def undeclared_risk(config, routed, risk):
 
 
 def _cap(config, profile):
-    caps = ((config.get("review") or {}).get("profile_caps") or DEFAULT_CAPS)
-    return caps.get(profile) or DEFAULT_CAPS.get(profile) or 1
+    """레인별 리뷰어 상한. **선언을 읽고, 없으면 멈춘다** (ADR-H025).
+
+    `validate` 가 기동 전에 같은 것을 보므로 여기까지 오는 일은 없어야 한다 —
+    `triage.decide` 가 "doctor 가 먼저 잡는다" 로 쓴 것과 같은 층이다.
+    """
+    caps = (config.get("review") or {}).get("profile_caps") or {}
+    if profile not in caps:
+        raise ValueError(
+            "config.review.profile_caps 에 %r 이 없다 — 기본값으로 낙하하지 "
+            "않는다. 폴백을 두면 그 폴백이 곧 새 하드코딩이다 (ADR-H025)" % profile)
+    return caps[profile]
 
 
 def _source_changed(config, changed, source_globs=None):

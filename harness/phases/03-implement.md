@@ -17,8 +17,7 @@
      "owner": "main", "min_bytes": 200,
      "must_contain": "${config.contract.sections.units}",
      "unless": "state.contract.mode == \"no_contract\""},
-    {"key": "claims", "path": "${run.dir}/03_claims.json", "kind": "json",
-     "schema": "claims"}
+    {"key": "claims", "path": "${run.dir}/03_claims.json", "kind": "json"}
   ],
   "submit_checks": [
     {"id": "dispatched_roles", "from": "config.roles[].when_contract_section",

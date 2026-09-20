@@ -207,6 +207,7 @@
     "review": {
       "description": "05 의 상한과 모드 전환점. **여기 값은 전부 미검증 상속값이다** — 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 첫 세 런의 원장이 이 값을 검사한다.",
       "type": "object",
+      "required": ["profile_caps"],
       "additionalProperties": false,
       "properties": {
         "merge_below_diff_lines": {
@@ -214,8 +215,10 @@
           "type": "integer", "minimum": 1
         },
         "profile_caps": {
+          "description": "레인별 리뷰어 상한. 네 레인이 **전부** 있어야 한다 — 코드에 기본값이 없다. 폴백을 두면 그 폴백이 곧 새 하드코딩이고 두 출처가 갈라진 날 어느 쪽이 이겼는지 볼 수 없다 (ADR-H025 · ADR-H073).",
           "type": "object",
           "additionalProperties": false,
+          "required": ["docs", "fix", "small", "normal"],
           "properties": {
             "docs": {"type": "integer", "minimum": 1},
             "fix": {"type": "integer", "minimum": 1},

@@ -41,6 +41,11 @@ TAXONOMY_REL = "docs/harness/pipeline/ledger/taxonomy.json"
 # 프론트매터 어휘. 늘리려면 여기와 team-spec 을 함께 고친다.
 REQUIRES_KINDS = ("file", "state", "clean_ownership", "adapter_stage")
 PRODUCES_KINDS = ("json", "markdown")
+# `produces[]` 의 키 집합도 닫는다 — `FRONT_KEYS` 가 최상위에 하는 일과 대칭이다.
+# 한때 여기 `schema` 가 열 곳에 있었는데 읽는 코드도 그 이름의 아티팩트도
+# 없었다 (ADR-H073). 집합을 닫아야 근거 없는 어휘가 되돌아오지 못한다.
+PRODUCES_KEYS = ("key", "path", "kind", "owner", "min_bytes", "must_contain",
+                 "unless")
 FRONT_KEYS = ("id", "index", "owner", "approval", "docs", "requires", "produces",
               "review", "converge", "submit_checks", "skip_when", "on_skip",
               "skip_policy", "gate", "loop", "allow", "on_success")
@@ -59,6 +64,135 @@ LINT_SLUG = "s" * 40
 # 루프 선언의 어휘. **늘리려면 그 동작을 먼저 만든다** — 없는 기계를 어휘로
 # 예고하는 것이 M36 이 이름한 결함 그 자체다.
 LOOP_ON_EXCEED = ("escalate",)
+
+# 종료 코드의 어휘. 정본은 team-spec §2.3 의 표이고 여기는 그것을 코드로
+# 내린 것이다 — 새 값을 여기서 만들지 않는다.
+EXIT_CODES = tuple(range(12))
+
+# 07 이 받은 봇 페이로드 원문. `record` 의 quote 대조가 이것을 건초더미로 쓴다
+# (ADR-H073). 워커 산출물이 아니라 실행기가 받은 것이라 `produces` 에 없다.
+EXTERNAL_RAW = "07_external.raw.json"
+
+# 제출 검사의 어휘와 **그 검사를 실제로 내는 자리**. `LOOP_ON_EXCEED` 와 같은
+# 규율이다 — **늘리려면 그 동작을 먼저 만든다** (M36 · ADR-H025).
+#
+# `impl` 은 `"모듈:이름"` 이고 `lint-phases` 가 `_resolve_submit_impl` 로
+# **해석한다**(호출하지는 않는다). 주석이 아니라 기계가 대조하는 사실이라야
+# 레지스트리가 기계의 소재에 대해 거짓말할 수 없다.
+#
+# **증명하는 것**: 그 검사의 구현 자리가 아직 있다.
+# **증명하지 않는 것**: 그 선언이 그 런에서 실제로 돌았다. 그것은 기록자가
+# 자기가 돌린 id 를 영수증으로 남겨야 말할 수 있고 미구현 백로그 31 이다.
+# 반쪽짜리 보증을 온전한 것처럼 적지 않는다.
+#
+# `exit` 는 페이즈 파일의 `on_fail` 과 대조된다. **이 값이 두 번째 하드코딩이
+# 되지 않게 하는 것은 lint 가 아니라 테스트다** — `test_the_registry_exit_is_
+# the_exit_a_real_run_returns` 가 실제 런의 exit 와 여기를 잇는다.
+#
+# 인라인 검사는 그것을 품은 기록자를 가리킨다. **거칠다** — `_record_02` 는
+# quote 대조 말고도 여럿을 하므로, 이 포인터는 "이 함수 안에 있다" 이지
+# "이 함수가 그 검사다" 가 아니다.
+SUBMIT_CHECKS = {
+    "triage_profile_vocabulary": {
+        "exit": 8, "impl": ("triage:check_submission",),
+        "why": "`profile` 이 `triage.VOCAB` 안인가"},
+    "triage_paths_substring": {
+        "exit": 8, "impl": ("triage:check_submission",),
+        "why": "`expected_paths` 가 요청 원문의 부분문자열인가 — 경로를 지어내지 못하게"},
+    "triage_docs_paths_in_glob": {
+        "exit": 8, "impl": ("triage:check_submission",),
+        "why": "`docs` 예측이면 그 경로가 전부 docs glob 안인가"},
+    "triage_unclear": {
+        "exit": 9, "impl": ("cli:_record_00",),
+        "why": "레인을 못 정했으면 모델이 고르지 않고 사람을 기다린다 (상태를 안 잠근다)"},
+    "reviewer_not_main": {
+        "exit": 8, "impl": ("verdict:check_vocabulary",),
+        "why": "작성자가 자기 글을 리뷰한 것은 독립 관측이 아니다"},
+    "source_quote_substring": {
+        "exit": 8, "impl": ("verdict:check_plan", "verdict:check_review",
+                            "cli:_record_02", "cli:_record_07"),
+        "why": "인용이 원문에 실재하는가. **건초더미가 페이즈마다 다르다** — 01 플랜은 "
+               "요청 원문, 01·05 리뷰어는 `.raw.md`, 02 는 플랜, 07 은 봇 페이로드다"},
+    "raw_json_severity_match": {
+        "exit": 8, "impl": ("verdict:check_review",),
+        "why": "원문의 심각도 헤딩 수와 findings 수가 맞는가 — 1라운드 수렴을 "
+               "허용하는 만큼 \"Major 0건\" 이 진짜인지 묻는 것이 이것뿐이다"},
+    "monotonicity": {
+        "exit": 8, "impl": ("verdict:check_review",),
+        "why": "이전 회차의 열린 지적이 조용히 증발하지 않았는가"},
+    "coverage_exact_once": {
+        "exit": 8, "impl": ("verdict:check_plan",),
+        "why": "COVERAGE 가 각 불변식을 정확히 한 번 덮는가"},
+    "plan_section_exists": {
+        "exit": 8, "impl": ("verdict:check_plan",),
+        "why": "`covered` 가 가리킨 `plan_section` 이 본문에 실재하는가"},
+    "coverage_reason_required": {
+        "exit": 8, "impl": ("verdict:check_plan",),
+        "why": "`covered` 가 아닌데 사유가 없으면 드리프트를 셀 수 없다"},
+    "intent_risk_vocabulary": {
+        "exit": 8, "impl": ("verdict:check_plan",),
+        "why": "INTENT 의 `risk` 가 `RISK_VOCAB` 안인가 — 02 생략이 이 자진신고 위에 선다"},
+    "drift_score_zero": {
+        "exit": 4, "impl": ("verdict:check_plan",),
+        "why": "의도가 새어 나갔다. 예산이 남아 있으므로 8 이 아니라 4 다"},
+    "critical_zero": {
+        "exit": 4, "impl": ("cli:_record_02",),
+        "why": "교차검증이 Critical 을 냈으면 01 로 되돌린다. 라운드를 더 주므로 4 다"},
+    "dispatched_roles": {
+        "exit": 8, "impl": ("cli:_dispatch_problem",),
+        "why": "계약의 절이 부르는 역할이 전부 디스패치됐는가"},
+    "rules_read_sha": {
+        "exit": 8, "impl": ("cli:_check_rules_read",),
+        "why": "워커가 규칙 파일을 열었다는 증명. 해시 일치는 \"읽었다\" 가 아니지만 "
+               "\"열어 보지도 않았다\" 는 가른다 (ADR-H055)"},
+    "clean_ownership": {
+        "exit": 8, "impl": ("attribution:clean_ownership",),
+        "why": "역할이 남의 경로를 건드리지 않았는가 · 고아 변경이 없는가"},
+    "tests_required": {
+        "exit": 8, "impl": ("cli:_tests_required",),
+        "why": "계약의 유닛·인가 항목에 대응하는 테스트가 있는가"},
+    "journeys_runnable": {
+        "exit": 8, "impl": ("contract:journey_problems",),
+        "why": "여정의 단계가 진입점 절의 `METHOD /path` 로 이어지는가 — 러너 없는 "
+               "여정을 스펙까지 쓴 뒤에 거부하면 그 스펙이 조용히 PR 에 실린다"},
+    "pr_number_is_int": {
+        "exit": 8, "impl": ("cli:_record_06",),
+        "why": "PR 번호가 정수인가 — 문자열 번호는 뒤에서 조용히 안 맞는다"},
+    "pr_state_vocabulary": {
+        "exit": 8, "impl": ("cli:_record_06",),
+        "why": "`state` 가 `PR_STATES` 안인가"},
+    "pr_number_stable": {
+        "exit": 8, "impl": ("cli:_record_06",),
+        "why": "기록된 PR 번호와 제출이 갈라지지 않았는가"},
+    "external_status_vocabulary": {
+        "exit": 8, "impl": ("cli:_record_07", "review07:normalize_external"),
+        "why": "`external.status` 가 `EXTERNAL_STATUS` 안인가. 제출이 실으면 "
+               "`review07` 이 센 값과 **대조한다** — 계수의 권위가 요약본을 낸 쪽으로 "
+               "넘어가지 않게 (불변식 8)"},
+    "change_request_open": {
+        "exit": 10, "impl": ("cli:_record_07",),
+        "why": "외부가 변경 요청을 낸 채로 07 을 끝낼 수 없다. **상태를 잠그므로** 10 이다"},
+}
+
+
+def _resolve_submit_impl(ptr):
+    """`"모듈:이름"` 을 콜러블로 해석한다. 없으면 `None`. **호출하지 않는다.**
+
+    `cli` 는 `import_module` 로 다시 읽지 않는다 — 스크립트로 돌 때 이 모듈은
+    `__main__` 이라, 이름으로 다시 읽으면 같은 파일이 **두 번째 모듈 객체**로
+    올라온다.
+    """
+    import importlib
+
+    mod_name, _sep, attr = ptr.partition(":")
+    if mod_name == "cli":
+        mod = sys.modules[__name__]
+    else:
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError:
+            return None
+    return getattr(mod, attr, None)
 
 
 class ConfigDeclarationError(ValueError):
@@ -728,7 +862,17 @@ def lint_phases(root, phases_dir=None):
     _lint_infra_preflight(adapter, config, add)
 
     seen_index, seen_keys, terminals = {}, {}, []
+    declared_checks = set()
     max_index = max((p["front"].get("index") or 0) for p in loaded.values())
+
+    # 레지스트리 자신이 먼저 검사 대상이다 — 가리키는 자리가 사라졌으면
+    # 페이즈 파일이 아니라 여기가 거짓말하고 있는 것이다.
+    for cid, spec in sorted(SUBMIT_CHECKS.items()):
+        for ptr in spec["impl"]:
+            if not callable(_resolve_submit_impl(ptr)):
+                add("cli.py", "submit_check_impl", "FAIL",
+                    "SUBMIT_CHECKS[%r] 의 구현 포인터가 해석되지 않는다: %r"
+                    % (cid, ptr))
 
     for pid, item in sorted(loaded.items()):
         front, path, sections = item["front"], item["path"], item["sections"]
@@ -785,12 +929,19 @@ def lint_phases(root, phases_dir=None):
                 add(name, "produces_kind", "FAIL",
                     "알 수 없는 produces kind: %r (%s)"
                     % (prod.get("kind"), ", ".join(PRODUCES_KINDS)))
+            unknown_pk = [k for k in prod if k not in PRODUCES_KEYS]
+            if unknown_pk:
+                add(name, "produces_keys", "FAIL",
+                    "produces 에 알 수 없는 키: %s (%s) — 읽는 코드가 없는 키는 "
+                    "선언이 아니라 장식이다 (ADR-H073)"
+                    % (", ".join(sorted(unknown_pk)), ", ".join(PRODUCES_KEYS)))
             key = prod.get("key")
             if key in seen_keys:
                 add(name, "produces_key", "FAIL",
                     "produces.key %r 가 %s 와 겹친다" % (key, seen_keys[key]))
             else:
                 seen_keys[key] = pid
+        _lint_submit_checks(name, front, declared_checks, add)
         _lint_loop(name, pid, front, loaded, add)
         _lint_converge(name, front, add)
         _lint_skip_policy(name, front, add)
@@ -829,10 +980,56 @@ def lint_phases(root, phases_dir=None):
             "종단이 둘 이상이다: %s — 런이 닫히는 자리는 하나다"
             % ", ".join(sorted(terminals)))
 
+    # **WARN 이지 FAIL 이 아니다.** M36 이 금지한 것은 어휘가 기계를 앞서는 한
+    # 방향이다 — 기계를 먼저 만들고 선언을 나중에 다는 것은 정당한 순서이고,
+    # `impl` 해석이 통과한 이상 그 기계는 실재한다. 여기서 막으면 그 순서가
+    # lint 에 걸린다.
+    for cid in sorted(set(SUBMIT_CHECKS) - declared_checks):
+        add("(전체)", "submit_check_unused", "WARN",
+            "SUBMIT_CHECKS[%r] 를 선언하는 페이즈가 없다 — 구현은 있는데(%s) "
+            "어느 페이즈도 그 검사를 약속하지 않는다"
+            % (cid, " · ".join(SUBMIT_CHECKS[cid]["impl"])))
+
     _lint_cycle(loaded, add)
     _lint_taxonomy(root, add)
     _lint_reviewers(root, config, add)
     return out
+
+
+def _lint_submit_checks(name, front, declared, add):
+    """선언된 제출 검사가 어휘 안이고 종료 코드가 레지스트리와 같은가 (ADR-H073).
+
+    `declared` 에 본 id 를 쌓는다 — 호출자가 전 페이즈를 돈 뒤 미선언 항목을
+    WARN 으로 남긴다.
+    """
+    checks = front.get("submit_checks")
+    if checks is None:
+        return
+    if not isinstance(checks, list):
+        add(name, "submit_check_shape", "FAIL", "submit_checks 는 배열이어야 한다")
+        return
+    for c in checks:
+        if not isinstance(c, dict) or "id" not in c or "on_fail" not in c:
+            add(name, "submit_check_shape", "FAIL",
+                "submit_checks 항목은 `id` 와 `on_fail` 을 갖는다: %r" % (c,))
+            continue
+        cid, got = c["id"], c["on_fail"]
+        spec = SUBMIT_CHECKS.get(cid)
+        if spec is None:
+            add(name, "submit_check_id", "FAIL",
+                "알 수 없는 제출 검사 id: %r — 어휘를 늘리려면 그 동작을 먼저 "
+                "만들고 `SUBMIT_CHECKS` 에 구현 자리와 함께 올린다 (M36)" % cid)
+            continue
+        declared.add(cid)
+        if got not in EXIT_CODES:
+            add(name, "submit_check_exit", "FAIL",
+                "%s 의 on_fail 이 종료 코드표 밖이다: %r (team-spec §2.3)"
+                % (cid, got))
+        elif got != spec["exit"]:
+            add(name, "submit_check_exit", "FAIL",
+                "%s 의 on_fail 이 %r 인데 구현은 %r 을 낸다 (%s) — 선언과 동작이 "
+                "갈라진 채로 남는 것이 M36 이다"
+                % (cid, got, spec["exit"], " · ".join(spec["impl"])))
 
 
 def _lint_converge(name, front, add):
@@ -4029,6 +4226,14 @@ def _record_07(root, paths, s, phase_item, ctx, file, reviewer, round_):
             errors.append("finding %s: severity 가 어휘 밖이다 (%r)"
                           % (f.get("id"), f.get("severity")))
 
+    # **인용은 원문에 실재해야 한다** (ADR-H073). 07 의 finding 은 메인이 봇
+    # 출력을 옮겨 적은 것이라, 대조가 없으면 「밖이 이렇게 말했다」를 옮긴 쪽이
+    # 지어낼 수 있다 — 01·05 가 `.raw.md` 에 대고 하는 것과 같은 검사다.
+    # **`code-review` 와 `human` 은 대조하지 않는다**: 전자의 원문은 내장
+    # 리뷰어의 출력이라 저장되지 않고, 후자는 수리 대상이 아니라 보고
+    # 대상이다. **건초더미가 없는 것을 검사한 척하지 않는다.**
+    errors += _external_quote_errors(paths, findings)
+
     # 가리킨 대상이 실재해야 선언이 대조 가능한 사실이 된다 (M48).
     errors += rv7.check_reraise(findings, _open_from_05(s))
 
@@ -4101,6 +4306,27 @@ def _record_07(root, paths, s, phase_item, ctx, file, reviewer, round_):
 
 
 PR_STATES = ("open", "closed", "merged")
+
+
+def _external_quote_errors(paths, findings):
+    """`source: "external"` finding 의 `quote` 가 봇 페이로드 원문에 있는가.
+
+    **원문이 없으면 「없어서 통과」가 아니라 거부다.** 밖이 말했다는 주장인데
+    밖의 기록이 없으면 그 주장은 대조 불가능하다 — 스킵을 통과로 세지 않는
+    것이 이 리포의 규율이다.
+    """
+    claims = [f for f in findings if f.get("source") == "external" and f.get("quote")]
+    if not claims:
+        return []
+    raw_path = paths.run_dir / EXTERNAL_RAW
+    if not raw_path.exists():
+        return ["`source: \"external\"` 인 finding 이 %d개인데 봇 페이로드 원문(%s)이 "
+                "없다 — `review07 --external` 로 받은 런에만 그 출처를 쓸 수 있다"
+                % (len(claims), EXTERNAL_RAW)]
+    hay = verdict.normalize_ws(raw_path.read_text(encoding="utf-8"))
+    return ["finding %s: `quote` 가 봇 페이로드 원문에 없다 — 옮겨 적는 쪽이 "
+            "지어냈거나 바꿨다" % f.get("id")
+            for f in claims if verdict.normalize_ws(f["quote"]) not in hay]
 
 
 def _record_06(root, paths, s, phase_item, ctx, file, reviewer, round_):
@@ -5319,6 +5545,14 @@ def run_review07(root, external=None, run_id=None):
                                % (" · ".join(rv7.EXTERNAL_STATUS),
                                   payload.get("status")), None)
         norm = rv7.normalize_external(payload)
+        # **건초더미를 남긴다** (ADR-H073). 07 의 finding 은 메인이 봇 출력을
+        # 옮겨 적은 것이고, 원문이 안 남으면 「밖이 이렇게 말했다」가 대조
+        # 불가능한 주장이 된다 — 01·05 가 `.raw.md` 에 대고 하는 것과 같은
+        # 규율이다 (불변식 8). `produces` 에 넣지 않는다: 이것은 워커가 내는
+        # 것이 아니라 실행기가 받은 것이고, 넣으면 진입 검사가 워커에게
+        # 요구한다 (ADR-H070 이 02 에서 배운 것).
+        (paths.run_dir / EXTERNAL_RAW).write_text(
+            f.read_text(encoding="utf-8"), encoding="utf-8")
 
     audit = rv7.audit_due(root)
     got = rv7.decide(s, norm, config, audit=audit)

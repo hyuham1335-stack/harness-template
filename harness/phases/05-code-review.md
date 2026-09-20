@@ -11,12 +11,10 @@
      "unless": "state.contract.mode == \"no_contract\""}
   ],
   "produces": [
-    {"key": "trace", "path": "${run.dir}/05_trace.json", "kind": "json",
-     "schema": "trace"},
-    {"key": "review", "path": "${run.dir}/05_review.json", "kind": "json",
-     "schema": "review"},
+    {"key": "trace", "path": "${run.dir}/05_trace.json", "kind": "json"},
+    {"key": "review", "path": "${run.dir}/05_review.json", "kind": "json"},
     {"key": "promo_staged", "path": "${run.dir}/05_promo_staged.json",
-     "kind": "json", "schema": "promotions"}
+     "kind": "json"}
   ],
   "review": {
     "routing": "config.reviewers",

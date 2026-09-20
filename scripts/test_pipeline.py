@@ -1245,6 +1245,147 @@ class TestLintPhases:
         assert out.returncode == 2
         assert json.loads(out.stdout)["exit"] == 2
 
+    def test_an_unknown_produces_key_fails(self, repo, phases):
+        """`produces[]` 의 키 집합도 닫혀 있다 — `FRONT_KEYS` 와 대칭."""
+        _rewrite(phases / "00-triage.md",
+                 lambda f: f["produces"][0].update({"schema": "triage"}))
+        assert _fails(_lint(repo), "produces_keys")
+
+    def test_no_shipped_phase_declares_a_produces_schema(self, repo, phases):
+        """ADR-H073 이 걷어냈다 — 읽는 코드도 그 이름의 아티팩트도 없었다.
+
+        되돌아오면 이 테스트가 문다. `test_an_unknown_produces_key_fails` 는
+        lint 가 막는가를 묻고, 이것은 **실물이 실제로 비었는가**를 묻는다.
+        """
+        left = [(p.name, pr) for p in sorted(phases.glob("*.md"))
+                for pr in (_front(p).get("produces") or []) if "schema" in pr]
+        assert left == [], left
+
+
+class TestProfileCapsHaveNoFallback:
+    """ADR-H073 (백로그 28 곁가지) — 폴백이 곧 새 하드코딩이다 (ADR-H025).
+
+    `DEFAULT_CAPS` 와 `config.json` 이 어긋나 있었고, **config 가 이겨서
+    무해했기 때문에** 아무도 눈치채지 못했다. M36 의 모양 그대로다.
+    """
+
+    def test_빠진_레인은_기동_전에_잡힌다(self, repo):
+        cfg = harness._read_json(repo / harness.CONFIG_REL)
+        del cfg["review"]["profile_caps"]["docs"]
+        assert any("profile_caps" in e for e in rv.validate(repo, cfg))
+
+    def test_선언이_없으면_기본값으로_낙하하지_않는다(self, repo):
+        cfg = harness._read_json(repo / harness.CONFIG_REL)
+        cfg["review"]["profile_caps"] = {}
+        with pytest.raises(ValueError):
+            rv.route(cfg, ["src/lib/x.ts"], "normal")
+
+    def test_선언을_바꾸면_절단이_따라_바뀐다(self, repo):
+        """**변이 테스트** — 「읽는지」만 보는 단언은 폴백을 되살려도 초록이다."""
+        cfg = harness._read_json(repo / harness.CONFIG_REL)
+        paths = ["src/lib/schemas.ts", "src/app/api/x/route.ts",
+                 "src/lib/match.test.ts"]
+        cfg["review"]["profile_caps"]["normal"] = 1
+        one = rv.route(cfg, paths, "normal")
+        cfg["review"]["profile_caps"]["normal"] = 3
+        three = rv.route(cfg, paths, "normal")
+        assert len(one["reviewers"]) == 1 and len(three["reviewers"]) == 3, (one, three)
+
+    def test_스키마가_네_레인을_전부_요구한다(self, repo):
+        schema = harness._read_json(repo / harness.CONFIG_SCHEMA_REL)
+        caps = schema["properties"]["review"]["properties"]["profile_caps"]
+        assert sorted(caps["required"]) == ["docs", "fix", "normal", "small"]
+
+
+class TestSubmitCheckDeclarationsAreRead:
+    """ADR-H073 — `submit_checks[].id` 가 실재하는 구현을 가리킨다.
+
+    **ADR-H025 의 함정이 여기서도 그대로다** (M36): 지금 동작이 선언값과
+    우연히 일치하므로 "레지스트리가 있다" 만 보는 단언은 **되돌려도 초록이다.**
+    여기 있는 것은 전부 **선언을 바꾸고 lint 가 무는가**를 묻는 변이 테스트이고,
+    마지막 하나는 **레지스트리의 종료 코드를 실제 런의 exit 와 대조한다** —
+    그것이 없으면 레지스트리 자신이 두 번째 하드코딩이 된다.
+    """
+
+    def test_every_shipped_declaration_is_in_the_registry(self, repo, phases):
+        """실물 8개가 선언한 id 전부가 어휘 안에 있다."""
+        unknown = [(p.name, c["id"])
+                   for p in sorted(phases.glob("*.md"))
+                   for c in (_front(p).get("submit_checks") or [])
+                   if c["id"] not in cli.SUBMIT_CHECKS]
+        assert unknown == [], unknown
+
+    def test_every_registry_impl_resolves(self):
+        """**반-M36 의 핵심.** 레지스트리가 기계의 소재를 거짓말할 수 없다.
+
+        호출하지는 않는다 — 해석만 한다. 구현 함수의 이름이 바뀌거나 사라지면
+        여기서 문다. 「그 선언이 그 런에서 실제로 돌았다」는 여전히 증명하지
+        않는다 (미구현 백로그 31).
+        """
+        for cid, spec in cli.SUBMIT_CHECKS.items():
+            assert spec["impl"], cid
+            for ptr in spec["impl"]:
+                assert callable(cli._resolve_submit_impl(ptr)), (cid, ptr)
+
+    def test_an_unknown_id_fails_lint(self, repo, phases):
+        _rewrite(phases / "01-plan.md",
+                 lambda f: f["submit_checks"].append(
+                     {"id": "made_up_check", "on_fail": 8}))
+        assert _fails(_lint(repo), "submit_check_id")
+
+    def test_an_impl_pointing_at_nothing_fails_lint(self, repo, phases, monkeypatch):
+        """레지스트리 자신이 검사 대상이다 — 가짜 포인터는 lint 를 통과 못 한다."""
+        broken = dict(cli.SUBMIT_CHECKS)
+        broken["triage_unclear"] = dict(broken["triage_unclear"],
+                                        impl=("cli:_no_such_function",))
+        monkeypatch.setattr(cli, "SUBMIT_CHECKS", broken)
+        assert _fails(_lint(repo), "submit_check_impl")
+
+    def test_on_fail_must_equal_the_registry_exit(self, repo, phases):
+        """「페이즈는 4 라는데 코드는 8 을 낸다」를 잡는다 — M36 의 드리프트."""
+        _rewrite(phases / "02-cross-verify.md",
+                 lambda f: f["submit_checks"].__setitem__(
+                     2, dict(f["submit_checks"][2], on_fail=8)))
+        assert _fails(_lint(repo), "submit_check_exit")
+
+    def test_on_fail_outside_the_exit_table_fails_lint(self, repo, phases):
+        _rewrite(phases / "00-triage.md",
+                 lambda f: f["submit_checks"].__setitem__(
+                     0, dict(f["submit_checks"][0], on_fail=99)))
+        assert _fails(_lint(repo), "submit_check_exit")
+
+    def test_a_registry_id_no_phase_declares_warns_but_does_not_fail(
+            self, repo, phases, monkeypatch):
+        """WARN 이지 FAIL 이 아니다.
+
+        M36 이 금지한 것은 **어휘가 기계를 앞서는 것** 한 방향이다. 기계를 먼저
+        만들고 선언을 나중에 다는 것은 정당한 순서라 lint 가 막지 않는다 —
+        `impl` 해석이 통과한 이상 기계는 실재한다.
+        """
+        extra = dict(cli.SUBMIT_CHECKS)
+        extra["nobody_declares_me"] = {"exit": 8, "impl": ("verdict:check_vocabulary",),
+                                       "why": "테스트가 심은 항목"}
+        monkeypatch.setattr(cli, "SUBMIT_CHECKS", extra)
+        findings = _lint(repo)
+        assert _fails(findings, "submit_check_unused") == []
+        warns = [f for f in findings
+                 if f["rule"] == "submit_check_unused" and f["status"] == "WARN"]
+        assert warns, findings
+
+    def test_the_registry_exit_is_the_exit_a_real_run_returns(self, repo, phases):
+        """**레지스트리가 두 번째 하드코딩이 되지 않게 하는 유일한 방어.**
+
+        리터럴 `9` 와 비교하지 않는다 — **레지스트리 값과** 비교한다. 그래야
+        `_record_00` 이 바뀌면 lint 가 아니라 여기가 먼저 문다. 이것이 없으면
+        레지스트리는 페이즈 파일과 **독립된 두 번째 출처**가 되고, M36 이
+        이름한 결함이 한 층 위로 이사할 뿐이다.
+        """
+        paths, _s = _init(repo, REQUEST_TEXT)
+        cli.run_next(repo, run_id=paths.run_id)
+        env = _submit_triage(repo, paths, {"profile": "unclear",
+                                           "expected_paths": [], "reasons": []})
+        assert env["exit"] == cli.SUBMIT_CHECKS["triage_unclear"]["exit"], env
+
 
 # ---------------------------------------------------------------------------
 # D. 페이즈 파서 · requires
@@ -11439,6 +11580,66 @@ class TestReview07ZeroFindings:
         assert s["review05"]["major"] == 1
 
 
+class TestRecord07ExternalQuote:
+    """ADR-H073 — 07 이 선언·약속만 하고 **안 하던** 검사다.
+
+    `07-pr-review.md` 가 `source_quote_substring` 을 프론트매터로 선언하고
+    산문으로 "05 와 같은 검사다" 라고 적는데 `_record_07` 에 quote 를 보는 줄이
+    한 줄도 없었다. 07 의 findings 는 **외부 봇·사람** 에서 오는, 파이프라인에서
+    가장 덜 신뢰되는 입력이다.
+    """
+
+    _F = {"id": "G-1", "category": "AUTHZ_MISSING_RULE", "severity": "major",
+          "target_role": "impl", "title": "인가 누락", "path": "src/a.ts",
+          "rule_slug": "authz_missing_rule", "source": "external"}
+
+    def _enter(self, repo, request_file, phases, **ext):
+        ldg.seed(repo)
+        run_id, paths = _enter_07(repo, request_file, phases)
+        _enable_bot(repo)
+        f = _external(paths, **ext)
+        cli.run_review07(repo, external=str(f), run_id=run_id)
+        return run_id, paths
+
+    def test_봇_원문을_런에_남긴다(self, repo, request_file, phases):
+        """건초더미가 없으면 대조가 성립하지 않는다 — 먼저 남기는 것이 이 결정이다."""
+        _run_id, paths = self._enter(repo, request_file, phases)
+        assert (paths.run_dir / cli.EXTERNAL_RAW).exists()
+
+    def test_원문에_없는_quote_는_exit_8(self, repo, request_file, phases):
+        run_id, paths = self._enter(repo, request_file, phases, findings=[
+            dict(self._F, quote="봇이 실제로 쓴 문장")])
+        env = cli.run_record(repo, "07", str(_r07(paths, findings=[
+            dict(self._F, quote="옮겨 적는 쪽이 지어낸 문장")])), run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+        assert any("quote" in e for e in env["data"]["errors"]), env["data"]
+
+    def test_원문에_있는_quote_는_통과한다(self, repo, request_file, phases):
+        run_id, paths = self._enter(repo, request_file, phases, findings=[
+            dict(self._F, quote="봇이 실제로 쓴 문장")])
+        env = cli.run_record(repo, "07", str(_r07(paths, findings=[
+            dict(self._F, quote="봇이 실제로 쓴 문장")])), run_id=run_id)
+        assert env["exit"] != 8, env["render"]
+
+    def test_사람_코멘트는_대조하지_않는다(self, repo, request_file, phases):
+        """건초더미가 없는 것을 검사한 척하지 않는다 — `human` 은 보고 대상이다."""
+        run_id, paths = self._enter(repo, request_file, phases)
+        env = cli.run_record(repo, "07", str(_r07(paths, findings=[
+            dict(self._F, source="human", quote="원문에 없는 말")])),
+            run_id=run_id)
+        assert env["exit"] != 8, env["render"]
+
+    def test_봇_원문이_없는_런에서_external_출처는_거부된다(
+            self, repo, request_file, phases):
+        """**없어서 통과가 아니다.** 밖의 기록이 없으면 그 주장은 대조 불가능하다."""
+        ldg.seed(repo)
+        run_id, paths = _enter_07(repo, request_file, phases, decide=True)
+        env = cli.run_record(repo, "07", str(_r07(paths, findings=[
+            dict(self._F, quote="아무 말")])), run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+        assert any(cli.EXTERNAL_RAW in e for e in env["data"]["errors"]), env["data"]
+
+
 class TestRecord07ExternalAuthority:
     """외부 Major 의 권위는 `review07` 의 재계수에 있다 (G-6 · 불변식 8)."""
 
@@ -11878,15 +12079,26 @@ class TestRecord07:
         assert s["review07"]["escaped_05"] == 0
 
     def test_변경_요청_미해결은_exit_10(self, repo, request_file, phases):
-        """PR 체크가 빨간불인데 파이프라인이 초록불인 척하지 않는다."""
+        """PR 체크가 빨간불인데 파이프라인이 초록불인 척하지 않는다.
+
+        **ADR-H073 이 이 픽스처를 고쳤다.** 전에는 봇이 꺼진 런(`external.status`
+        가 `disabled`)에서 `source: "external"` 을 주장했다 — 밖이 없는데 밖이
+        말했다고 한 것이고, 대조가 없어서 통과했다. 변경 요청은 정의상 외부
+        리뷰가 내는 것이므로(§3.7) 봇을 켜고 그 원문을 준다.
+        """
         ldg.seed(repo)
-        run_id, paths = _enter_07(repo, request_file, phases, decide=True)
+        run_id, paths = _enter_07(repo, request_file, phases)
+        _enable_bot(repo)
+        quote = "트랜잭션 경계가 없다"
+        cli.run_review07(repo, run_id=run_id, external=str(_external(
+            paths, change_requested=True,
+            findings=[{"title": "고쳐라", "severity": "major", "quote": quote}])))
         f = _r07(paths, change_requested=True, findings=[
             {"id": "G-1", "category": "TX_BOUNDARY", "severity": "major",
              "target_role": "impl", "title": "고쳐라", "source": "external",
-             "quote": "x"}])
+             "quote": quote}])
         env = cli.run_record(repo, "07", str(f), run_id=run_id)
-        assert env["exit"] == 10
+        assert env["exit"] == 10, env["render"]
 
     def test_변경_요청인데_findings_가_비면_exit_8(self, repo, request_file,
                                                   phases):
@@ -14918,7 +15130,6 @@ class TestFixLane:
         routed = rv.route(cfg, ["src/lib/schemas.ts", "src/app/api/x/route.ts"], "fix")
         assert [r["code"] for r in routed["reviewers"]] == ["gen"], routed
         assert routed["capped"] is True
-        assert rv.DEFAULT_CAPS["fix"] == 1
 
     def test_07_skips_fix_unless_05_saw_nothing(self):
         cfg = _cfg()
