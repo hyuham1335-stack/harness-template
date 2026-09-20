@@ -48,6 +48,13 @@ RUNS_REL = "_workspace/runs"
 # 어댑터 `verified` 를 올리는 완주 런 수의 바닥 (ADR-H047 결정 3). 미검증
 # 초기값이다 — 2차 파일럿 15런이 전부 01~08 `passed` 였으므로 즉시 충족된다.
 ADAPTER_VERIFY_MIN_RUNS = 3
+
+# 어댑터 `attribution` 의 규칙 이름 = 어댑터 필드명. 승격 판정이 **선언**과
+# **관측**을 같은 어휘로 대조한다 (ADR-H069). 관측을 내는 쪽은
+# `pipeline/attribution.py` 의 `rules_fired` 다 — 그 모듈이 이 모듈을 부르므로
+# 어휘의 집은 여기다.
+ADAPTER_RULE_NAMES = ("compile_error_regex", "symbol_not_found_patterns",
+                      "app_frame_prefixes", "test_file_globs")
 PROFILE_DIR_REL = "harness/profiles"
 
 # 경로 240자 상한 — 한글 식별자가 흔한 리포에서 이게 깨지면 원장이 조용히 오염된다
@@ -928,6 +935,28 @@ def qualified_runs(root, adapter_id):
     return [r for r, _ in _classify_runs(root, adapter_id, ids)[0]]
 
 
+def observed_rules(root, adapter_id):
+    """완주 런들이 04 에 적어 둔 귀속 규칙의 합집합.
+
+    한 런이 규칙 전부를 겪을 필요는 없다 — 드문 경로는 드물게 온다. `_workspace/`
+    는 로컬 자료라 새 클론에서는 빈 집합이고, 그래서 이것으로 굳히는 판정은
+    결과를 파일에 적는다 (ADR-H047 · ADR-H069).
+    """
+    out = set()
+    for s in completed_runs(root):
+        if ((s.get("adapter") or {}).get("id")) != adapter_id:
+            continue
+        node = (s.get("phases") or {}).get("04-gate") or {}
+        out |= set(node.get("attribution_rules") or [])
+    return out
+
+
+def required_rules(adapter):
+    """어댑터가 **선언한** 규칙만 요구한다 — 없는 규칙은 돌 수가 없다."""
+    att = adapter.get("attribution") or {}
+    return set(r for r in ADAPTER_RULE_NAMES if att.get(r))
+
+
 def run_verify_adapter(root, min_runs=ADAPTER_VERIFY_MIN_RUNS, now=None):
     """완주 런 ≥ `min_runs` 이고 그 런들이 페이즈 전부를 `passed` 로 지났으면
     어댑터 `verified` 를 `true` 로 올린다 (ADR-H047 결정 3).
@@ -959,7 +988,14 @@ def run_verify_adapter(root, min_runs=ADAPTER_VERIFY_MIN_RUNS, now=None):
              len(qualified), min_runs))
     for run_id, bad in rejected:
         print("  - %s: passed 가 아닌 페이즈 — %s" % (run_id, ", ".join(bad)))
-    if len(qualified) < min_runs:
+    observed = observed_rules(root, adapter_id)
+    required = required_rules(adapter)
+    missing = sorted(required - observed)
+    print("  귀속 규칙 — 선언 %d · 실물 실패에서 판정을 낸 것 %d"
+          % (len(required), len(required & observed)))
+    for rule in missing:
+        print("  - %s: 아직 아무것도 결정한 적이 없다" % rule)
+    if len(qualified) < min_runs or missing:
         print("  기준 미달 — 어댑터를 바꾸지 않았다. verified 는 %s 그대로다."
               % json.dumps(bool(adapter.get("verified"))))
         return 3
@@ -967,10 +1003,13 @@ def run_verify_adapter(root, min_runs=ADAPTER_VERIFY_MIN_RUNS, now=None):
     stamp = now or datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
     run_ids = [r for r, _ in qualified]
     adapter["verified"] = True
+    rule_list = ", ".join(sorted(required))
     adapter["_verified_note"] = (
-        "verify-adapter: 완주 런 %d (%s) · %s — %s 전부 passed 인 런을 셌다 "
-        "(ADR-H047). 실패를 만들어 검증한 것이 아니다."
-        % (len(run_ids), ", ".join(run_ids), stamp, "%s~%s" % (ids[0], ids[-1])))
+        "verify-adapter: 완주 런 %d (%s) · %s — %s 전부 passed 이고, 어댑터가 "
+        "선언한 귀속 규칙(%s)이 **전부 실물 실패에서 판정을 냈다** (ADR-H069). "
+        "일부러 만든 실패가 아니라 관측이다."
+        % (len(run_ids), ", ".join(run_ids), stamp, "%s~%s" % (ids[0], ids[-1]),
+           rule_list))
     path.write_text(json.dumps(adapter, indent=2, ensure_ascii=False) + "\n",
                     encoding="utf-8")
     print("  올림: %s → verified: true" % path.relative_to(root).as_posix())
@@ -984,7 +1023,8 @@ def run_verify_adapter(root, min_runs=ADAPTER_VERIFY_MIN_RUNS, now=None):
             cal = None
         if isinstance(cal, dict):
             cal["adapter_verified"] = True
-            cal["adapter_verified_source"] = {"runs": run_ids, "at": stamp}
+            cal["adapter_verified_source"] = {"runs": run_ids, "at": stamp,
+                                              "rules": sorted(required)}
             cal_path.write_text(json.dumps(cal, indent=2, ensure_ascii=False) + "\n",
                                 encoding="utf-8")
             print("  갱신: %s → adapter_verified: true" % cal_rel)

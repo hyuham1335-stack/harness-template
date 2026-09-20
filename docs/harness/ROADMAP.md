@@ -158,7 +158,7 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 | 8페이즈 01~08 실물 완주 | **검증됨** — 한 파일럿에서 파이프라인 런 8회 |
 | `doctor` 의 거부 8종 | **검증됨** — 일부러 깨뜨린 config 를 전부 거부한다 |
 | 스택 교체 시 코어 무변경 | **검증됨** — 어댑터를 갈아도 코어는 0줄이다 ([ADR-H038](DECISIONS.md)) |
-| **어댑터 `verified`** | **`false` 다.** 동봉 어댑터가 셋 다 `false` 이고, 그것이 정직한 값이다. 2차 파일럿이 `nextjs-ts` 로 15런을 완주했지만 그 값은 파일럿 리포의 것이다 — 클론은 `python scripts/harness.py verify-adapter` 로 올린다 — 완주 런 ≥ 3 이 전부 01~08 `passed` 면 `true` ([ADR-H047](DECISIONS.md)). 측정 뒤 완주 런이 5 이상 쌓이면 `precheck` 가 `calibration_stale` 로 재측정을 권한다(등급 X) |
+| **어댑터 `verified`** | **`false` 다.** 동봉 어댑터가 셋 다 `false` 이고, 그것이 정직한 값이다. 2차 파일럿이 `nextjs-ts` 로 15런을 완주했지만 그 값은 파일럿 리포의 것이다 — 클론은 `python scripts/harness.py verify-adapter` 로 올린다 — 완주 런 ≥ 3 **그리고** 어댑터가 선언한 귀속 규칙이 **전부 실물 실패에서 판정을 낸** 뒤에야 `true` 다 ([ADR-H069](DECISIONS.md)가 [ADR-H047](DECISIONS.md) 결정 3 을 강화했다 — 완주 횟수는 실패 경로의 근거가 아니다). `verified: false` 는 이제 등급을 깎지 않는다. 측정 뒤 완주 런이 5 이상 쌓이면 `precheck` 가 `calibration_stale` 로 재측정을 권한다(등급 X) |
 | **`calibration.json`** | **템플릿은 영구 미측정** ([ADR-H039](DECISIONS.md)). 클론이 첫 `calibrate` 로 채우고, 그 뒤로는 `promote --flush` 가 런마다 `tests_ran_floor` 를 올린다 ([ADR-H047](DECISIONS.md)) — 2차 파일럿은 1회 측정값(14)이 652개 시점까지 고정돼 급감 감지가 꺼져 있었다 |
 | **승격 자체 게이트** | **코드만 있다** ([ADR-H065](DECISIONS.md)). `promote --apply` 가 어댑터의 `lint` · `check` 를 돌리지만 실제 `applied` 승격은 아직 0건이다. 이 리포의 `self-python` 은 두 명령이 `null` 이라 여기서는 언제나 gap `promotion_selfgate_unverified` 다 |
 | **`risk_undeclared`** | **관측만, 표본 0** ([ADR-H067](DECISIONS.md)). 05 가 01 의 `risk` 신고와 켜진 리뷰어를 대조해 기록한다. 등급 · gap · exit 는 건드리지 않는다 |
@@ -169,6 +169,11 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 실패 경로가 실물 러너 출력에서 돈다"* 인데, 파일럿에서 일곱 런 연속 자연 실패가 오지
 않았다. **일부러 실패를 만들어 통과시키는 것은 검증이 아니라 결과를 만들어 내는
 것**이라 하지 않았다. 클론한 프로젝트에서 자연 실패가 오면 그때 올린다.
+
+[ADR-H069](DECISIONS.md)가 그 조건을 기계가 판정하게 만들었다 — 04 가 어느 규칙이
+**판정을 냈는지** 런에 적고, `verify-adapter` 가 그 합집합을 선언과 대조한다.
+원칙은 그대로다: 보관된 실물 출력을 `--replay` 로 되먹이는 것은 지어낸 실패가
+아니지만, 없는 실패를 만들어 내는 것은 여전히 하지 않는다.
 
 ---
 

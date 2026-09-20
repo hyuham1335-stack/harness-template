@@ -82,6 +82,40 @@ def first_app_frame(adapter, frames):
     return None
 
 
+
+# ------------------------------------------------------------------ 규칙 관측
+
+# 규칙 이름의 집은 `harness.ADAPTER_RULE_NAMES` 다 — 승격 판정이 선언과 관측을
+# 같은 어휘로 대조하고, 이 모듈이 그 모듈을 부르므로 방향은 이쪽뿐이다.
+
+
+def rules_fired(adapter, failures):
+    """실패 기록이 증언하는 규칙의 집합. 기록의 **기존 필드만** 본다.
+
+    **불린 것이 아니라 결정한 것만 센다.** 프레임이 테스트 파일뿐인 실패는
+    `first_app_frame` 이 `None` 이라 접두·glob 이 아무것도 가르지 않았다 —
+    규칙이 틀려 있어도 같은 결과가 나온다. 완주 횟수가 실패 경로의 근거가 될
+    수 없는 것과 같은 이유다 ([[ADR-H069]]).
+
+    선언하지 않은 규칙은 돌 수가 없으므로 관측에서도 뺀다. 실패 dict 에 키를
+    더하지 않는다 — 기록의 모양이 곧 replay 픽스처의 모양이다.
+    """
+    att = adapter.get("attribution") or {}
+    out = set()
+    for f in failures or []:
+        kind = f.get("kind")
+        if kind == "compile":
+            # 이 기록은 `compile_error_regex` 가 매칭됐을 때만 생긴다.
+            out.add("compile_error_regex")
+            if f.get("in_contract"):
+                # 컴파일 기록에서 이 값을 참으로 만드는 경로는 심볼 강제뿐이다.
+                out.add("symbol_not_found_patterns")
+        elif kind == "test" and first_app_frame(adapter, f.get("frames")):
+            out.add("app_frame_prefixes")
+            out.add("test_file_globs")
+    return set(r for r in out if att.get(r))
+
+
 # ------------------------------------------------------------------ 시그니처
 
 def normalize_message(msg):

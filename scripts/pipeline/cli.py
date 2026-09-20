@@ -4224,6 +4224,21 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
         stuck_after=((phase_item["front"].get("loop") or {})
                      .get("stuck_after_identical") or 2))
 
+    # 어느 귀속 규칙이 **판정을 냈는가**를 판정이 일어난 자리에서 적는다
+    # (ADR-H069). 나중에 런들을 긁지 않는 이유: `--replay` 가 이 경로를 그대로
+    # 지나므로 보관된 실물 출력을 되먹이면 관측이 공짜로 따라온다. 두 분기가
+    # 모두 지나는 유일한 자리라 여기서 한 번만 적는다.
+    import attribution
+    _failures = (dispatch or {}).get("failures") or []
+    _node = s.setdefault("phases", {}).setdefault(pid, {})
+    _node["attribution_rules"] = sorted(
+        set(_node.get("attribution_rules") or [])
+        | attribution.rules_fired(adapter, _failures))
+    # 실패는 났는데 항목을 하나도 못 읽었다 — 규칙이 실물 출력에 안 맞는다는
+    # 뜻이고, 지금까지 이 사실에는 아무 표시가 없었다. 비강등이 아니다.
+    if any(f.get("kind") == "stage" for f in _failures):
+        st.demote(s, st.GRADES[1], "attribution_unparsed")
+
     if report.get("tests"):
         s["tests"] = report["tests"]
     for gap in report.get("gaps") or []:
