@@ -36,7 +36,6 @@ import verdict  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 PHASES_REL = "harness/phases"
-TAXONOMY_REL = "docs/harness/pipeline/ledger/taxonomy.json"
 
 # 프론트매터 어휘. 늘리려면 여기와 team-spec 을 함께 고친다.
 REQUIRES_KINDS = ("file", "state", "clean_ownership", "adapter_stage")
@@ -944,7 +943,6 @@ def lint_phases(root, phases_dir=None):
             % (cid, " · ".join(SUBMIT_CHECKS[cid]["impl"])))
 
     _lint_cycle(loaded, add)
-    _lint_taxonomy(root, add)
     _lint_reviewers(root, config, add)
     return out
 
@@ -1196,28 +1194,6 @@ def _lint_cycle(loaded, add):
             cur = loaded[cur]["front"].get("on_success")
 
 
-def _lint_taxonomy(root, add):
-    """원장 어휘 · 승격 목적지 · 리뷰 범위 셋의 단일 출처를 검사한다.
-
-    이 파일이 손상되면 셋이 **동시에** 조용히 틀어진다 — 05 가 검토 제외 목록을
-    잘못 만들고, 승격이 갈 곳을 잃고, 원장이 어휘 밖의 코드를 받는다.
-    """
-    import ledger
-
-    path = Path(root) / TAXONOMY_REL
-    if not path.exists():
-        add(TAXONOMY_REL, "taxonomy", "SKIP",
-            "원장이 아직 없다 — `ledger.seed(root)` 가 시드를 만든다")
-        return
-    try:
-        data = harness._read_json(path)
-    except (OSError, ValueError) as exc:
-        add(TAXONOMY_REL, "taxonomy", "FAIL", "읽지 못했다: %s" % exc)
-        return
-    for err in ledger.validate_taxonomy(data):
-        add(TAXONOMY_REL, "taxonomy", "FAIL", err)
-
-
 def _lint_reviewers(root, config, add):
     """스킬 파일 실재 · 작성자 격리 · code 유니크.
 
@@ -1375,15 +1351,6 @@ def _plan_00_triage(root, paths, s, phase_item, ctx):
     text = paths.request.read_text(encoding="utf-8")
     sig = triage.signals(text, config)
     node["signals"] = sig
-    # 원장의 열린 `deferred` 중 요청 경로와 겹치는 것 — 이월은 여기서 다음
-    # 런에 닿는다 (ADR-H051 결정 3). 원장이 없거나 깨졌으면 0 이 아니라 미계측.
-    import ledger
-    try:
-        node["deferred_overlap"] = ledger.deferred_overlap(
-            root, (sig.get("paths_role_owned") or []) + (sig.get("paths_docs") or [])
-            + (sig.get("paths_unresolved") or []))
-    except (OSError, ValueError):
-        node["deferred_overlap"] = None
     prof = s.get("profile") or {}
     if prof.get("source") == "user":
         # 사람이 `init --profile` 로 정했다. 신호만 남기고 판정을 덮지 않는다.
@@ -1829,92 +1796,12 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
         "findings_total": len(merged),
         "need_more_context": _dedup_ordered(
             n for v in subs for n in (v.get("need_more_context") or [])),
-        "dropped_by_enforcement": sum(v.get("dropped_by_enforcement") or 0
-                                      for v in subs),
         "truncated": any(v.get("truncated") for v in subs),
     }
     if status != "ok":
         st.demote(s, st.GRADES[1], "review05:%s" % status)
     return prev
 
-
-def _excluded_render(root):
-    """"검토 제외" 목록. **기계 강제 규칙이 늘수록 05 가 자동으로 싸지고 좁아진다** —
-
-    규칙 승격의 복리가 실현되는 지점이고, 그래서 이 목록이 길어지는 것이 좋은
-    신호다. 드롭한 건수는 `dropped_by_enforcement` 로 센다 (조용히 버리지 않는다).
-    """
-    import ledger
-
-    codes = ledger.excluded_categories(root)
-    if not codes:
-        return ("## 검토 제외\n\n(없다) — 아직 기계로 막는 규칙이 없다. "
-                "원장이 쌓이면 여기가 채워지고 05 가 그만큼 좁아진다.")
-    return ("## 검토 제외 — 리뷰어 프롬프트에 그대로 싣는다\n\n"
-            "아래는 이미 기계가 막는다. 리뷰어가 지적하면 `record` 가 드롭하되 "
-            "`dropped_by_enforcement` 로 **센다** — 조용히 버리지 않는다.\n\n"
-            + "\n".join("- `%s`" % c for c in codes))
-
-
-def _vocabulary_render(root):
-    """쓸 수 있는 `category` 전부. **봉투가 규약을 먼저 말한다** (M46 · M20).
-
-    이 절이 없으면 리뷰어는 어휘를 모른 채 제출하고, 틀리면 exit 8 을 받는다 —
-    "리뷰어가 모르면 exit 8 이고 메인이 사후에 맞추는 것이 유일한 길이 된다"
-    가 M20 이 고친 바로 그 모양이다.
-    """
-    import ledger
-
-    cats = ledger.categories(root)
-    if not cats:
-        return ("## 원장 어휘\n\n**어휘를 읽지 못했다** (`%s`). 이 상태에서는 "
-                "어떤 `category` 도 원장에 들어가지 못한다 — 리뷰어의 문제가 "
-                "아니라 설정의 문제다. `doctor` 를 먼저 돌린다."
-                % ledger.TAXONOMY_REL)
-    usable = sorted(c for c, v in cats.items()
-                    if (v.get("status") or "") != "retired")
-    lines = ["## 원장 어휘 — `category` 는 이 안에서 고른다", ""]
-    lines += ["- `%s`" % c for c in usable]
-    lines += ["",
-              "밖의 코드를 **지어내지 마라** — 제출이 exit 8 로 되돌아온다. "
-              "맞는 것이 없으면 `OTHER` 로 내고 무엇이 없는지를 evidence 에 적는다. "
-              "어휘를 늘리는 것은 승격의 일이지 제출의 일이 아니다."]
-    lines += _slug_vocabulary_lines(cats, usable)
-    return "\n".join(lines)
-
-
-def _slug_vocabulary_lines(cats, usable):
-    """`rule_slug` 어휘 (ADR-H035). **어휘를 선언한 카테고리만 필수다.**
-
-    승격은 "무엇이 반복되는 유형인가" 를 묻는데 자유 서술 제목은 매번 달라
-    규칙이 아니다. 그래서 축의 값을 통제 어휘에서 고르게 한다.
-
-    `note` 를 함께 싣는 것이 이 절의 요점이다 — 한 카테고리를 여러 스킬이
-    가로질러 내므로(원장 실측: `DOC_CODE_DRIFT` 는 arch·data·sec 가 냈고
-    docs 는 0건), 이름만 나열하면 리뷰어가 뜻을 모른 채 고른다.
-
-    **어휘가 없는 카테고리는 침묵으로 두지 않는다** — 안 적으면 "여기도
-    필수인가" 가 리뷰어의 추측이 되고, 추측은 exit 8 아니면 억지 슬러그다.
-    """
-    with_vocab = [(c, cats[c]["slugs"]) for c in usable if cats[c].get("slugs")]
-    if not with_vocab:
-        return []
-    out = ["", "## 규칙 슬러그 — 승격의 축이다", "",
-           "아래 카테고리로 낼 때는 `rule_slug` 를 **함께** 적는다. 안 적거나 "
-           "어휘 밖을 적으면 제출이 exit 8 로 되돌아온다. 맞는 것이 없으면 "
-           "`category: OTHER` 로 내고 무엇이 없는지를 evidence 에 적어라 — "
-           "**어휘를 늘리는 것은 승격의 일이지 제출의 일이 아니다.**", ""]
-    for code, slugs in with_vocab:
-        out.append("- `%s`" % code)
-        out += ["  - `%s` — %s" % (s.get("slug"), s.get("note"))
-                for s in slugs]
-    bare = [c for c in usable if not cats[c].get("slugs")]
-    if bare:
-        out += ["",
-                "나머지(%s)는 슬러그를 **요구하지 않는다** — 아직 어휘가 "
-                "선언되지 않은 카테고리이고, 없는 것을 지어내면 무관한 지적이 "
-                "한 버킷에 뭉친다." % " · ".join("`%s`" % c for c in bare)]
-    return out
 
 def _contract_drift_lines(node, s):
     """계약이 바뀌어 프로파일이 다시 정해졌다는 것과, 파서가 흘린 줄.
@@ -2030,8 +1917,6 @@ def render_packet(root, phase, ctx, s, checks=None):
     parts.append(_section(body, "## 절차"))
     if pid == "00-triage":
         parts.append(_triage_render(ctx, s))
-    if pid in ("00-triage", "01-plan"):
-        parts.append(_deferred_render(s))
     if pid == "01-plan" and not _reviewers_for(front, s):
         parts.append(
             "## 리뷰어 — 0명 (%s 레인)\n\n이 런은 플랜 리뷰어를 부르지 않는다. "
@@ -2067,8 +1952,6 @@ def render_packet(root, phase, ctx, s, checks=None):
         rv_render = _review_render(s)
         if rv_render:
             parts.append(rv_render)
-        parts.append(_vocabulary_render(root))
-        parts.append(_excluded_render(root))
     if pid == "07-pr-review":
         # 07 이 05 와 같은 결함에 다른 이름을 붙이면 새 것으로 세어진다.
         # 목록을 봉투가 직접 준다 — 모델이 재구성하면 그 재구성이 곧 결함이다 (M48).
@@ -2203,22 +2086,6 @@ def _contract_precheck_03(root, ctx, s):
                           "`METHOD /path` 를 글자 그대로 `→` 로 잇는다."
                           % "\n".join("- %s" % p for p in problems)}
     return None
-
-
-def _deferred_render(s):
-    """00·01 패킷 — 요청 경로와 겹치는 이월 미해결 (ADR-H051). 없으면 그렇게 말한다."""
-    node = (s.get("phases") or {}).get("00-triage") or {}
-    ov = node.get("deferred_overlap")
-    if ov is None:
-        return ""
-    if not ov.get("count"):
-        return ("## 이월 미해결 — 요청 경로와 겹치는 deferred 0건\n\n"
-                "원장의 열린 `deferred` 중 이 요청의 경로에 걸린 것이 없다.")
-    return ("## 이월 미해결 — 요청 경로와 겹치는 deferred %d건\n\n"
-            "경로: %s\n\n`docs/harness/pipeline/ledger/deferred.md` 의 해당 절을 "
-            "플랜의 입력으로 읽는다. 앞선 런이 미룬 것이고, 이번 런이 같은 자리를 "
-            "건드린다면 고치거나 왜 또 미루는지 적는다."
-            % (ov["count"], ", ".join("`%s`" % p for p in ov.get("paths") or [])))
 
 
 def _triage_render(ctx, s):
@@ -3586,7 +3453,6 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
     findings 는 0건이고, 그 0을 "지적이 없다"로 읽으면 아무도 보지 않은 코드가
     통과한다 (§E1).
     """
-    import ledger
     import review as review_mod
 
     if not reviewer:
@@ -3643,9 +3509,7 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
 
     rounds = node.setdefault("rounds", {})
     prev_open = _previous_open(rounds, round_, reviewer)
-    excluded = ledger.excluded_categories(root)
-    got = review_mod.check(root, ctx["config"], payload, raw_text, prev_open,
-                           excluded=excluded, known=ledger.categories(root))
+    got = review_mod.check(root, ctx["config"], payload, raw_text, prev_open)
     if not got["ok"]:
         st.append_event(paths, "check_fail", cmd="record", phase="05-code-review",
                         reviewer=reviewer, errors=len(got["errors"]))
@@ -3672,7 +3536,6 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
     slot[reviewer] = {"mode": payload.get("mode") or "primary",
                       "keys": got["keys"], "blocking": got["blocking"],
                       "closed": got["closed"], "findings": got["findings"],
-                      "dropped_by_enforcement": got["dropped_by_enforcement"],
                       "truncated": got["truncated"],
                       "need_more_context": payload.get("need_more_context") or []}
     # 자진신고(선택). 지시 키와 같은 모양으로 남겨 08 이 나란히 놓는다 (ADR-H052).
@@ -3807,7 +3670,7 @@ def _record_05_failure_slot(root, paths, s, phase_item, ctx, node, reviewer,
     slot[reviewer] = {"mode": "primary", "keys": None, "blocking": 0,
                       "closed": [], "findings": [], "status": "failed",
                       "reason": reason, "errors": list(errors or []),
-                      "dropped_by_enforcement": 0, "truncated": False,
+                      "truncated": False,
                       "need_more_context": []}
     st.save(paths, s)
 
@@ -3828,7 +3691,6 @@ def _record_05_failure_slot(root, paths, s, phase_item, ctx, node, reviewer,
 
 def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
     """전원이 모였다. 병합 → 원장 → 수리 판정."""
-    import ledger
     import review as review_mod
 
     subs = [dict(v, reviewer=code) for code, v in slot.items()
@@ -3842,55 +3704,6 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
                    if (slot.get(c) or {}).get("keys") is not None)
     _write_review05(s, node, planned, ok_count, merged, slot, round_=round_)
 
-    # 원장에 쌓는다. **계약 대조의 결과도 함께 쌓는다** — 기계가 찾은 것과
-    # 리뷰어가 찾은 것이 같은 눈금 위에 있어야 승격 집계가 성립한다.
-    #
-    # **한 런 안에서 같은 키는 한 번만 새 발생이다** (M30). 라운드마다 쌓으면
-    # "몇 런이 이것을 봤나" 여야 할 `count` 가 "고치는 데 몇 라운드 걸렸나"로
-    # 조용히 바뀌고, 한 런의 3라운드가 major 임계를 혼자 채운다.
-    seen = node.setdefault("ledgered_keys", [])
-    rows = []
-    for f in merged:
-        key = ledger.finding_key(f)
-        if key in seen:
-            continue
-        seen.append(key)
-        rows.append(dict(f, resolution=f.get("resolution") or "deferred",
-                         source=f.get("source") or "reviewer"))
-    trace_path = paths.run_dir / "05_trace.json"
-    if trace_path.exists() and not node.get("trace_ledgered"):
-        trace = json.loads(trace_path.read_text(encoding="utf-8"))
-        for f in trace.get("findings") or []:
-            key = ledger.finding_key(f)
-            if key in seen:
-                continue
-            seen.append(key)
-            rows.append(dict(f, resolution=f.get("resolution") or "deferred"))
-        node["trace_ledgered"] = True
-    try:
-        ledger.append(root, s["run_id"], "05", rows)
-    except ValueError as exc:
-        # 어휘 밖의 category 는 조용히 버리지 않는다. 제출을 되돌린다.
-        return st.envelope("record", False, 8, s, {"error": str(exc)},
-                           "## 원장 어휘 밖\n\n%s" % exc, _same_command(s, "05"))
-
-    # **닫힌 지적은 `repaired` 로 승계한다** (M29). 근거는 모델의 "고쳤다" 가
-    # 아니라 `review.check` 의 단조성 검사가 이미 검증한 `closed` 다 — 이전
-    # 라운드에 열려 있던 키가 이번에 `resolved_from_previous` 로 닫힌 것만
-    # 여기 들어온다. 자진 신고를 받지 않고 기계가 확인한 것에서 유도한다.
-    #
-    # `repaired_by` 는 `state.repair`(§2.4 의 `by_main`/`by_agent`)에서 와야
-    # 하는데 **실행기가 아직 그것을 쓰지 않는다.** 그래서 지금은 `null` 이다 —
-    # 지어내지 않는다.
-    closed = sorted({k for v in slot.values() for k in (v.get("closed") or [])})
-    if closed:
-        ledger.supersede(root, s["run_id"], "05", closed,
-                         resolution="repaired",
-                         repaired_by=(s.get("repair") or {}).get("by"))
-
-    staged = ledger.stage_promotions(root)
-    (paths.run_dir / "05_promo_staged.json").write_text(
-        json.dumps(staged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (paths.run_dir / "05_review.json").write_text(
         json.dumps({"round": round_, "review05": s["review05"],
                     "findings": merged}, indent=2, ensure_ascii=False) + "\n",
@@ -3961,21 +3774,21 @@ def _severity_raised(rounds, round_, blocking):
     안의 2인 합치 상승(`review.merge` 의 `severity_raised_from`)은 대상이
     아니다. 그것은 라운드를 가로지른 재상정이 아니다.
     """
-    import ledger
+    import review as review_mod
+    rank = review_mod.SEVERITY_RANK
     best = {}
     for rn, subs in rounds.items():
         if int(rn) >= round_:
             continue
         for sub in subs.values():
             for k in sub.get("keys") or []:
-                rank = ledger._SEVERITY_RANK.get(k.get("severity"), -1)
-                if rank > best.get(k["key"], -1):
-                    best[k["key"]] = rank
+                r = rank.get(k.get("severity"), -1)
+                if r > best.get(k["key"], -1):
+                    best[k["key"]] = r
     out = []
     for f in blocking:
-        key = ledger.finding_key(f)
-        if key in best and \
-                ledger._SEVERITY_RANK.get(f.get("severity"), -1) > best[key]:
+        key = verdict.finding_key(f)
+        if key in best and rank.get(f.get("severity"), -1) > best[key]:
             out.append(key)
     return out
 
@@ -4774,23 +4587,10 @@ def run_report(root, out=None, run_id=None):
         st.append_event(paths, "check_fail", cmd="report", phase="08-report",
                         error=str(exc))
 
-    # **원장 축은 모델이 쓰는 서술이 아니라 기계 사실이다.** 08 의 입력 파일은
-    # 서술 전용이므로 실행기가 여기서 붙인다 — "승격 목록이 원장에서 자동으로
-    # 나온다, 네가 빠뜨릴 수 없다" 와 같은 규율이다 (M39).
-    import ledger as ledger_mod
-    try:
-        got = ledger_mod.stage_promotions(root)
-        data["ledger"] = {"by_category": got["by_category"],
-                          "verdict_deadline": got["verdict_deadline"],
-                          "prose_candidates": got["prose_candidates"],
-                          "trace_repeats": got["trace_repeats"],
-                          "by_reporter": ledger_mod.by_reporter(root)}
-    except (OSError, ValueError, KeyError):
-        pass
     # 소요는 `events.jsonl` 의 유도값이고, 08 시점에 그 파일은 이미 완결이다
     # — 미완 구간이 없다.
     timing = st.phase_durations(paths)
-    text, missing = rep.build(s, data, s.get("promotions") or [], timing)
+    text, missing = rep.build(s, data, timing)
 
     target = Path(out) if out else (
         root / "docs" / "harness" / "pipeline" / "runs"
@@ -4807,14 +4607,6 @@ def run_report(root, out=None, run_id=None):
         else str(target)
     short = rep.short_narrative(data)
     data = {"out": rel, "missing_sections": missing}
-
-    # 이월 뷰는 **보고서와 같은 시점**에 쓴다 (ADR-H051).
-    # 파생 파일이고 실패해도 보고서를 막지 않는다 — 못 쓴 사실만 적는다.
-    try:
-        data["deferred_md"] = ledger_mod.write_deferred(root).relative_to(
-            root).as_posix()
-    except (OSError, ValueError):
-        data["deferred_md"] = None
 
     # 이미 닫힌 런 — 파일만 다시 쓰고 **전이하지 않는다.** exit 11 은 전이의
     # 순간이므로 두 번 내면 재작성과 첫 종료가 원장에서 구분되지 않는다.
@@ -5197,7 +4989,7 @@ def _trace_render(got, rel):
                                   for s in got["skipped"]))
     warn_only = [f for f in got["findings"] if f.get("resolution") == "warn_only"]
     if warn_only:
-        lines.append("`warn_only` %d건 — baseline 기간이라 지적으로 올리지 않는다. "
+        lines.append("`warn_only` %d건 — 오탐 이력이 있는 검사라 지적으로 올리지 않는다. "
                      "보고서에는 남는다." % len(warn_only))
     blocking = [f for f in got["findings"]
                 if f["severity"] == "critical" and f.get("resolution") != "warn_only"]

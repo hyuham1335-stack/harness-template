@@ -41,6 +41,9 @@ CAP_LANES = ("docs", "fix", "small", "normal")
 DEFAULT_MERGE_BELOW = 150
 DEFAULT_FINDINGS_MAX = 50
 
+# 심각도의 순서. 라운드를 가로지른 재상정(`cli._severity_raised`)이 이것으로 비교한다.
+SEVERITY_RANK = {"minor": 0, "major": 1, "critical": 2}
+
 # 05 가 산출하는 리뷰 파일의 이름. `code` 축약을 쓰는 것은 경로 240자 상한
 # 때문이고(§E4), 리뷰어가 다섯이면 이름이 길 때 실제로 닿는다.
 REVIEW_FILE = "05_review_%s.json"
@@ -257,15 +260,13 @@ def flatten(payload):
     return out
 
 
-def check(root, config, payload, raw_text, previous_open, excluded=None,
-          known=None):
+def check(root, config, payload, raw_text, previous_open):
     """05 리뷰 제출의 판정. 01 의 `check_review` + 05 특화 넷.
 
     반환: {"ok","exit","errors","keys","closed","blocking","findings",
-           "dropped_by_enforcement","truncated"}
+           "truncated"}
     """
     errors = []
-    excluded = set(excluded or [])
 
     # ① by_checklist 는 **0건인 체크리스트도 명시**해야 한다. 안 그러면
     #    "안 봤다"와 "보고 아무것도 없었다"가 같은 침묵이 된다 (§E10).
@@ -298,26 +299,6 @@ def check(root, config, payload, raw_text, previous_open, excluded=None,
 
     findings = flatten(payload)
 
-    # ②-b **어휘 밖 category 는 여기서 잡는다** (M46). 이 검사는 원래
-    #     `ledger.append` 에만 있었고 그것은 **리뷰어 전원이 모여 병합된 뒤**
-    #     에 돈다 — 셋 중 하나가 어휘 밖을 내면 exit 8 이 마지막 제출자에게
-    #     가고, 그 제출자는 남의 findings 를 고칠 수 없어 스스로 빠져나올 수
-    #     없다. 빠져나가는 유일한 길이 리뷰 회차 예산을 태우는 것이었다.
-    #     제출자 층에는 이미 `attempts` 예산과 강등 경로가 있으므로,
-    #     검사를 여기로 내리면 위반한 리뷰어가 그 기계를 그대로 탄다.
-    #     `ledger.append` 의 검사는 **지우지 않는다** — 05 밖 경로(07·trace)의
-    #     마지막 방어선이다.
-    if known:
-        allowed = ", ".join(sorted(known))
-        for f in findings:
-            code = f.get("category")
-            if code not in known:
-                errors.append(
-                    "finding %s: taxonomy 에 없는 category 다 (%r). 쓸 수 있는 "
-                    "것: %s" % (f.get("id"), code, allowed))
-                continue
-            errors += slug_errors(f, known[code])
-
     if errors:
         return _fail(errors)
 
@@ -330,17 +311,7 @@ def check(root, config, payload, raw_text, previous_open, excluded=None,
     if not got["ok"]:
         return _fail(got["errors"])
 
-    # ④ 이제 "검토 제외" 목록의 category 를 드롭한다. **조용히 버리지 않고
-    #    센다** — 기계 강제 규칙이 늘수록 05 가 싸지는 것이 원장 승격의
-    #    복리인데, 몇 건이었는지 안 세면 복리가 실현됐는지 알 수 없다.
-    kept, dropped = [], []
-    for f in findings:
-        (dropped if f.get("category") in excluded else kept).append(f)
-    dropped_keys = {verdict.finding_key(f) for f in dropped}
-    got = dict(got,
-               keys=[k for k in got["keys"] if k["key"] not in dropped_keys],
-               blocking=sum(1 for f in kept
-                            if f.get("severity") in verdict.BLOCKING))
+    kept = findings
 
     # ④ findings 상한. 넘으면 Critical/Major 만 남기고 절단하되 **절단 사실을
     #    남긴다** — 잘린 것이 없었던 것처럼 보이면 안 된다 (§E5).
@@ -353,48 +324,12 @@ def check(root, config, payload, raw_text, previous_open, excluded=None,
 
     return {"ok": True, "exit": 0, "errors": [], "keys": got["keys"],
             "closed": got["closed"], "blocking": got["blocking"],
-            "findings": kept, "dropped_by_enforcement": len(dropped),
-            "dropped_categories": sorted({f.get("category") for f in dropped}),
-            "truncated": truncated}
+            "findings": kept, "truncated": truncated}
 
 
-def slug_errors(f, category):
-    """②-c **승격 축의 통제 어휘** (ADR-H035). [오류 문자열].
-
-    **어휘를 선언한 카테고리에서만 필수다.** 전면 선택이면 리뷰어가 그냥 안
-    적어 축이 그대로 자유 서술로 남고, 전면 필수면 `OTHER`·`CONTRACT_DEFECT`
-    처럼 어휘가 없는 곳에 억지 슬러그를 만들게 되어 M46 이 고친 회차 예산
-    소진이 재현되는데 이번엔 **탈출구 자체가 없다.**
-
-    면제 목록을 여기 적지 않는 것이 요점이다 — `validate_taxonomy` 가
-    *"승격 못 하는 카테고리는 slugs 를 선언할 수 없다"* 를 강제하므로
-    면제가 **스키마에서** 나온다. 어휘가 늘어도 이 함수는 안 바뀐다.
-
-    거부 메시지가 `note` 까지 싣는 이유도 실측이다 — `DOC_CODE_DRIFT` 를
-    내는 것은 arch·data·sec 이고 그들은 `docs-reviewer` 의 표를 읽지 않는다.
-    이름만 나열하면 두 슬러그를 언제 가르는지 모른 채 고른다 (M20).
-    """
-    vocab = category.get("slugs") or []
-    if not vocab:
-        return []                       # 어휘를 안 선언한 카테고리는 면제다
-    slug = f.get("rule_slug")
-    known = [s.get("slug") for s in vocab]
-    if slug in known:
-        return []
-    menu = "\n".join("  - `%s` — %s" % (s.get("slug"), s.get("note"))
-                      for s in vocab)
-    what = ("`rule_slug` 가 없다" if slug is None
-            else "%s 의 어휘에 없는 `rule_slug` 다 (%r)"
-                 % (f.get("category"), slug))
-    return ["finding %s: %s. %s 는 승격 축의 통제 어휘를 선언한 카테고리라 "
-            "그중 하나를 골라야 한다 — 맞는 것이 없으면 `category: OTHER` 로 "
-            "내고 무엇이 없는지를 evidence 에 적는다:\n%s"
-            % (f.get("id"), what, f.get("category"), menu)]
-
-def _fail(errors, dropped=0):
+def _fail(errors):
     return {"ok": False, "exit": 8, "errors": errors, "keys": [], "closed": [],
-            "blocking": 0, "findings": [], "dropped_by_enforcement": dropped,
-            "dropped_categories": [], "truncated": False}
+            "blocking": 0, "findings": [], "truncated": False}
 
 
 def merge(submissions):
@@ -451,9 +386,7 @@ def open_findings(rounds):
       프롬프트로 받고 그것을 회계하도록 **강제받는다.** 강제된 재진술은 두 번째
       관측이 아니다. 게다가 보고 표면에서만 오른 심각도는 원장·`review05.major`
       와 갈린다
-    - **같은 키는 첫 등장이 이긴다.** 원장의 `ledgered_keys` 가 같은 규칙이다
-      (M30) — 원장이 1회차 행을 남기는데 본문이 2회차 판정을 적으면 두 영수증이
-      같은 키를 두고 다른 말을 한다
+    - **같은 키는 첫 등장이 이긴다** (M30)
     - **닫힌 것은 전 라운드 `closed` 의 합집합으로 뺀다.** 그 값은 자진 신고가
       아니라 단조성 검사가 이미 검증한 것이다 (M29)
 

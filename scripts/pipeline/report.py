@@ -5,8 +5,7 @@
 전문은 파일 경로로만 가리킨다. 이 제약이 보고서의 비용을 런 크기와 무관하게
 만든다.
 
-분업이 요점이다 — **표는 실행기가 조립하고 서술은 모델이 쓴다.** 특히 승격
-규칙 목록은 원장에서 자동으로 나오므로 **모델이 빠뜨릴 수 없다.**
+분업이 요점이다 — **표는 실행기가 조립하고 서술은 모델이 쓴다.**
 """
 
 import sys
@@ -16,8 +15,8 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))
 
-REQUIRED_SECTIONS = ("## 완료 등급", "## 승격된 규칙", "## 건너뛴 게이트",
-                     "## 비용과 시간")
+REQUIRED_SECTIONS = ("## 완료 등급", "## 건너뛴 게이트", "## 비용과 시간",
+                     "## 리뷰", "## 서술")
 
 # 서술 4절의 하한 (ADR-H052 결정 5). `5568` 의 08 은 서술이 통째로 비었고
 # 그 런은 07 major 6건으로 최다였다 — 「왜 그랬는가는 이 런이 말하지 않았다」.
@@ -101,99 +100,6 @@ def short_narrative(data):
 
 def _sum_phase(timing, key):
     return sum((c.get(key) or 0) for c in (timing or {}).get("phases", {}).values())
-
-
-def _ledger_axis_lines(data):
-    """원장의 카테고리 축 빈도. **승격하지 않는 관측이다** (M39 · ADR-H026).
-
-    승격 버킷의 축은 **규칙**(`rule_key`)이고 통제 어휘가 없는 지적은
-    `finding_key` 로 낙하한다 (ADR-H034). 그래서 카테고리가 아무리 잦아도
-    자유 서술이면 임계에 닿지 않는다. 그 사실을 보고서가 말하지 않으면
-    "승격 0건" 이 "지적이 없었다" 로 읽힌다.
-    """
-    roll = (data.get("ledger") or {}).get("by_category") or []
-    if not roll:
-        return []
-    top = roll[:5]
-    out = ["", "**원장의 카테고리 축** (승격 후보와는 다른 셈이다 — 승격은 "
-               "규칙 단위이고 이 표는 카테고리 단위다):", "",
-           "| category | 관측 | 런 | 서로 다른 규칙 | 승격 가능 |",
-           "|---|---|---|---|---|"]
-    out += ["| `%s` | %s | %s | %s | %s |"
-            % (b.get("category"), b.get("count"), b.get("distinct_runs"),
-               b.get("distinct_keys"),
-               "예" if b.get("promotable") else "아니오")
-            for b in top]
-    out += ["", "**서로 다른 규칙 수가 관측 수와 같으면 그 카테고리는 임계에 "
-                "닿지 않는다.** 자주 나는 것과 같은 것이 반복되는 것은 다른 "
-                "사실이고, 승격이 배우는 것은 후자다. 통제 어휘를 쓰는 "
-                "생산자만 이 칸이 관측 수보다 작아진다."]
-    return out
-
-
-def _prose_candidate_lines(data):
-    """원장 승격이 아닌 두 갈래 (ADR-H056). 없으면 아무것도 안 찍는다."""
-    led = data.get("ledger") or {}
-    prose = led.get("prose_candidates") or []
-    trace = led.get("trace_repeats") or []
-    out = []
-    if prose:
-        out += ["", "**지시문 검토 후보 %d건** (08 검토 입력 — 목적지가 prose 라 "
-                    "원장 승격하지 않는다, ADR-H056):" % len(prose), ""]
-        out += ["- `%s`%s — %s회 / %s런"
-                % (c.get("category"),
-                   " / `%s`" % c["rule_slug"] if c.get("rule_slug") else "",
-                   c.get("count"), c.get("distinct_runs"))
-                for c in prose]
-    if trace:
-        out += ["", "**검사 반복 검출 %d건** — `contract-trace` 가 이미 막는 "
-                    "규칙이라 후보가 아니다: %s"
-                % (len(trace), " · ".join(
-                    "`%s` %s회/%s런" % (c.get("rule_slug") or c.get("category"),
-                                        c.get("count"), c.get("distinct_runs"))
-                    for c in trace))]
-    return out
-
-
-def _reporter_lines(data):
-    """리뷰어별 해소 표 (ADR-H050). 리뷰어 품질의 첫 실측이고 승격과 무관하다."""
-    rows = (data.get("ledger") or {}).get("by_reporter") or []
-    if not rows:
-        return []
-    out = ["", "**리뷰어별 해소** (원장 누적 — `false_positive` 는 메인이 틀렸다고 "
-               "확인한 지적이고 승격 집계에서 빠진다):", "",
-           "| 리뷰어 | 관측 | repaired | deferred | false_positive | warn_only |",
-           "|---|---|---|---|---|---|"]
-    out += ["| `%s` | %s | %s | %s | %s | %s |"
-            % (b.get("reporter"), b.get("total"), b.get("repaired", 0),
-               b.get("deferred", 0), b.get("false_positive", 0),
-               b.get("warn_only", 0))
-            for b in rows[:8]]
-    out += ["", "`deferred` 가 크면 미룬 것이고 `false_positive` 가 크면 그 "
-                "리뷰어의 체크리스트를 고칠 때다 — 둘은 다른 처방이다."]
-    return out
-
-
-def _verdict_deadline_lines(data):
-    """승격 임계·축을 **언제** 판정하는지 (ADR-H033).
-
-    `## 승격된 규칙` 이 "없다" 로 끝나면 그 말이 몇 런까지 정상인지 아무도
-    모른다 — `THRESHOLDS` 의 옛 약속(*"첫 세 런의 원장이 이 값을 검사한다"*)
-    이 두 배 지나도록 아무도 판정하지 않은 이유가 그것이다. **게이트가
-    아니라 표시다**: 시한이 지나도 등급을 바꾸지 않는다.
-    """
-    dl = (data.get("ledger") or {}).get("verdict_deadline") or {}
-    if not dl:
-        return []
-    tail = ("**시한이 지났다 — 판정할 때다.**" if dl.get("due")
-            else "남은 런 %d." % dl.get("remaining"))
-    return ["", "**승격 판정 시한** — 원장이 본 런 %s / %s. %s"
-            % (dl.get("seen"), dl.get("at"), tail),
-            "",
-            "이 셈의 단위는 `distinct_runs` 다 — **지적을 0건 낸 런은 "
-            "세어지지 않는다.** 달력의 런 수와 다를 수 있다. 그때 무엇을 "
-            "보고 어떻게 가를지는 **ADR-H033** 에 미리 적혀 있고, 판정할 "
-            "때 고르는 것이 아니다."]
 
 
 def gap_reason(gap):
@@ -401,10 +307,10 @@ def _tbl(rows):
     return out
 
 
-def build(state, data, promotions, timing=None):
+def build(state, data, timing=None):
     """보고서 마크다운. 반환: (text, missing_sections).
 
-    **필수 섹션이 빠져도 파이프라인을 실패시키지 않는다** — 원장에 기록만
+    **필수 섹션이 빠져도 파이프라인을 실패시키지 않는다** — 기록만
     한다. 보고서가 런을 실패시키면, 보고서를 안 쓰는 것이 이득이 된다.
     """
     grade = state.get("grade") or "미정"
@@ -424,27 +330,6 @@ def build(state, data, promotions, timing=None):
         lines.append("건너뛴 비차단을 아래 `## 건너뛴 게이트` 에 나열한다.")
     else:
         lines.append("건너뛴 비차단이 없다.")
-    lines.append("")
-
-    lines += ["## 승격된 규칙", ""]
-    applied = [p for p in promotions or [] if p.get("status") == "applied"]
-    if applied:
-        lines += ["| 규칙 | category | 사유 |", "|---|---|---|"]
-        lines += ["| `%s` | %s | %s |" % (p.get("rule_id"), p.get("category"),
-                                          p.get("reason") or "-")
-                  for p in applied]
-    else:
-        lines.append("이 런에서 승격된 규칙이 없다.")
-    other = [p for p in promotions or [] if p.get("status") != "applied"]
-    if other:
-        lines += ["", "승격되지 않은 것 %d 건:" % len(other)]
-        lines += ["- `%s` — **%s** · %s" % (p.get("rule_id"), p.get("status"),
-                                            p.get("reason") or "사유 없음")
-                  for p in other]
-    lines += _prose_candidate_lines(data)
-    lines += _ledger_axis_lines(data)
-    lines += _reporter_lines(data)
-    lines += _verdict_deadline_lines(data)
     lines.append("")
 
     lines += ["## 건너뛴 게이트", ""]
@@ -491,7 +376,6 @@ def build(state, data, promotions, timing=None):
         # 레인이 정한 지시 범위다 (ADR-H059). `diff+refs` 로 05 벽시계가 늘면
         # 이 행과 「07 escaped」 를 나란히 놓고 depth 값을 다시 정한다.
         ("05 리뷰 범위", r05.get("depth")),
-        ("검토 제외로 드롭", r05.get("dropped_by_enforcement")),
         ("절단됨", r05.get("truncated")),
         ("맥락 부족 요청", len(r05.get("need_more_context") or []) or 0),
         # 07 은 `/code-review` 1회의 계수다. escaped 는 **메인의 선언**이다 —

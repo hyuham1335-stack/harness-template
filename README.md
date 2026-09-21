@@ -38,7 +38,6 @@
 | **역할**(role)**과 소유 경계** | 구현 담당·테스트 담당 같은 작업자와, 각자 수정할 수 있는 파일 범위입니다. 남의 범위를 건드리면 검사에서 걸립니다 |
 | **귀속**(attribution) | 실패한 검사가 누구의 몫인지 실행기가 가려내는 일입니다 |
 | **봉투**(envelope) | 실행기가 표준 출력으로 내보내는 JSON 객체 하나입니다. "지금 할 일" 과 "다음에 칠 명령" 이 들어 있습니다 |
-| **원장**(ledger) | 리뷰 지적을 append-only 로 쌓는 기록 파일입니다 |
 | **에스컬레이션**(escalation) | 자동으로 풀 수 없을 때 진행을 멈추고 사람에게 넘기는 일입니다 |
 | **`PASS_WITH_GAPS`** | "통과했지만 실행하지 못한 검사가 있다" 는 결과 등급입니다 |
 
@@ -239,7 +238,6 @@ flowchart TD
 | `pipeline/precheck.py` | 05 에서 가장 먼저 도는 무비용 검사입니다. 예산(파일 수는 테스트 제외), 브랜치, 기준 브랜치와의 차이, 환경을 봅니다. 모델도 테스트도 부르지 않습니다 |
 | `pipeline/mask.py` | 외부로 나가는 텍스트(PR 본문·코멘트)의 비밀값을 마스킹합니다. 내부 기록에는 원문을 남깁니다 |
 | `pipeline/pr.py` | 06 의 본체입니다. 승인과 push, PR 요청서까지 만듭니다. **GitHub 을 직접 호출하지 않습니다** — 실행기는 git 명령까지만 실행합니다 |
-| `pipeline/ledger.py` | 지적 기록을 읽고 씁니다. **읽고 쓰기만 하고 판단하지 않습니다** |
 | `pipeline/report.py` | 08 입니다. 표는 실행기가 조립하고 설명은 모델이 씁니다 |
 | `pipeline/triage.py` | 00 입니다. 요청 원문의 경로 토큰과 글자 수만 읽어 레인을 예측합니다. 언어 키워드는 보지 않습니다 |
 | `pipeline/verdict.py` | 산출물이 조건을 맞췄는지 판정합니다. 요청이 동결됐는지, 요청 항목을 빠짐없이 덮었는지, 계획이 범위를 벗어나지 않았는지, 리뷰가 수렴했는지를 봅니다 |
@@ -267,9 +265,6 @@ flowchart TD
 | `docs/harness/DECISIONS.md` | 왜 그렇게 만들었는지에 대한 결정 기록입니다 (`ADR-H001`~`ADR-H067`) |
 | `docs/harness/PILOT-LOG.md` | 런마다 실제로 잰 값입니다. **추정치는 적지 않고, 재보지 않은 것은 "미측정" 으로 남깁니다** |
 | `docs/harness/pipeline/team-spec.md` | **8단계의 원본 명세**입니다. 동작을 바꾸려면 여기부터 고칩니다 |
-| `docs/harness/pipeline/ledger/taxonomy.json` | 지적을 분류하는 어휘의 단일 출처입니다 |
-| `docs/harness/pipeline/ledger/findings.jsonl` | 지적 기록입니다. append-only 라서 여러 브랜치가 충돌 없이 합쳐집니다 |
-| `docs/harness/pipeline/ledger/rules_changelog.md` | 규칙 승격 이력입니다. `promote` 가 쓰고 사람이 직접 적지 않습니다 |
 
 ## 명령어
 

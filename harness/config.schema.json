@@ -193,7 +193,7 @@
       }
     },
     "review": {
-      "description": "05 의 상한과 모드 전환점. **여기 값은 전부 미검증 상속값이다** — 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 첫 세 런의 원장이 이 값을 검사한다.",
+      "description": "05 의 상한과 모드 전환점. **여기 값은 전부 미검증 상속값이다** — 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 실측이 이 값을 검사한다.",
       "type": "object",
       "required": ["profile_caps"],
       "additionalProperties": false,
@@ -237,10 +237,6 @@
             "lines": {"type": "integer", "minimum": 1},
             "bytes": {"type": "integer", "minimum": 1}
           }
-        },
-        "baseline_runs": {
-          "description": "오탐이 잦은 검사(contract-trace 의 BASELINE_CHECKS)를 warn_only 로 두는 기간. 검사별로, 그 검사가 지적을 낸 런 수로 센다 (ADR-H058).",
-          "type": "integer", "minimum": 0
         }
       }
     },

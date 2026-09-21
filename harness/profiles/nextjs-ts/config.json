@@ -100,14 +100,13 @@
      "when": ["docs/**", "*.md"], "only_when_no_source_change": true}
   ],
 
-  "_review_note": "아래 여섯 값은 전부 **미검증 상속값**이다 — 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 첫 세 런의 원장이 이 값을 검사한다: 절단이 한 번도 안 걸리면 findings_max 가 헐거운 것이고, 승격이 매 런 발생하면 baseline_runs 가 짧은 것이다. 값을 재기 전에 굳히지 않는다. profile_caps 는 gen 을 넣으며 각 1 올렸다 (1→2 · 3→4, ADR-H043) — 여전히 미검증이다.",
+  "_review_note": "아래 여섯 값은 전부 **미검증 상속값**이다 — 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 실측이 이 값을 검사한다: 절단이 한 번도 안 걸리면 findings_max 가 헐거운 것이다. 값을 재기 전에 굳히지 않는다. profile_caps 는 gen 을 넣으며 각 1 올렸다 (1→2 · 3→4, ADR-H043) — 여전히 미검증이다.",
   "review": {
     "merge_below_diff_lines": 150,
     "profile_caps": {"docs": 1, "fix": 1, "small": 2, "normal": 4},
     "depth": {"docs": "diff", "fix": "diff", "small": "diff", "normal": "diff+refs"},
     "findings_max": 50,
-    "inline_max": {"lines": 600, "bytes": 25000},
-    "baseline_runs": 3
+    "inline_max": {"lines": 600, "bytes": 25000}
   },
 
 

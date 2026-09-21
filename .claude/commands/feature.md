@@ -180,8 +180,8 @@ python scripts/pipeline/cli.py record --phase 05 --file <리뷰 json> \
 맞추지 마라** — 원문 대조라는 검사의 취지가 그 순간 사라진다. 리뷰어에게 형태를
 다시 알려 주고 다시 받는다.
 
-exit 4 면 Critical/Major 수리다. **Minor 는 고치지 않는다** — 원장에 쌓이고
-보고서로 간다. **다만 다음 회차 제출에서 회계는 한다** (M38): 열려 있던 지적은
+exit 4 면 Critical/Major 수리다. **Minor 는 고치지 않는다** — 보고서로 간다.
+**다만 다음 회차 제출에서 회계는 한다** (M38): 열려 있던 지적은
 Minor 를 포함해 전부 다시 내거나 `resolved_from_previous`·
 `reraised_from_previous` 로 처리한다. 빠지면 "조용히 증발했다"로 exit 8 이다.
 회계할 목록은 수리 봉투가 적어 준다 — 네가 재구성하지 마라.
@@ -288,7 +288,7 @@ python scripts/pipeline/cli.py pr --run-id <id>      # 닫힌 런의 PR 갱신 �
 - **`review05.status`** — `degraded`·`failed` 면 **몇 명이 계획됐고 몇 명이
   성공했는지**까지 적는다. findings 0건과 "리뷰가 없었다"는 다른 사실이다
 - `contract-trace` 가 **건너뛴 검사**가 있으면 그것도 (통과가 아니다)
-- `dropped_by_enforcement` 와 `truncated` 가 0이 아니면 그 수
+- `truncated` 가 참이면 그 사실 (findings 상한으로 잘렸다)
 - 카운터 사용량과 모델 호출 근사치(근사임을 명시)
 - 런 디렉터리 경로
 - **PR 번호와 상태**, 그리고 승인이 `user` 였는지 `auto` 였는지
