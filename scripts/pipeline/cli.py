@@ -5182,9 +5182,13 @@ def run_report(root, out=None, run_id=None):
     slots = _instruction_slots(root, _config)
     if slots is not None:
         s["instruction_slots"] = slots
-        if slots["used"] > slots["budget"]:
-            st.demote(s, None, "instruction_slot_over_budget")
-        elif slots["used"] == 0 and slots["prose_lines"]:
+        # **초과는 관측이지 gap 이 아니다** (ADR-H074). 지시문 파일 크기는 런
+        # 내용과 무관해 매 런 같은 값이 뜬다 — 클론 4/4런이 `17/12` 였다. 그런
+        # 표시는 경보가 아니라 gap 목록 전체를 둔감하게 만든다. `risk_undeclared`
+        # 가 먼저 간 길이다 (ADR-H067: 관측만, 등급·gap·exit 를 안 건드린다).
+        # 숫자는 사라지지 않는다 — `report` 가 `used/budget` 을 따로 렌더한다.
+        # `unmeasured` 는 **그대로 gap** 이다: 상수가 아니라 「못 잼」의 신호다.
+        if slots["used"] == 0 and slots["prose_lines"]:
             st.demote(s, None, "instruction_slot_unmeasured")
 
     src = paths.run_dir / "08_report_data.json"
@@ -5322,7 +5326,10 @@ def _report_render(rel, missing, s, data=None):
 
 
 INSTRUCTION_REVIEW_FILE = "08_instruction_review.json"
-_SLOT_BULLET = re.compile(r"^[-*+]\s+")
+# 최상위 규칙 한 칸의 모양. **번호 목록도 센다** (ADR-H074) — `^[-*+]` 만 보던
+# 동안 이 리포 `CLAUDE.md` 의 「작업 원칙」 넷이 통째로 빠져 있었고, 그 넷은 파일
+# 자신이 "기계가 안 잡는 산문" 이라 적은 **가장 비싼 규칙**이다.
+_SLOT_BULLET = re.compile(r"^([-*+]|\d+\.)\s+")
 
 
 def _review_skill(config):
@@ -5461,34 +5468,49 @@ def _instruction_review(root, paths, s, config):
 
 
 def _instruction_slots(root, config):
-    """`instruction_slot_budget` 의 소비자 (ADR-H056). 재지 못하면 None.
+    """`instruction_slot_budget` 의 소비자 (ADR-H056 · 계측은 ADR-H074). 못 재면 None.
 
-    `CRITICAL:` 라벨은 자기 선언이라 세지 않는다 — **0열에서 시작하는 불릿**
-    이 한 칸이다. 들여쓴 줄은 하위 항목이고 펜스·표 안은 규칙이 아니다.
+    **재는 집합은 `_rules_read_expected` 와 같다** — `instruction_file` 하나만 세면
+    규칙을 `rules_dir` 의 다른 파일로 옮겼을 때 **예산이 비는 착시**가 생긴다.
+    워커는 그 집합 전체를 매번 읽고 sha256 증명까지 하므로, **세는 집합이 곧
+    증명하는 집합**이라야 계기판이 압력을 잰다.
+
+    `CRITICAL:` 라벨은 자기 선언이라 세지 않는다 — **0열에서 시작하는 불릿이나
+    번호 목록**이 한 칸이다. 들여쓴 줄은 하위 항목이고 펜스·표 안은 규칙이 아니다.
     `prose_lines` 는 제목·불릿이 아닌 본문 줄 수 — 규칙이 산문뿐이면 0칸이
     "규칙 없음" 이 아니라 "못 잼" 이다.
+
+    `per_file` 은 파일별 칸 수다. **합계만으로는 어느 문서가 비대해졌는지 말할 수
+    없다** — 값을 정하려면 그 분포가 먼저 필요하다(미구현 백로그 34).
     """
     proj = config.get("project") or {}
-    inst, budget = proj.get("instruction_file"), proj.get("instruction_slot_budget")
-    if not inst or budget is None:
+    budget = proj.get("instruction_slot_budget")
+    if not proj.get("instruction_file") or budget is None:
         return None
-    try:
-        text = (Path(root) / inst).read_text(encoding="utf-8")
-    except OSError:
+    expected = _rules_read_expected(root, config)
+    if not expected:
         return None
-    used = prose = 0
-    fence = False
-    for line in text.splitlines():
-        if line.lstrip().startswith("```"):
-            fence = not fence
+    per_file, prose = {}, 0
+    for rel in sorted(expected):
+        try:
+            text = (Path(root) / rel).read_text(encoding="utf-8")
+        except OSError:
             continue
-        if fence or not line.strip() or line.startswith("|"):
-            continue
-        if _SLOT_BULLET.match(line):
-            used += 1
-        elif not line.startswith("#"):
-            prose += 1
-    return {"used": used, "budget": budget, "prose_lines": prose}
+        used = 0
+        fence = False
+        for line in text.splitlines():
+            if line.lstrip().startswith("```"):
+                fence = not fence
+                continue
+            if fence or not line.strip() or line.startswith("|"):
+                continue
+            if _SLOT_BULLET.match(line):
+                used += 1
+            elif not line.startswith("#"):
+                prose += 1
+        per_file[rel] = used
+    return {"used": sum(per_file.values()), "budget": budget,
+            "prose_lines": prose, "per_file": per_file}
 
 
 # ------------------------------------------------------------------- review07
