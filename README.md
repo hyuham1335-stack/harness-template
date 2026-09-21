@@ -51,9 +51,8 @@
    **규칙은 작업자가 실제로 읽어야 지켜집니다** ([ROADMAP](docs/harness/ROADMAP.md) §4).
 2. **순차 실행기 `scripts/execute.py` 는 들어 있지 않습니다.** 권한 승인을 건너뛴 채 모델을
    돌리는 방식이어서 제외했습니다 ([DECISIONS](docs/harness/DECISIONS.md) ADR-H005 · ADR-H037).
-3. **아직 검증되지 않은 부분이 있습니다.** 동봉된 어댑터의 `verified` 값과
-   `harness/calibration.json` 이 미검증 상태이고, 검증 현황은
-   [ROADMAP](docs/harness/ROADMAP.md) §6 의 표에 있습니다.
+3. **아직 검증되지 않은 부분이 있습니다.** `harness/calibration.json` 이 미검증
+   상태이고, 검증 현황은 [ROADMAP](docs/harness/ROADMAP.md) §6 의 표에 있습니다.
 
 ## 빠른 시작
 
@@ -243,7 +242,7 @@ flowchart TD
 
 | 경로 | 무엇 |
 |---|---|
-| `harness.py` | 설정을 다루는 명령들입니다 — `init` · `doctor` · `calibrate` · `verify-adapter` |
+| `harness.py` | 설정을 다루는 명령들입니다 — `init` · `doctor` · `calibrate` |
 | `pipeline/cli.py` | 8단계 파이프라인의 입구입니다. 명령을 해석하고, 페이즈 정의를 읽고, 진입 조건을 따지고, 결과를 JSON 으로 내보냅니다 |
 | `pipeline/state.py` | 런 폴더와 진행 상태, 이벤트 기록, 작업 트리 해시를 다룹니다. 상태 이름과 등급 이름이 이 파일 하나에서 나옵니다 |
 | `pipeline/adapters.py` | 어댑터를 읽고 스테이지를 실행합니다. 판정하거나 상태를 쓰지는 않습니다 |
@@ -297,7 +296,6 @@ flowchart TD
 |---|---|
 | `init --adapter <이름> --name <프로젝트>` | `harness/profiles/<이름>/config.json` 을 복사해 `harness/config.json` 을 만듭니다. 이미 있으면 `--force` 없이는 덮어쓰지 않습니다 |
 | `doctor` | 설정과 저장소가 어긋난 곳을 찾아 사람이 읽는 보고서로 냅니다 |
-| `verify-adapter [--min-runs N]` | 게이트를 전부 통과한 완주 런이 기준 수 이상이면 어댑터의 `verified` 를 올립니다. 못 미치면 exit 3 이고 아무것도 바꾸지 않습니다 |
 | `calibrate [--stage <이름>] [--replace]` | 스테이지를 한 번씩 돌려 소요 시간을 기록합니다. 하나라도 실패하면 **파일을 쓰지 않습니다** — 코드가 깨진 상태의 실측값은 기준이 될 수 없습니다 |
 
 ### `python scripts/pipeline/cli.py` — 파이프라인을 돌립니다

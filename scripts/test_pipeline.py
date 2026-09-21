@@ -129,15 +129,6 @@ def repo(tmp_path):
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
                         encoding="utf-8")
 
-    # 어댑터도 픽스처가 스스로 선언한다 — **미검증(`verified: false`)** 이다.
-    # 클론이 `verify-adapter` 로 실물을 `true` 로 올려도(ADR-H047) 여기서
-    # `adapter_unverified` 를 묻는 테스트가 그 실물에 묶이지 않는다.
-    ad_path = tmp_path / "harness" / "adapters" / "nextjs-ts.json"
-    ad = json.loads(ad_path.read_text(encoding="utf-8"))
-    ad["verified"] = False
-    ad_path.write_text(json.dumps(ad, ensure_ascii=False, indent=2) + chr(10),
-                       encoding="utf-8")
-
     # 캘리브레이션도 같다 — 실물은 영구히 미측정이고 픽스처는 잰 것이 있어야 한다.
     # 위 FIXTURE_CALIBRATION 주석을 본다 (ADR-H039 결정 2).
     (tmp_path / "harness" / "calibration.json").write_text(
@@ -3949,17 +3940,6 @@ class TestGateReplay:
         _, after = st.load(repo, paths.run_id)
         assert (after.get("tests") or {}).get("ran") == 1300, after.get("tests")
 
-    def test_uncalibrated_and_unverified_show_up_in_gaps(self, gated, fxdir):
-        """미캘리브레이션·verified:false 가 조용히 통과하지 않는다."""
-        repo, paths, s = gated
-        (repo / "harness" / "calibration.json").unlink()
-        fx = make_fixture(fxdir, "uncal", dict(ALL_PASS))
-        _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
-        assert "uncalibrated_run" in report["gaps"]
-        assert "adapter_unverified" in report["gaps"]
-
     def test_inactive_rules_are_named(self, gated, fxdir):
         """없는 것과 조용히 안 도는 것을 구분한다."""
         repo, paths, s = gated
@@ -4105,12 +4085,6 @@ class TestPromotionGate:
         assert [f for f in findings if f["status"] == "FAIL"] == []
         parsed = contract_mod.parse(text, harness._read_json(cfg_path))
         assert parsed["units"], "절 제목이 바뀌어도 파서가 찾는다"
-
-    def test_the_adapter_stays_unverified_until_a_real_run(self):
-        """픽스처는 내가 만든 출력이지 진짜 러너 출력이 아니다."""
-        adapter = harness._read_json(ROOT / "harness/adapters/nextjs-ts.json")
-        assert adapter["verified"] is False
-        assert "_unconsumed" in adapter["attribution"]
 
 
 # ---------------------------------------------------------------------------
@@ -6568,11 +6542,10 @@ class TestStageNotApplicable:
 
     NA = {"cmd": None, "not_applicable": "문서 빌드 산출물이 없다."}
 
-    def _adapter(self, repo, verified=True, **stages):
+    def _adapter(self, repo, **stages):
         p = repo / "harness" / "adapters" / "nextjs-ts.json"
         ad = json.loads(p.read_text(encoding="utf-8"))
         ad["stages"].update(stages)
-        ad["verified"] = verified
         p.write_text(json.dumps(ad, ensure_ascii=False), encoding="utf-8")
 
     def test_선언이_있으면_na_이고_없거나_비면_absent_다(self):
@@ -6590,7 +6563,6 @@ class TestStageNotApplicable:
         assert rep_mod.is_non_demoting("stage_na:docs")
         assert rep_mod.is_non_demoting("calibration_stale")
         assert not rep_mod.is_non_demoting("stage_absent:e2e")
-        assert rep_mod.is_non_demoting("adapter_unverified"), "[[ADR-H069]]"
         assert not rep_mod.is_non_demoting("attribution_unparsed"),             "파싱이 깨진 것은 표시가 아니라 결함이다"
         assert rep_mod.gap_reason("stage_na:docs"), "어휘에 있어야 보고서가 설명한다"
 
@@ -6647,24 +6619,6 @@ class TestStageNotApplicable:
             report["gaps"]
         assert report["grade"] == "PASS", report["gaps"]
 
-
-    def test_미검증_어댑터는_이름만_남기고_등급을_안_깎는다(self, gated, fxdir,
-                                                     monkeypatch):
-        """[[ADR-H069]] — [[ADR-H047]] 은 **바로 이 압력 때문에** 승격 기준을 낮췄다.
-
-        기준을 낮추는 대신 gap 을 비강등으로 내린다. `verified: false` 는
-        「아직 안 겪어봤다」는 표시이지 이번 런의 결함이 아니다.
-        """
-        repo, paths, s = gated
-        monkeypatch.setattr(contract_mod, "DEGENERATE_RATIO", 2.0)
-        self._adapter(repo, verified=False, e2e=dict(self.NA), docs=dict(self.NA),
-                      build={"cmd": ["run", "build"]})
-        _gate(repo, make_fixture(fxdir, "unverified-pass", dict(ALL_PASS)))
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
-        assert "adapter_unverified" in report["gaps"], "이름은 남아야 한다"
-        assert report["grade"] == "PASS", report["gaps"]
-
     def test_PR_본문의_건너뛴_게이트에_남는다(self, repo, request_file, phases):
         _branch(repo, "feat-x")
         run_id, paths = _enter_06(repo, request_file, phases)
@@ -6674,66 +6628,6 @@ class TestStageNotApplicable:
         body = pr_mod.build_body(repo, paths, s,
                                  harness._read_json(repo / harness.CONFIG_REL))
         assert "- stage_na:docs" in body, body
-
-
-class TestAdapterVerifyReady:
-    """[[ADR-H047]] 결정 3 의 후속 — 기준을 넘었는데 아무도 명령을 안 돌렸다.
-
-    banana 는 완주 15런(기준 3)인데 `verified: false` 였다. 보고서가
-    "기준 충족" 을 말하지 않으면 `adapter_unverified` 는 영구 gap 이 된다.
-    """
-
-    def _runs(self, repo, n):
-        ids = harness.phase_ids(repo)
-        for i in range(n):
-            _done_run(repo, "q%d" % i, "2026-02-%02dT00:00:00+0900" % (i + 1),
-                      phases=ids)
-
-    def test_qualified_runs_는_verify_adapter_와_같은_셈이다(self, repo, phases):
-        self._runs(repo, 2)
-        _done_run(repo, "bad", "2026-02-09T00:00:00+0900",
-                  phases=harness.phase_ids(repo),
-                  statuses={harness.phase_ids(repo)[0]: "skipped"})
-        _done_run(repo, "other", "2026-02-10T00:00:00+0900", adapter="x",
-                  phases=harness.phase_ids(repo))
-        assert harness.qualified_runs(repo, "nextjs-ts") == ["q0", "q1"]
-
-    def test_기준_이상이면_보고서가_명령을_적는다(self, repo, request_file, phases):
-        self._runs(repo, harness.ADAPTER_VERIFY_MIN_RUNS)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths)
-        cli.run_report(repo, run_id=run_id)
-        text = (repo / "docs" / "harness" / "pipeline" / "runs"
-                / ("%s.md" % run_id)).read_text(encoding="utf-8")
-        assert "기준 충족" in text and "verify-adapter" in text, text
-
-    def test_규칙이_비면_기준_충족이라고_말하지_않는다(self, repo, request_file,
-                                                phases):
-        """[[ADR-H069]] — 완주 수만 보고 「명령 한 번만 치면 된다」고 하면 거짓말이다.
-
-        그 상태로 `verify-adapter` 를 치면 exit 3 이다. 보고서는 **무엇이
-        비었는지**를 말해야 한다.
-        """
-        ids = harness.phase_ids(repo)
-        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
-            _done_run(repo, "q%d" % i, "2026-02-%02dT00:00:00+0900" % (i + 1),
-                      phases=ids, rules=["compile_error_regex"])
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths)
-        cli.run_report(repo, run_id=run_id)
-        text = (repo / "docs" / "harness" / "pipeline" / "runs"
-                / ("%s.md" % run_id)).read_text(encoding="utf-8")
-        assert "기준 충족" not in text, text
-        assert "test_file_globs" in text, text
-
-    def test_기준_미만이면_적지_않는다(self, repo, request_file, phases):
-        self._runs(repo, harness.ADAPTER_VERIFY_MIN_RUNS - 1)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths)
-        cli.run_report(repo, run_id=run_id)
-        text = (repo / "docs" / "harness" / "pipeline" / "runs"
-                / ("%s.md" % run_id)).read_text(encoding="utf-8")
-        assert "기준 충족" not in text
 
 
 class TestPrecheckCli:
@@ -11634,16 +11528,6 @@ class TestReport08:
         assert "clean_05" in out
         assert "표본 아님" in out
 
-    def test_캘리브레이션_상태가_partial_과_unverified_를_드러낸다(
-            self, repo, request_file, phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths)
-        cli.run_report(repo, run_id=run_id)
-        out = (repo / "docs" / "harness" / "pipeline" / "runs"
-               / ("%s.md" % run_id)).read_text(encoding="utf-8")
-        assert "partial" in out or "옛 값" in out
-        assert "verified" in out or "미검증" in out
-
     def test_staged_잔여가_있으면_exit_6(self, repo, request_file, phases):
         run_id, paths = _enter_08(repo, request_file, phases)
         _p, s = st.load(repo, run_id)
@@ -11831,14 +11715,14 @@ class TestReport08:
         run_id, paths = _enter_08(repo, request_file, phases,
                                   grade="PASS_WITH_GAPS")
         _p, s = st.load(repo, run_id)
-        s["gaps"] = ["stage_absent:e2e", "adapter_unverified"]
+        s["gaps"] = ["stage_absent:e2e", "stage_na:docs"]
         st.save(_p, s)
         _report_data(paths)
         cli.run_report(repo, run_id=run_id)
         out = (repo / "docs" / "harness" / "pipeline" / "runs"
                / ("%s.md" % run_id)).read_text(encoding="utf-8")
         assert "stage_absent:e2e" in out
-        assert "adapter_unverified" in out
+        assert "stage_na:docs" in out
 
     def test_모델_호출_수는_근사로_표기된다(self, repo, request_file, phases):
         run_id, paths = _enter_08(repo, request_file, phases)

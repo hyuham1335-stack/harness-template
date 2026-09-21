@@ -2,8 +2,6 @@
   "_readme": "이 리포 자신(harness-template)이 쓰는 어댑터. 템플릿에는 애플리케이션 스택이 없고 파이썬 테스트 슈트만 있으므로, `doctor` 가 실물 위에서 무언가를 실제로 재려면 그 슈트를 가리켜야 한다. 새 프로젝트에 이 템플릿을 쓸 때는 `python scripts/harness.py init --adapter <스택> --name <이름>` 으로 갈아치운다.",
 
   "id": "self-python",
-  "verified": false,
-  "_verified_note": "실제 프로젝트에서 01~04를 완주시킨 뒤에만 true 로 올린다. 지금은 doctor 가 정적으로 검사한 것까지만 참이다.",
 
   "_requires": "빈 배열로 두지 않는다 — 아무것도 재지 않는 전제조건은 통과가 아니라 검사 부재다.",
   "requires": [

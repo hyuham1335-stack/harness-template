@@ -78,13 +78,6 @@ def _build_fixture(root: Path):
     cfg["adapter"] = "nextjs-ts"
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
                         encoding="utf-8")
-    # 어댑터는 픽스처에서 **미검증**이다 — 클론이 `verify-adapter` 로 실물을
-    # 올려도(ADR-H047) 여기 테스트가 그 값에 묶이지 않는다.
-    ad_path = root / "harness/adapters/nextjs-ts.json"
-    ad = json.loads(ad_path.read_text(encoding="utf-8"))
-    ad["verified"] = False
-    ad_path.write_text(json.dumps(ad, ensure_ascii=False, indent=2) + chr(10),
-                       encoding="utf-8")
     _write(root / "package.json", json.dumps(FIXTURE_PACKAGE_JSON, indent=2) + "\n")
     _write(root / "CLAUDE.md", "# fixture\n")
     for rel in FIXTURE_SOURCES:
@@ -144,12 +137,6 @@ class BaselinePassesTest(DoctorTestBase):
         text = self.doctor().text()
         for stage in ("e2e", "docs"):
             self.assertIn(stage, text, "%s 스킵이 보고되지 않았다:\n%s" % (stage, text))
-
-    def test_unverified_adapter_and_missing_calibration_warn(self):
-        report = self.doctor()
-        warn_text = "\n".join(c.message for c in report.checks if c.status == "WARN")
-        self.assertIn("verified", warn_text, report.text())
-        self.assertIn("캘리브레이션", warn_text, report.text())
 
 
 class BrokenConfigRejectedTest(DoctorTestBase):
@@ -612,119 +599,6 @@ class JunitByFileTest(unittest.TestCase):
         self.assertIsNone(self.parse()["by_file"])
 
 
-class VerifyAdapterTest(DoctorTestBase):
-    """[[ADR-H047]] 결정 3 — 어댑터 `verified` 는 완주 런 수로 올린다.
-
-    15런을 완주한 뒤에도 `verified: false` 였고 그래서 `PASS` 가 구조적으로
-    나올 수 없었다(`adapter_unverified` 가 매 런 gap). 일부러 실패를 만들지
-    않는다 — 실패를 만든 것이 아니라 **완주를 셌다.**
-    """
-
-    PHASES = ["00-triage", "01-plan", "02-cross-verify", "03-implement",
-              "04-gate", "05-code-review", "06-pr", "07-pr-review", "08-report"]
-
-    def setUp(self):
-        super().setUp()
-        for pid in self.PHASES:
-            _write(self.root / "harness" / "phases" / (pid + ".md"), "---\n---\n")
-        _write(self.root / "harness" / "calibration.json", json.dumps({
-            "measured_at": "2026-01-01T00:00:00+0900", "adapter": "nextjs-ts",
-            "adapter_verified": False, "stages": {}, "derived": {}}))
-
-    # 어댑터가 선언한 귀속 규칙 전부. 이름은 어댑터 필드명과 같은 어휘다
-    # (`attribution.RULE_NAMES`) — 여기 박아 두는 것이 그 어휘를 잠근다.
-    RULES = ["app_frame_prefixes", "compile_error_regex",
-             "symbol_not_found_patterns", "test_file_globs"]
-
-    def _run(self, run_id, adapter="nextjs-ts", statuses=None, rules=None):
-        ph = {pid: {"status": (statuses or {}).get(pid, "passed")}
-              for pid in self.PHASES}
-        ph["04-gate"]["attribution_rules"] = list(
-            self.RULES if rules is None else rules)
-        _write(self.root / "_workspace" / "runs" / run_id / "state.json",
-               json.dumps({"run_id": run_id, "run_status": "done",
-                           "closed_at": "2026-02-01T00:00:00+0900",
-                           "adapter": {"id": adapter}, "phases": ph}))
-
-    def test_완주_런이_기준을_채우면_올린다(self):
-        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
-            self._run("r%d" % i)
-        self.assertEqual(0, harness.run_verify_adapter(self.root))
-        ad = self.adapter()
-        self.assertTrue(ad["verified"])
-        self.assertIn("verify-adapter", ad["_verified_note"])
-        self.assertIn("r0", ad["_verified_note"])
-        cal = self._load("harness/calibration.json")
-        self.assertTrue(cal["adapter_verified"])
-        self.assertEqual(harness.ADAPTER_VERIFY_MIN_RUNS,
-                         len(cal["adapter_verified_source"]["runs"]))
-
-    def test_부족하면_exit_3_이고_아무것도_안_바꾼다(self):
-        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS - 1):
-            self._run("r%d" % i)
-        self.assertEqual(3, harness.run_verify_adapter(self.root))
-        self.assertFalse(self.adapter()["verified"])
-        self.assertFalse(self._load("harness/calibration.json")["adapter_verified"])
-
-    def test_skipped_페이즈가_있는_런은_세지_않는다(self):
-        """정책 생략은 관측이 없었던 것이다 — ADR 문면대로 `passed` 만 센다."""
-        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
-            self._run("r%d" % i)
-        self._run("r0", statuses={"02-cross-verify": "skipped"})
-        self.assertEqual(3, harness.run_verify_adapter(self.root))
-        self.assertFalse(self.adapter()["verified"])
-
-    def test_다른_어댑터의_런은_세지_않는다(self):
-        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
-            self._run("r%d" % i, adapter="self-python")
-        self.assertEqual(3, harness.run_verify_adapter(self.root))
-        self.assertFalse(self.adapter()["verified"])
-
-    def test_기준은_인자로_낮출_수_있다(self):
-        self._run("r0")
-        self.assertEqual(0, harness.run_verify_adapter(self.root, min_runs=1))
-        self.assertTrue(self.adapter()["verified"])
-
-    def test_규칙이_하나라도_안_돌았으면_안_올린다(self):
-        """[[ADR-H069]] — 완주 횟수는 실패 경로의 근거가 아니다.
-
-        귀속 필드는 **실패를 분류할 때만** 불린다. 무사히 끝난 런은 그 경로가
-        한 번도 안 불렸다는 뜻이다.
-        """
-        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
-            self._run("r%d" % i, rules=[r for r in self.RULES
-                                        if r != "symbol_not_found_patterns"])
-        self.assertEqual(3, harness.run_verify_adapter(self.root))
-        self.assertFalse(self.adapter()["verified"])
-        self.assertFalse(self._load("harness/calibration.json")["adapter_verified"])
-
-    def test_관측은_런을_가로질러_합쳐진다(self):
-        """한 런이 규칙 전부를 겪을 필요는 없다 — 드문 경로가 섞여 차기도 한다."""
-        for i, rule in enumerate(self.RULES):
-            self._run("r%d" % i, rules=[rule])
-        self.assertEqual(0, harness.run_verify_adapter(self.root))
-        self.assertTrue(self.adapter()["verified"])
-
-    def test_노트가_관측된_규칙을_적는다(self):
-        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
-            self._run("r%d" % i)
-        harness.run_verify_adapter(self.root)
-        note = self.adapter()["_verified_note"]
-        for rule in self.RULES:
-            self.assertIn(rule, note)
-
-    def test_선언하지_않은_규칙은_요구하지_않는다(self):
-        """그 스택에 없는 규칙을 기다리면 영영 안 올라간다."""
-        ad = self.adapter()
-        ad["attribution"]["symbol_not_found_patterns"] = []
-        self.save_adapter(ad)
-        for i in range(harness.ADAPTER_VERIFY_MIN_RUNS):
-            self._run("r%d" % i, rules=[r for r in self.RULES
-                                        if r != "symbol_not_found_patterns"])
-        self.assertEqual(0, harness.run_verify_adapter(self.root))
-        self.assertTrue(self.adapter()["verified"])
-
-
 class CalibrateTest(DoctorTestBase):
     """실측이 정책의 입력이 되므로, 재지 않은 것을 잰 척하는 경로가 하나도 없어야 한다."""
 
@@ -1037,9 +911,6 @@ class CalibrateTest(DoctorTestBase):
         self.assertEqual(0, report.exit_code, report.text())
         calibration = next(c for c in report.checks if c.name == "캘리브레이션 상태")
         self.assertEqual("PASS", calibration.status, report.text())
-        # 어댑터 검증과 캘리브레이션은 다른 것이다 — verified:false 경고는 남는다
-        warns = "\n".join(c.message for c in report.checks if c.status == "WARN")
-        self.assertIn("verified", warns)
 
 
 class RetryBudgetTest(unittest.TestCase):

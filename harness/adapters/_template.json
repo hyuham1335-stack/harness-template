@@ -3,7 +3,6 @@
   "_rule": "어댑터는 선언만 한다. 분기 로직이 필요해지면 그건 코어에 빠진 개념이라는 신호이므로 필드를 늘리지 말고 코어에 스테이지·신호를 추가한다.",
 
   "id": "template",
-  "verified": false,
 
   "_requires": "이 어댑터를 쓸 수 있는 리포인지 doctor 가 /feature 진입 전에 확인한다. kind: file | dir | json_key.",
   "requires": [],

@@ -8,12 +8,10 @@ Usage:
     python scripts/harness.py doctor
     python scripts/harness.py init --adapter nextjs-ts --name my-app [--force]
     python scripts/harness.py calibrate [--stage <name>] [--select <test-name>]
-    python scripts/harness.py verify-adapter [--min-runs N]
 
 종료 코드:
     0  통과 (경고는 허용한다 — 단, 전부 출력에 드러난다)
     2  미통과. 무엇이 어긋났는지 출력에 명시된다
-    3  verify-adapter 의 완주 런이 기준에 못 미친다. 아무것도 바꾸지 않는다
    10  calibrate 중 스테이지가 실패했다. 잰 값을 쓰지 않는다
 
 순차 step 실행기는 이 템플릿에 없다 (ADR-H037). 8페이즈 실행기는
@@ -42,12 +40,9 @@ ADAPTER_SCHEMA_REL = "harness/adapters/adapter.schema.json"
 CONTRACT_TEMPLATE_REL = "harness/templates/contract.md"
 PHASES_DIR_REL = "harness/phases"
 # 런 디렉터리. `state.py` 가 이 값을 그대로 쓴다 — 완주 런을 세는 쪽
-# (`completed_runs`)이 이 층에 있어야 precheck 와 verify-adapter 가 같은 것을
-# 센다. state 는 harness 를 import 하므로 역방향은 안 된다.
+# (`completed_runs`)이 이 층에 있어야 다른 층이 같은 것을 센다. state 는
+# harness 를 import 하므로 역방향은 안 된다.
 RUNS_REL = "_workspace/runs"
-# 어댑터 `verified` 를 올리는 완주 런 수의 바닥 (ADR-H047 결정 3). 미검증
-# 초기값이다 — 2차 파일럿 15런이 전부 01~08 `passed` 였으므로 즉시 충족된다.
-ADAPTER_VERIFY_MIN_RUNS = 3
 
 # 어댑터 `attribution` 의 규칙 이름 = 어댑터 필드명. 승격 판정이 **선언**과
 # **관측**을 같은 어휘로 대조한다 (ADR-H069). 관측을 내는 쪽은
@@ -522,13 +517,6 @@ def _check_adapter(root, config, report):
         except (ValueError, SchemaError):
             stale.append(other.name)
     notes = []
-    if not adapter.get("verified"):
-        notes.append("verified:false 다 — 지금은 정적으로 검사한 것까지만 참이다. "
-                     "완주 런 %d 이상 **그리고** 어댑터가 선언한 귀속 규칙이 전부 실물 "
-                     "실패에서 판정을 낸 뒤에 `python scripts/harness.py verify-adapter` "
-                     "가 올린다 (ADR-H069). 완주만으로는 올라가지 않는다 — 그 필드들은 "
-                     "실패를 분류할 때만 불린다."
-                     % ADAPTER_VERIFY_MIN_RUNS)
     if stale:
         notes.append("다른 어댑터가 스키마를 어긴다: %s" % ", ".join(stale))
 
@@ -903,134 +891,6 @@ def completed_runs(root):
         if isinstance(s, dict) and s.get("run_status") == "done":
             out.append(s)
     return sorted(out, key=lambda s: s.get("closed_at") or "")
-
-
-def phase_ids(root):
-    """`harness/phases/*.md` 의 stem. 페이즈 파일의 `id` 와 같다."""
-    d = Path(root) / PHASES_DIR_REL
-    if not d.is_dir():
-        return []
-    return sorted(p.stem for p in d.glob("*.md"))
-
-
-def _classify_runs(root, adapter_id, ids):
-    """완주 런을 [(run_id, [])] 자격 · [(run_id, passed 아닌 페이즈)] 탈락으로 가른다.
-
-    `skipped` 는 세지 않는다: 정책 생략은 관측이 없었던 것이다. 다른 어댑터로
-    돈 런도 세지 않는다.
-    """
-    qualified, rejected = [], []
-    for s in completed_runs(root):
-        if ((s.get("adapter") or {}).get("id")) != adapter_id:
-            continue
-        phases = s.get("phases") or {}
-        bad = [pid for pid in ids if (phases.get(pid) or {}).get("status") != "passed"]
-        (rejected if bad else qualified).append((s.get("run_id"), bad))
-    return qualified, rejected
-
-
-def qualified_runs(root, adapter_id):
-    """`verify-adapter` 가 세는 런의 id — 08 보고서가 "기준 충족" 을 같은 셈으로 말한다."""
-    ids = phase_ids(root)
-    if not ids:
-        return []
-    return [r for r, _ in _classify_runs(root, adapter_id, ids)[0]]
-
-
-def observed_rules(root, adapter_id):
-    """완주 런들이 04 에 적어 둔 귀속 규칙의 합집합.
-
-    한 런이 규칙 전부를 겪을 필요는 없다 — 드문 경로는 드물게 온다. `_workspace/`
-    는 로컬 자료라 새 클론에서는 빈 집합이고, 그래서 이것으로 굳히는 판정은
-    결과를 파일에 적는다 (ADR-H047 · ADR-H069).
-    """
-    out = set()
-    for s in completed_runs(root):
-        if ((s.get("adapter") or {}).get("id")) != adapter_id:
-            continue
-        node = (s.get("phases") or {}).get("04-gate") or {}
-        out |= set(node.get("attribution_rules") or [])
-    return out
-
-
-def required_rules(adapter):
-    """어댑터가 **선언한** 규칙만 요구한다 — 없는 규칙은 돌 수가 없다."""
-    att = adapter.get("attribution") or {}
-    return set(r for r in ADAPTER_RULE_NAMES if att.get(r))
-
-
-def run_verify_adapter(root, min_runs=ADAPTER_VERIFY_MIN_RUNS, now=None):
-    """완주 런 ≥ `min_runs` 이고 그 런들이 페이즈 전부를 `passed` 로 지났으면
-    어댑터 `verified` 를 `true` 로 올린다 (ADR-H047 결정 3).
-
-    ROADMAP §6 의 "일부러 실패를 만들지 않는다" 와 충돌하지 않는다 — 실패를
-    만든 것이 아니라 완주를 셌다. `skipped` 는 세지 않는다: 정책 생략은 관측이
-    없었던 것이다. 다른 어댑터로 돈 런도 세지 않는다.
-
-    어댑터 스키마가 새 키를 막으므로(`additionalProperties: false`) 근거는
-    기존 `_verified_note` 에 적고, `calibration.json` 이 있으면 거기에
-    `adapter_verified` · `adapter_verified_source` 를 함께 굳힌다 — 08 표가
-    읽는 값이 어댑터 파일과 어긋나지 않도록. 반환: 0 올림 · 3 미달 · 2 설정 결손.
-    """
-    root = Path(root)
-    config = _read_json(root / CONFIG_REL)
-    adapter_id = config["adapter"]
-    path = root / ADAPTER_DIR_REL / ("%s.json" % adapter_id)
-    adapter = _read_json(path)
-    ids = phase_ids(root)
-    if not ids:
-        print("  %s 에 페이즈 파일이 없다 — 무엇을 완주라 부를지 모른다." % PHASES_DIR_REL)
-        return 2
-
-    qualified, rejected = _classify_runs(root, adapter_id, ids)
-
-    print("\n  verify-adapter — %s" % adapter_id)
-    print("  완주 런 %d · 그중 %s 전부 passed 인 런 %d / 기준 %d"
-          % (len(qualified) + len(rejected), "%s~%s" % (ids[0], ids[-1]),
-             len(qualified), min_runs))
-    for run_id, bad in rejected:
-        print("  - %s: passed 가 아닌 페이즈 — %s" % (run_id, ", ".join(bad)))
-    observed = observed_rules(root, adapter_id)
-    required = required_rules(adapter)
-    missing = sorted(required - observed)
-    print("  귀속 규칙 — 선언 %d · 실물 실패에서 판정을 낸 것 %d"
-          % (len(required), len(required & observed)))
-    for rule in missing:
-        print("  - %s: 아직 아무것도 결정한 적이 없다" % rule)
-    if len(qualified) < min_runs or missing:
-        print("  기준 미달 — 어댑터를 바꾸지 않았다. verified 는 %s 그대로다."
-              % json.dumps(bool(adapter.get("verified"))))
-        return 3
-
-    stamp = now or datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
-    run_ids = [r for r, _ in qualified]
-    adapter["verified"] = True
-    rule_list = ", ".join(sorted(required))
-    adapter["_verified_note"] = (
-        "verify-adapter: 완주 런 %d (%s) · %s — %s 전부 passed 이고, 어댑터가 "
-        "선언한 귀속 규칙(%s)이 **전부 실물 실패에서 판정을 냈다** (ADR-H069). "
-        "일부러 만든 실패가 아니라 관측이다."
-        % (len(run_ids), ", ".join(run_ids), stamp, "%s~%s" % (ids[0], ids[-1]),
-           rule_list))
-    path.write_text(json.dumps(adapter, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8")
-    print("  올림: %s → verified: true" % path.relative_to(root).as_posix())
-
-    cal_rel = config.get("calibration_file")
-    cal_path = root / cal_rel if cal_rel else None
-    if cal_path is not None and cal_path.is_file():
-        try:
-            cal = _read_json(cal_path)
-        except ValueError:
-            cal = None
-        if isinstance(cal, dict):
-            cal["adapter_verified"] = True
-            cal["adapter_verified_source"] = {"runs": run_ids, "at": stamp,
-                                              "rules": sorted(required)}
-            cal_path.write_text(json.dumps(cal, indent=2, ensure_ascii=False) + "\n",
-                                encoding="utf-8")
-            print("  갱신: %s → adapter_verified: true" % cal_rel)
-    return 0
 
 
 def _load_calibration(root, config):
@@ -1491,15 +1351,8 @@ def main(argv=None):
     p_cal.add_argument("--replace", action="store_true",
                        help="--stage 와 함께: 기존 실측을 병합하지 않고 통째로 교체한다")
 
-    p_ver = sub.add_parser("verify-adapter",
-                           help="완주 런 수로 어댑터 verified 를 올린다 (ADR-H047)")
-    p_ver.add_argument("--min-runs", type=int, default=ADAPTER_VERIFY_MIN_RUNS,
-                       help="필요한 완주 런 수 (기본 %d)" % ADAPTER_VERIFY_MIN_RUNS)
-
     args = parser.parse_args(argv)
 
-    if args.cmd == "verify-adapter":
-        return run_verify_adapter(ROOT, min_runs=args.min_runs)
     if args.cmd == "init":
         return run_init(ROOT, adapter=args.adapter, name=args.name, force=args.force)
     if args.cmd == "calibrate":

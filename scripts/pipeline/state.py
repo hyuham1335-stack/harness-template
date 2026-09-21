@@ -216,7 +216,7 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
     paths.request.write_bytes(raw)
 
     config = harness._read_json(root / harness.CONFIG_REL)
-    adapter, calibration = _adapter_and_calibration(root, config)
+    _adapter, calibration = _adapter_and_calibration(root, config)
 
     s = {
         "schema": 1,
@@ -231,8 +231,7 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
             "bytes": len(raw),
         },
         "profile": _initial_profile(profile),
-        "adapter": {"id": config.get("adapter"),
-                    "verified": bool((adapter or {}).get("verified"))},
+        "adapter": {"id": config.get("adapter")},
         "calibration": _calibration_summary(calibration),
         "vcs": {"baseline": _vcs_baseline(root)},
         "phase": "00-triage",

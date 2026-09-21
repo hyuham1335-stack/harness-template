@@ -108,8 +108,7 @@ def run_gate(root, config, adapter, calibration, state, phase_front,
                      "unmatched": (parsed or {}).get("unmatched") or [],
                      "scope": (parsed or {}).get("scope")},
         "calibration": {"present": bool(calibration),
-                        "partial": bool((calibration or {}).get("partial")),
-                        "adapter_verified": bool(adapter.get("verified"))},
+                        "partial": bool((calibration or {}).get("partial"))},
         "rules_inactive": attr.rules_inactive(adapter),
     }
     # **scoped 가 사실상 full 이면 그렇게 부르지 않는다.** 선택자를 넓히면
@@ -119,8 +118,6 @@ def run_gate(root, config, adapter, calibration, state, phase_front,
         gaps.append("scoped_degenerate")
     if not calibration:
         gaps.append("uncalibrated_run")
-    if not adapter.get("verified"):
-        gaps.append("adapter_unverified")
     if tests is not None:
         report["tests"] = tests
 
