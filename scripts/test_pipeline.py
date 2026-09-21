@@ -3989,53 +3989,18 @@ class TestCommittedFixtures:
 
 
 class TestFlowCommands:
-    """advance · retry · escalate · resume"""
-
-    def test_advance_refuses_when_the_receipt_is_stale(self, gated, fxdir):
-        """게이트 통과 뒤 소스가 바뀌면 막힌다 — 막히는 것이 정상 동작이다."""
-        repo, paths, s = gated
-        _gate(repo, make_fixture(fxdir, "adv", dict(ALL_PASS)))
-        _, after = st.load(repo, paths.run_id)
-        assert after.get("fingerprint"), "게이트가 영수증을 남겼어야 한다"
-
-        (repo / "src" / "lib" / "match.ts").write_text("// 한 글자\n", encoding="utf-8")
-        env = cli.run_advance(repo, "04", run_id=paths.run_id)
-        assert env["exit"] == 6
-        assert "낡았다" in env["render"]
-
-    def test_advance_refuses_when_a_product_is_missing(self, gated):
-        repo, paths, s = gated
-        env = cli.run_advance(repo, "04", run_id=paths.run_id)
-        assert env["exit"] == 6
-
-    def test_retry_reopens_a_failed_phase(self, gated):
-        repo, paths, s = gated
-        st.set_phase_status(s, "04-gate", "failed")
-        st.save(paths, s)
-        env = cli.run_retry(repo, "04", "repair", "수리한다", run_id=paths.run_id)
-        assert env["exit"] == 0
-        _, after = st.load(repo, paths.run_id)
-        assert st.phase_status(after, "04-gate") == "running"
-
-    def test_retry_escalates_at_the_limit(self, gated):
-        repo, paths, s = gated
-        for _ in range(3):
-            env = cli.run_retry(repo, "04", "repair", "또", run_id=paths.run_id)
-        assert env["exit"] == 7
-        _, after = st.load(repo, paths.run_id)
-        assert after["escalated"] is True
-        assert paths.escalation.exists()
+    """resume · 에스컬레이션 잠금"""
 
     def test_escalated_state_locks_every_command(self, gated):
         repo, paths, s = gated
-        cli.run_escalate(repo, "사람 판단", run_id=paths.run_id)
+        st.escalate(paths, s, "사람 판단", ["가", "나"], phase=s.get("phase"))
         for env in (cli.run_next(repo, paths.run_id),
                     cli.run_gate_cmd(repo, run_id=paths.run_id)):
             assert env["exit"] == 10, env["cmd"]
 
     def test_resume_needs_an_explicit_ack(self, gated):
         repo, paths, s = gated
-        cli.run_escalate(repo, "사람 판단", run_id=paths.run_id)
+        st.escalate(paths, s, "사람 판단", ["가", "나"], phase=s.get("phase"))
         assert cli.run_resume(repo, ack=False, run_id=paths.run_id)["exit"] == 2
         env = cli.run_resume(repo, ack=True, run_id=paths.run_id)
         assert env["exit"] == 0
@@ -9712,20 +9677,6 @@ class TestMask:
         got = mask_mod.mask_text(repo, "NODE_ENV=test 이고 DEBUG=1 이다")
         assert got["text"] == "NODE_ENV=test 이고 DEBUG=1 이다"
 
-    def test_cli_가_파일을_읽어_파일로_쓴다(self, repo):
-        _secrets(repo, K="비밀값입니다0123")
-        src = repo / "in.md"
-        src.write_text("본문 비밀값입니다0123\n", encoding="utf-8")
-        env = cli.run_mask(repo, str(src), str(repo / "out.md"))
-        assert env["exit"] == 0
-        out = (repo / "out.md").read_text(encoding="utf-8")
-        assert "비밀값입니다0123" not in out
-        assert "[MASKED]" in out
-
-    def test_없는_파일은_exit_1(self, repo):
-        env = cli.run_mask(repo, str(repo / "없다.md"), str(repo / "out.md"))
-        assert env["exit"] == 1
-
 
 # ---------------------------------------------------------------------------
 # N. approve — 승인은 이벤트다. 지문과 등급을 함께 못박는다
@@ -10385,50 +10336,15 @@ class TestPr06ContractAfterDrop:
         assert "읽지 못했다" in body, body
 
 
-class TestRunAbandon:
-    """이어질 일이 없는 런이 `active` 로 남아 있는 것 자체가 거짓이다."""
-
-    def test_abandon_이_런을_닫는다(self, repo, request_file, phases):
-        init = cli.run_init(repo, "x", str(request_file))
-        run_id = init["run_id"]
-        env = cli.run_abandon(repo, run_id=run_id, reason="설계가 바뀌었다")
-        assert env["exit"] == 0
-        _p, s = st.load(repo, run_id)
-        assert s["run_status"] == "abandoned"
-        assert s["closed_reason"] == "설계가 바뀌었다"
-
-    def test_사유_없이는_닫지_않는다(self, repo, request_file, phases):
-        init = cli.run_init(repo, "x", str(request_file))
-        env = cli.run_abandon(repo, run_id=init["run_id"], reason="")
-        assert env["exit"] == 2
-
-    def test_버려진_런은_기본값으로_집히지_않는다(self, repo, request_file, phases):
-        """살아 있는 런이 따로 있으면 버려진 쪽을 집지 않는다."""
-        # run_id 는 요청 바이트에서 유도되므로 두 런의 요청이 달라야 한다.
-        other = request_file.with_name("req2.md")
-        other.write_text("# 다른 요청\n\n다른 내용이다.\n", encoding="utf-8")
-        a = cli.run_init(repo, "a", str(request_file))["run_id"]
-        b = cli.run_init(repo, "b", str(other))["run_id"]
-        assert a != b
-        # 지금 집히는 쪽을 버린다 — 그래야 정렬 운에 기대지 않는다.
-        dead = st.latest_run_id(repo)
-        alive = b if dead == a else a
-        cli.run_abandon(repo, run_id=dead, reason="버린다")
-        assert st.latest_run_id(repo) == alive
+class TestLatestRunPicksEscalated:
+    """재개 가능한 런이다 — 안 집으면 화면에서 사라진다."""
 
     def test_에스컬레이션된_런은_계속_집힌다(self, repo, request_file, phases):
-        """재개 가능한 런이다 — 안 집으면 화면에서 사라진다."""
         rid = cli.run_init(repo, "a", str(request_file))["run_id"]
         paths, s = st.load(repo, rid)
         st.escalate(paths, s, "사람이 정한다", ["가", "나"], phase="01-plan")
         st.save(paths, s)
         assert st.latest_run_id(repo) == rid
-
-    def test_닫힌_런은_다시_버려지지_않는다(self, repo, request_file, phases):
-        rid = cli.run_init(repo, "a", str(request_file))["run_id"]
-        cli.run_abandon(repo, run_id=rid, reason="한 번")
-        env = cli.run_abandon(repo, run_id=rid, reason="두 번")
-        assert env["exit"] == 3
 
 
 class TestRecord06:
@@ -12651,18 +12567,6 @@ class TestReport08:
         assert len(closed) == 1
         assert closed[0]["data"]["grade"] == "PASS_WITH_GAPS"
         assert closed[0]["data"]["gaps"] == ["stage_absent:e2e"]
-
-    def test_닫힌_런에_advance_는_전이하지_않는다(self, repo, request_file, phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths)
-        cli.run_report(repo, run_id=run_id)
-        env = cli.run_advance(repo, "08", run_id=run_id)
-        assert env["exit"] == 0
-        assert env["data"]["closed"] is True
-        ev = [json.loads(x) for x
-              in paths.events.read_text(encoding="utf-8").splitlines() if x.strip()]
-        assert len([e for e in ev if e["kind"] == "phase_pass"
-                    and e.get("phase") == "08-report"]) == 1
 
     def test_record_08_은_report_로_안내한다(self, repo, request_file, phases):
         """"미구현" 이라고 말하던 자리다 — 구현돼 있고 동사가 다를 뿐이다."""

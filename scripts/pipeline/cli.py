@@ -2609,52 +2609,12 @@ def _normalize_phase(phase, loaded):
     return None
 
 
-def cmd_abandon(root, args):
-    return st.emit(run_abandon(root, run_id=args.run_id, reason=args.reason))
-
-
-def run_abandon(root, run_id=None, reason=None):
-    """이어질 일이 없는 런을 **명시적으로** 닫는다. 종료 코드 0 / 2 / 3.
-
-    버려진 런이 `active` 로 남아 있으면 `latest_run_id` 가 그것을 집고,
-    `status` 화면이 이어질 것처럼 말한다 — **이어지지 않을 런이 이어질 것처럼
-    보이는 것 자체가 거짓이다.** 지우지 않고 사실로 남긴다.
-
-    `--reason` 을 강제하는 이유는 원장에서 "설계가 바뀌어 버렸다" 와 "인프라가
-    깨져 못 이었다" 가 갈려야 하기 때문이다.
-    """
-    root = Path(root)
-    paths, s = st.load(root, run_id)
-    if s is None:
-        return st.envelope("abandon", False, 3, None, {}, "런이 없다.", None)
-    if not (reason or "").strip():
-        return st.envelope("abandon", False, 2, s, {},
-                           "`--reason` 이 필요하다. 사유 없이 닫으면 원장에서 "
-                           "포기와 장애가 같아 보인다.", None)
-    if s.get("run_status") in st.TERMINAL_STATUS:
-        return st.envelope("abandon", False, 3, s,
-                           {"run_status": s.get("run_status")},
-                           "이미 닫힌 런이다 (`%s`). 종단은 되돌리지 않는다."
-                           % s.get("run_status"), None)
-
-    st.close_run(s, status="abandoned", reason=reason.strip())
-    st.append_event(paths, "run_closed", cmd="abandon", phase=s.get("phase"),
-                    grade=s.get("grade"), gaps=s.get("gaps") or [])
-    st.save(paths, s)
-    return st.envelope("abandon", True, 0, s,
-                       {"run_status": "abandoned", "reason": reason.strip()},
-                       "런 `%s` 을 **버린 것으로** 닫았다 — %s\n\n"
-                       "산출물은 그대로 남는다. `--run-id` 없이 부르는 커맨드가 "
-                       "이제 이 런을 집지 않는다." % (s["run_id"], reason.strip()),
-                       None)
-
-
 def _close_run(root, paths, s, phase_item, ctx, cmd):
     """마지막 페이즈 통과 → 런 종료. **`done` 으로 옮기는 자리는 여기 하나다.**
 
     `st.close_run` 이 `run_status` 의 단일 출처이고, 종단 상태를 인자로 받는다 —
     등급이 세 곳에서 대입되던 것을 `st.demote` 로 모은 것과 같은 규율이다
-    (ADR-H015). `abandon` 도 그 함수를 부르지 자기 대입을 만들지 않는다.
+    (ADR-H015).
     """
     pid = phase_item["front"]["id"]
     st.set_phase_status(s, pid, "passed")
@@ -6238,55 +6198,6 @@ def _pr_render(req, paths, req_path):
     ])
 
 
-# ------------------------------------------------------------------------ mask
-
-def cmd_mask(root, args):
-    return st.emit(run_mask(root, args.file, args.out, args.run_id))
-
-
-def run_mask(root, file, out, run_id=None):
-    """외부로 나가는 페이로드를 마스킹한다. 종료 코드 **0 / 1**.
-
-    런이 없어도 돈다 — 06 이전에 본문 초안을 확인할 수 있어야 한다.
-    실패가 exit 1(내부 오류)인 것은 명세의 CLI 표가 그렇게 정한다: 가리지
-    못한 채로 내보내느니 멈추는 쪽이다.
-    """
-    import mask as mask_mod
-
-    root = Path(root)
-    paths, s = st.load(root, run_id)
-    got = mask_mod.mask_file(root, file, out)
-    ok = bool(got.get("ok"))
-    if s is not None and ok:
-        # 비밀 파일 부재는 **원장에 기록한다** — 경고이지 실패가 아니지만
-        # "그때 패턴만 걸렸다"를 나중에 알 수 있어야 한다 (§8.2 06 마지막 행).
-        st.append_event(paths, "stage_done", cmd="mask", phase=s.get("phase"),
-                        hits=got["hits"],
-                        secret_files_missing=got["secret_files_missing"])
-        st.save(paths, s)
-    return st.envelope("mask", ok, 0 if ok else 1, s, got,
-                       _mask_render(got), None)
-
-
-def _mask_render(got):
-    if not got.get("ok"):
-        return "\n".join([
-            "## 마스킹 실패", "",
-            got.get("error") or "알 수 없는 오류", "",
-            "가리지 못한 채로 내보내지 않는다."])
-    lines = ["`mask` 완료 — %d 곳을 가렸다." % got["hits"]]
-    by = got.get("by_source") or {}
-    if by:
-        lines.append("출처별: " + " · ".join(
-            "%s %d" % (k, v) for k, v in sorted(by.items()) if v))
-    if got.get("secret_files_missing"):
-        lines.append("")
-        lines.append("**비밀 파일이 없어 패턴만 적용했다** (%s) — 경고이지 "
-                     "실패가 아니다. 원장에 남겼다."
-                     % ", ".join(got["secret_files_missing"]))
-    return "\n".join(lines)
-
-
 # --------------------------------------------------------------- contract-trace
 
 def cmd_contract_trace(root, args):
@@ -6375,117 +6286,6 @@ def _trace_render(got, rel):
     return "\n".join(lines)
 
 
-def cmd_advance(root, args):
-    return st.emit(run_advance(root, args.phase, args.run_id))
-
-
-def run_advance(root, phase, run_id=None):
-    """명시 전이. **산출물 신선도 + 워크트리 지문**을 대조한다.
-
-    게이트 통과 후 소스가 바뀌면 영수증이 stale 이다 — "통과한 셈 치고 넘어가기"의
-    구조적 차단이고, 막히는 것이 정상 동작이다.
-    """
-    root = Path(root)
-    paths, s = st.load(root, run_id)
-    if s is None:
-        return st.envelope("advance", False, 3, None, {}, "런이 없다.", None)
-    if s.get("run_status") == st.DONE:
-        return st.envelope("advance", True, 0, s, {"closed": True},
-                           "이 런은 이미 닫혔다 (`run_status: done`). "
-                           "전이할 것이 없다.", None)
-    loaded, _ = load_phases(root)
-    pid = _normalize_phase(phase, loaded)
-    if pid is None:
-        return st.envelope("advance", False, 2, s, {}, "알 수 없는 페이즈: %r" % phase, None)
-
-    ctx = build_context(root, paths, s)
-    missing = []
-    for prod in loaded[pid]["front"].get("produces") or []:
-        if prod.get("unless") and eval_condition(prod["unless"], s):
-            continue
-        target = root / resolve(prod["path"], ctx)
-        if not target.exists():
-            missing.append(prod["path"])
-    if missing:
-        return st.envelope("advance", False, 6, s, {"missing": missing},
-                           "## 전이 거부 — 산출물이 없다\n\n" +
-                           "\n".join("- `%s`" % m for m in missing), None)
-
-    saved = s.get("fingerprint")
-    fresh = st.fingerprint(root, ctx["config"])
-    if saved and not st.fingerprint_matches(saved, fresh):
-        return st.envelope(
-            "advance", False, 6, s, {"saved": saved, "fresh": fresh},
-            "## 전이 거부 — 영수증이 낡았다\n\n게이트 통과 뒤 소유 범위의 소스가 "
-            "바뀌었다. 게이트를 다시 돌려야 한다.\n\n"
-            "`python scripts/pipeline/cli.py gate --phase 04 --run-id %s`" % s["run_id"],
-            "python scripts/pipeline/cli.py gate --phase 04 --run-id %s" % s["run_id"])
-
-    return _advance_to_next(root, paths, s, loaded[pid], ctx, cmd="advance")
-
-
-def cmd_retry(root, args):
-    return st.emit(run_retry(root, args.phase, args.counter, args.reason, args.run_id))
-
-
-def run_retry(root, phase, counter, reason, run_id=None):
-    """`failed` → `running`. **record 로는 못 한다** — 재작업의 유일한 문이다."""
-    root = Path(root)
-    paths, s = st.load(root, run_id)
-    if s is None:
-        return st.envelope("retry", False, 3, None, {}, "런이 없다.", None)
-    loaded, _ = load_phases(root)
-    pid = _normalize_phase(phase, loaded)
-    if pid is None:
-        return st.envelope("retry", False, 2, s, {}, "알 수 없는 페이즈: %r" % phase, None)
-    if counter not in st.COUNTERS:
-        return st.envelope("retry", False, 2, s, {},
-                           "알 수 없는 카운터: %r (%s)"
-                           % (counter, ", ".join(st.COUNTERS)), None)
-
-    profile = (s.get("profile") or {}).get("name") or "normal"
-    try:
-        max_ = _loop_max(loaded[pid]["front"], profile)
-    except ConfigDeclarationError as exc:
-        return _declaration_envelope("retry", s, exc)
-    # `max_` 는 선언값이고 봉투가 말해야 하는 것은 실효 상한이다 (M56).
-    used, max_eff, exceeded = st.counter_inc(s, counter, max_, "manual",
-                                             paths=paths, note=reason)
-    if exceeded:
-        try:
-            _loop_on_exceed(loaded[pid]["front"])
-        except ConfigDeclarationError as exc:
-            return _declaration_envelope("retry", s, exc)
-        st.escalate(paths, s, "`%s` 카운터가 상한 %d 에 닿았다: %s" % (counter, max_eff, reason),
-                    ["범위를 줄인다", "계약을 고친다", "중단한다"], phase=pid)
-        return st.envelope("retry", False, 7, s, {"counter": counter, "used": used},
-                           "## 반복 한계 — 에스컬레이션\n\n`ESCALATION.md` 를 본다.",
-                           "python scripts/pipeline/cli.py resume --ack "
-                           "--answer-file <경로>")
-    st.set_phase_status(s, pid, "running", retry_reason=reason)
-    s["phase"] = pid
-    st.save(paths, s)
-    return st.envelope("retry", True, 0, s,
-                       {"counter": counter, "used": used, "max": max_eff},
-                       "`%s` 를 다시 연다 (%s %d/%d). 사유: %s"
-                       % (pid, counter, used, max_eff, reason),
-                       "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
-
-
-def cmd_escalate(root, args):
-    return st.emit(run_escalate(root, args.reason, args.run_id))
-
-
-def run_escalate(root, reason=None, run_id=None):
-    paths, s = st.load(Path(root), run_id)
-    if s is None:
-        return st.envelope("escalate", False, 3, None, {}, "런이 없다.", None)
-    st.escalate(paths, s, reason or "사람이 판단을 요청했다",
-                ["이대로 진행한다", "범위를 줄인다", "중단한다"],
-                phase=s.get("phase"))
-    return _escalation_envelope("escalate", paths, s)
-
-
 def cmd_resume(root, args):
     return st.emit(run_resume(root, args.ack, args.answer_file, args.run_id))
 
@@ -6571,10 +6371,6 @@ def build_parser():
 
     sub.add_parser("doctor", add_help=False)
 
-    sp = sub.add_parser("abandon", add_help=False)
-    sp.add_argument("--reason", dest="reason", default=None)
-    sp.add_argument("--run-id", dest="run_id", default=None)
-
     sp = sub.add_parser("status", add_help=False)
     sp.add_argument("--run-id", dest="run_id", default=None)
 
@@ -6590,20 +6386,6 @@ def build_parser():
     sp = sub.add_parser("next", add_help=False)
     sp.add_argument("--run-id", dest="run_id", default=None)
     sp.add_argument("--phase", dest="phase", default=None)
-
-    sp = sub.add_parser("advance", add_help=False)
-    sp.add_argument("--phase", dest="phase", required=True)
-    sp.add_argument("--run-id", dest="run_id", default=None)
-
-    sp = sub.add_parser("retry", add_help=False)
-    sp.add_argument("--phase", dest="phase", required=True)
-    sp.add_argument("--counter", dest="counter", required=True)
-    sp.add_argument("--reason", dest="reason", required=True)
-    sp.add_argument("--run-id", dest="run_id", default=None)
-
-    sp = sub.add_parser("escalate", add_help=False)
-    sp.add_argument("--reason", dest="reason", default=None)
-    sp.add_argument("--run-id", dest="run_id", default=None)
 
     sp = sub.add_parser("resume", add_help=False)
     sp.add_argument("--ack", dest="ack", action="store_true")
@@ -6644,11 +6426,6 @@ def build_parser():
     sp.add_argument("--auto", dest="auto", action="store_true")
     sp.add_argument("--run-id", dest="run_id", default=None)
 
-    sp = sub.add_parser("mask", add_help=False)
-    sp.add_argument("--file", dest="file", required=True)
-    sp.add_argument("--out", dest="out", required=True)
-    sp.add_argument("--run-id", dest="run_id", default=None)
-
     sp = sub.add_parser("precheck", add_help=False)
     sp.add_argument("--scope", dest="scope", default="pr",
                     choices=["pr", "worktree"])
@@ -6680,16 +6457,11 @@ HANDLERS = {
     "next": cmd_next,
     "record": cmd_record,
     "gate": cmd_gate,
-    "advance": cmd_advance,
-    "retry": cmd_retry,
-    "escalate": cmd_escalate,
     "resume": cmd_resume,
     "status": cmd_status,
-    "abandon": cmd_abandon,
     "lint-phases": cmd_lint_phases,
     "contract-trace": cmd_contract_trace,
     "precheck": cmd_precheck,
-    "mask": cmd_mask,
     "approve": cmd_approve,
     "pr": cmd_pr,
     "promote": cmd_promote,

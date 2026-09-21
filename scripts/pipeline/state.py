@@ -77,7 +77,6 @@ COUNTER_REASONS = (
     "review_blocking",        # 05 의 Critical/Major 를 수리한다
     "format_reject",          # 제출이 규약을 어겨 되돌아왔다 — 수리가 아니다
     "external_change_requested",  # 07 의 외부 변경 요청
-    "manual",                 # `retry` — 사람이 사유를 따로 적는다
 )
 
 # 닫힌 어휘다. budget.model_calls 가 봉투의 지시에서 유도되므로, 어휘가
