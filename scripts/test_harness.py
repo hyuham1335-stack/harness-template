@@ -257,13 +257,6 @@ class StageCommandDeclarationTest(DoctorTestBase):
         self.save_adapter(ad)
         self.assertRejected(self.doctor(), "nonexistent")
 
-    def test_declared_manifest_still_catches_missing_baseline_script(self):
-        """회귀 — baseline_cmd 도 같은 규칙으로 대조된다."""
-        ad = self.adapter()
-        ad["stages"]["lint"]["baseline_cmd"] = ["run", "no-such-baseline"]
-        self.save_adapter(ad)
-        self.assertRejected(self.doctor(), "no-such-baseline")
-
     def test_verb_mismatch_is_left_alone(self):
         """check 의 `audit` 은 verb 가 run 이 아니므로 대조 대상이 아니다 — 지금 동작 그대로."""
         report = self.doctor()

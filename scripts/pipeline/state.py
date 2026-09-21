@@ -59,7 +59,7 @@ TERMINAL_STATUS = ("done", "abandoned")
 # 다음을 `done` 이라 적는다 — 페이즈 id 가 아니라 "여기서 끝" 이라는 표식이다.
 DONE = "done"
 
-COUNTERS = ("round", "repair", "xverify_return", "review_repair", "pr_repair")
+COUNTERS = ("round", "repair", "xverify_return", "review_repair")
 
 # 예산을 **무엇에 썼는가**. 카운터는 "몇 번 썼나"만 세므로, 사유가 없으면
 # "수리 2회로 안 됐다"와 "형식으로 2회 튕겼다"가 원장에서 같은 줄로 보인다
@@ -76,7 +76,6 @@ COUNTER_REASONS = (
     "gate_failure",           # 04 게이트가 실패해 수리로 간다
     "review_blocking",        # 05 의 Critical/Major 를 수리한다
     "format_reject",          # 제출이 규약을 어겨 되돌아왔다 — 수리가 아니다
-    "external_change_requested",  # 07 의 외부 변경 요청
 )
 
 # 닫힌 어휘다. budget.model_calls 가 봉투의 지시에서 유도되므로, 어휘가
@@ -94,9 +93,9 @@ EVENT_KINDS = (
     # `horizon` 은 "다음 페이즈가 아직 없다", `run_closed` 는 "런이 끝났다" 다.
     # 하나로 뭉치면 미완성 실행기와 완주한 런을 원장에서 구분할 수 없다.
     "run_closed",
-    # 06~08. 승인·PR·승격은 "일어났다"가 사후에 확인 가능해야 하는 사건이고,
-    # 그 셋 다 외부 상태를 건드린다 — 이벤트가 없으면 되돌아볼 기록이 없다.
-    "approved", "approval_revoked", "pr_pushed", "pr_opened", "promoted",
+    # 06. 승인·PR 은 "일어났다"가 사후에 확인 가능해야 하는 사건이고,
+    # 둘 다 외부 상태를 건드린다 — 이벤트가 없으면 되돌아볼 기록이 없다.
+    "approved", "approval_revoked", "pr_pushed", "pr_opened",
     # `counter_inc` 은 "예산을 썼다", `counter_grant` 는 "예산을 더 줬다" 다.
     # 뭉치면 원장에서 다섯 라운드를 쓴 런과 세 라운드를 쓰고 둘을 더 받은 런이
     # 같아 보인다 (M32).

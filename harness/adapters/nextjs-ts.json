@@ -15,10 +15,7 @@
     "compile": {"cmd": ["run", "typecheck"], "timeout_sec": 300},
     "lint": {
       "cmd": ["run", "lint"],
-      "timeout_sec": 300,
-      "baseline_file": "harness/lint-baseline.json",
-      "baseline_cmd": ["run", "lint", "--", "--format", "json", "-o", "harness/lint-baseline.json"],
-      "_baseline_note": "소비자는 promote --apply 다 (ADR-H021). 실행기가 이 명령을 직접 돌리고 baseline_file 의 VCS 변화를 재서 lint 승격의 판정 근거로 쓴다. 종료 코드는 성패가 아니다 — 린터가 위반을 찾으면 0 이 아니고 그것이 정상이다. 04 게이트는 이 필드를 쓰지 않는다."
+      "timeout_sec": 300
     },
     "check": {
       "cmd": ["audit", "--audit-level=high"],

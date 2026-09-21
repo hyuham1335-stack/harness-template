@@ -609,11 +609,6 @@ def _check_stage_commands(root, adapter, report):
                 problems.append(
                     "stages.%s.cmd 가 매니페스트에 없는 스크립트 %r 를 참조한다 (있는 것: %s)"
                     % (name, cmd[1], ", ".join(sorted(scripts)) or "없음"))
-        baseline = stage.get("baseline_cmd")
-        if baseline and baseline[0] == verb and len(baseline) > 1:
-            if baseline[1] not in scripts:
-                problems.append("stages.%s.baseline_cmd 가 없는 스크립트 %r 를 참조한다"
-                                % (name, baseline[1]))
     if problems:
         report.add("스테이지 명령", "FAIL", "\n".join("- " + p for p in problems))
     elif scripts is None:

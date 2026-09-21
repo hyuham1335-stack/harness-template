@@ -65,7 +65,7 @@ python scripts/pipeline/cli.py next
 | 4 | 기계 판정 실패, 예산 남음 | 수리한다. **`data.repair_dispatch` 의 배정을 그대로 쓴다** |
 | 8 | 제출물이 스키마·정합성을 어겼다 | 고쳐서 다시 낸다 |
 | 5 · 7 · 10 | 예산 소진 · 반복 한계 · 에스컬레이션 | **멈춘다.** `ESCALATION.md` 의 선택지를 그대로 사용자에게 제시한다 |
-| 6 | 전이 거부 — 산출물 없음 · 지문 stale · 승격 미종결 | `render` 가 말한 것을 채운다. 승인이 무효면 재승인이다 |
+| 6 | 전이 거부 — 산출물 없음 · 지문 stale | `render` 가 말한 것을 채운다. 승인이 무효면 재승인이다 |
 | 9 | **사람의 판단 대기.** 상태를 잠그지 않는다 | 사용자에게 선택지를 그대로 제시하고 답을 받는다. **네가 고르지 마라** |
 | 11 | 런 완료 | 종료 보고로 간다 |
 
@@ -244,47 +244,21 @@ python scripts/pipeline/cli.py record --phase 06 --file <06_pr_result.json> --ru
 
 ### 07-pr-review 에서
 
-**PR 상태를 먼저 본다.** 닫혔거나 머지됐으면 수리도 코멘트도 하지 않는다.
+**PR 상태를 먼저 본다.** 닫혔거나 머지됐으면 리뷰 없이 `07_pr_review.json` 을
+findings 빈 배열로 내고 바로 `record` 로 간다.
 
-외부 리뷰를 모아 `07_external.json` 으로 내고:
-
-```bash
-python scripts/pipeline/cli.py review07 --external <07_external.json> --run-id <id>
-```
-
-봉투가 `--effort` 를 준다. **그 값 그대로** `/code-review` 를 부른다 —
-**effort 를 네가 고르지 마라.** 결정론이어야 `escaped_05` 가 근거가 된다.
-봉투가 **`skipped`** 를 주면 `/code-review` 를 부르지 않는다 — `07_pr_review.json`
-을 `code_review: "skipped"` · findings 빈 배열로 내고 바로 `record` 로 간다.
-깨끗한 런(05 ok · 외부 Major 없음 · 05 지적이 0건이 아님 · 감사 런 아님)이
-그렇고, 일반 정합성은 05 의 `gen` 이 이미 봤다 (ADR-H043 · ADR-H059).
-**`triage_miss` 는 생략을 막지 않는다** (ADR-H072) — 빗나간 예측의 벌칙은
-돌게 된 런의 effort 를 올리는 것이지 빈손 보장된 호출을 더하는 것이 아니다. "Major 잔여" 와 "04·05 수리 있음" 은 더 이상 트리거가 아니다. 승격은 그
-뒤에 그대로 돈다.
+열려 있으면 `/code-review` 를 **1회** 부른다 — 생략 조건도 effort 선택도 없다.
+결과를 `07_pr_review.json` 으로 옮겨 적되, 봉투의 「05 가 낸 지적」 목록과 **같은
+결함**에만 그 `finding_key` 를 단다. 나머지는 새 것이다. 형식은 `07-pr-review.md`
+「제출 형식」.
 
 ```bash
 python scripts/pipeline/cli.py record --phase 07 --file <07_pr_review.json> --run-id <id>
-python scripts/pipeline/cli.py promote --scan --run-id <id>
 ```
 
-`promote --scan` 이 후보 0 이면 **모델을 부르지 않고 끝난다** — 초기 런의 최빈
-경로다. 후보가 있으면 판정을 내고 `--apply` 한다. **`duplicate` 에서 `create` 는
-금지고, `contradicts` 는 에스컬레이션이다.** 후보는 `lint`·`check` 목적지뿐이고,
-「지시문 검토 후보」(prose)는 08 로 간다 — 근본 원인을 고친 규칙은 `retire` 로
-끊는다 (ADR-H056).
+Critical/Major 가 새로 나오면 `record` 가 gap `pr_review_open` 으로 등급을 내리고
+넘어간다 — **수리하지 마라.** 보고서와 종료 보고에 남기고 사람이 정한다.
 
-승격은 **별도 브랜치**로 간다. 기능 PR 에 규칙 변경을 섞지 마라. 순서는 이렇다
-(ADR-H065):
-
-1. **규칙 전용 브랜치를 네가 만들고**(base fetch 뒤 분기, 있으면 체크아웃) 규칙 파일을 거기 쓴다
-2. 그 브랜치에서 `promote --apply` 를 친다. 실행기가 어댑터의 `lint` · `check` 를 **현재
-   워크트리에서** 돌린다 — 기능 브랜치에서 치면 기능 코드와 규칙을 함께 잰다
-3. 게이트가 깨지면 실행기가 기계 강제 승격을 전부 `rejected` 로 적는다. **너는 브랜치를
-   폐기한다.** 기능 PR 은 영향받지 않는다
-4. **exit 10** 은 게이트(또는 베이스라인)를 돌리지 못한 인프라 실패다 — 아무것도 쓰이지
-   않았으니 원인을 고치고 다시 친다. 어댑터에 두 명령이 없으면 막지 않고 gap
-   `promotion_selfgate_unverified` 로 등급만 내려간다
-5. 통과하면 별도 PR 로 올린다
 
 ### 08-report 에서
 
@@ -328,9 +302,8 @@ python scripts/pipeline/cli.py pr --run-id <id>      # 닫힌 런의 PR 갱신 �
 - 카운터 사용량과 모델 호출 근사치(근사임을 명시)
 - 런 디렉터리 경로
 - **PR 번호와 상태**, 그리고 승인이 `user` 였는지 `auto` 였는지
-- **`review07`** — 외부 리뷰 상태와 `escaped_05`. 봇이 `disabled` 였으면 그렇게
-  적는다. **"리뷰가 없었다"를 "지적이 없었다"로 적지 마라**
-- 승격 결과 — `applied` / `rejected` / `skipped` 를 사유와 함께
+- **07 `/code-review`** — `done`/`skipped`(사유) 와 escaped(05 가 낸 키를 가리키지
+  않은 Major+) 수. **"리뷰가 없었다"를 "지적이 없었다"로 적지 마라**
 - 보고서 경로
 - 그리고 이 문장:
   > 이 런은 PR 까지 갔고 **머지하지 않았다.** 머지는 이 파이프라인의 범위가

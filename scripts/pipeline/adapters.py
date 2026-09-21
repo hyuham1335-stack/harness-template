@@ -104,29 +104,6 @@ def stage_argv(root, adapter, name, select=None):
     return argv
 
 
-def baseline_argv(root, adapter, name="lint"):
-    """베이스라인을 다시 만드는 argv. 없으면 `None` 이다.
-
-    `stage_argv` 와 **같은 방식으로** 조립한다 — 바이너리 해석(플랫폼별 확장자
-    포함)과 `common_args` 가 두 곳에서 갈라지면 한쪽만 고쳐지는 날이 온다.
-
-    `baseline_file` 이 함께 있어야 한다. 명령만 있고 파일이 없으면 무엇이
-    바뀌었는지 잴 대상이 없어 **재지 않은 것을 잰 것처럼 적게 된다.**
-    """
-    spec = stage_spec(adapter, name) or {}
-    cmd = spec.get("baseline_cmd")
-    if not cmd or not spec.get("baseline_file"):
-        return None
-    runner_cfg = adapter.get("runner") or {}
-    return ([harness._resolve_bin(root, runner_cfg["bin"])]
-            + list(runner_cfg.get("common_args") or [])
-            + list(cmd))
-
-
-def baseline_file(adapter, name="lint"):
-    return (stage_spec(adapter, name) or {}).get("baseline_file")
-
-
 def parse_report(root, adapter, report_root=None):
     """테스트 리포트를 정규화한다. 형식 분기는 계약 계층에 있다 (코어 고유명사 0건)."""
     return harness.parse_test_report(Path(root), adapter, report_root)

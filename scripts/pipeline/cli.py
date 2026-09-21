@@ -69,10 +69,6 @@ LOOP_ON_EXCEED = ("escalate",)
 # 내린 것이다 — 새 값을 여기서 만들지 않는다.
 EXIT_CODES = tuple(range(12))
 
-# 07 이 받은 봇 페이로드 원문. `record` 의 quote 대조가 이것을 건초더미로 쓴다
-# (ADR-H073). 워커 산출물이 아니라 실행기가 받은 것이라 `produces` 에 없다.
-EXTERNAL_RAW = "07_external.raw.json"
-
 # 제출 검사의 어휘와 **그 검사를 실제로 내는 자리**. `LOOP_ON_EXCEED` 와 같은
 # 규율이다 — **늘리려면 그 동작을 먼저 만든다** (M36 · ADR-H025).
 #
@@ -110,9 +106,9 @@ SUBMIT_CHECKS = {
         "why": "작성자가 자기 글을 리뷰한 것은 독립 관측이 아니다"},
     "source_quote_substring": {
         "exit": 8, "impl": ("verdict:check_plan", "verdict:check_review",
-                            "cli:_record_02", "cli:_record_07"),
+                            "cli:_record_02"),
         "why": "인용이 원문에 실재하는가. **건초더미가 페이즈마다 다르다** — 01 플랜은 "
-               "요청 원문, 01·05 리뷰어는 `.raw.md`, 02 는 플랜, 07 은 봇 페이로드다"},
+               "요청 원문, 01·05 리뷰어는 `.raw.md`, 02 는 플랜이다"},
     "raw_json_severity_match": {
         "exit": 8, "impl": ("verdict:check_review",),
         "why": "원문의 심각도 헤딩 수와 findings 수가 맞는가 — 1라운드 수렴을 "
@@ -164,14 +160,6 @@ SUBMIT_CHECKS = {
     "pr_number_stable": {
         "exit": 8, "impl": ("cli:_record_06",),
         "why": "기록된 PR 번호와 제출이 갈라지지 않았는가"},
-    "external_status_vocabulary": {
-        "exit": 8, "impl": ("cli:_record_07", "review07:normalize_external"),
-        "why": "`external.status` 가 `EXTERNAL_STATUS` 안인가. 제출이 실으면 "
-               "`review07` 이 센 값과 **대조한다** — 계수의 권위가 요약본을 낸 쪽으로 "
-               "넘어가지 않게 (불변식 8)"},
-    "change_request_open": {
-        "exit": 10, "impl": ("cli:_record_07",),
-        "why": "외부가 변경 요청을 낸 채로 07 을 끝낼 수 없다. **상태를 잠그므로** 10 이다"},
 }
 
 
@@ -700,9 +688,6 @@ def _pipeline_checks(root):
     #    무료로** 알려 준다 (§P3). 여기서 막지는 않는다 — 원격 없이 로컬까지만
     #    가는 것도 정당한 선택이고, 그 선택은 사람의 것이다.
     out.append(_check_remote(root, config))
-
-    # ⑦ 외부 리뷰 봇. 켜 놓고 대상을 안 적으면 07 이 아무도 아닌 것을 기다린다.
-    out.append(_check_external_bot(config))
     return out
 
 
@@ -727,26 +712,6 @@ def _check_remote(root, config):
                            "멈춘다." % (base, remote)}
     return {"name": name, "status": "PASS",
             "message": "%s/%s 확인" % (remote, base)}
-
-
-def _check_external_bot(config):
-    name = "외부 리뷰 봇"
-    ext = (config or {}).get("external_pr_review") or {}
-    if not ext.get("enabled"):
-        return {"name": name, "status": "PASS",
-                "message": "꺼져 있다 — gap 이 아니다. 07 의 내장 리뷰는 05 가 "
-                           "ok 가 아니거나 05 지적이 0건이거나 감사 런일 때 "
-                           "돌고, 그 밖은 생략한다 (ADR-H043 · ADR-H059). "
-                           "트리아지가 빗나간 것은 생략을 막지 않고 돌게 된 "
-                           "런의 effort 만 올린다 (ADR-H072)."}
-    if not (ext.get("bot_logins") or []):
-        return {"name": name, "status": "FAIL",
-                "message": "켜져 있는데 bot_logins 가 비었다 — 07 이 아무도 "
-                           "아닌 것을 timeout_sec 동안 기다린다."}
-    return {"name": name, "status": "PASS",
-            "message": "%s — 폴링 %ss / 상한 %ss (**미검증 상속값**)"
-                       % (", ".join(ext["bot_logins"]), ext.get("poll_sec"),
-                          ext.get("timeout_sec"))}
 
 
 def _check_reviewers(root, config):
@@ -1676,7 +1641,7 @@ def _plan_05_review(root, paths, s, ctx):
     """05 진입 시 **누가 리뷰할지를 여기서 확정한다.**
 
     모델이 정하지 않는다. `when` glob 이 정하는 결정론이고, 모델이 정하면 같은
-    diff 가 런마다 다른 리뷰를 받아 `escaped_05` 를 세는 것이 의미를 잃는다.
+    diff 가 런마다 다른 리뷰를 받는다.
     """
     import precheck as pc
     import review as review_mod
@@ -1700,7 +1665,7 @@ def _plan_05_review(root, paths, s, ctx):
     node = s.setdefault("phases", {}).setdefault("05-code-review", {})
     # **계획된 리뷰어는 줄지 않는다.** `next --phase 05` 는 여러 번 불릴 수
     # 있고 그때마다 변경 집합을 다시 읽는다. 줄어든 집합으로 덮으면 계획이
-    # 조용히 작아지고 `escaped_05` 를 세는 것이 뜻을 잃는다 — `review05` 가
+    # 조용히 작아진다 — `review05` 가
     # "런 안에서 좋아지지 않는다" 를 지키는 것과 같은 규율이다.
     kept = [c for c in (node.get("planned") or [])
             if c not in [r["code"] for r in routed["reviewers"]]]
@@ -2107,10 +2072,7 @@ def render_packet(root, phase, ctx, s, checks=None):
     if pid == "07-pr-review":
         # 07 이 05 와 같은 결함에 다른 이름을 붙이면 새 것으로 세어진다.
         # 목록을 봉투가 직접 준다 — 모델이 재구성하면 그 재구성이 곧 결함이다 (M48).
-        parts.append(_open_from_05_render(_open_from_05(s)))
-        # 07 도 어휘를 대조받는 생산자다 (ADR-H035). 봉투가 먼저 말하지
-        # 않으면 필수를 모른 채 제출하고 exit 8 을 받는다 — M20 이 고친 모양.
-        parts.append(_vocabulary_render(root))
+        parts.append(_keys_from_05_render(_keys_from_05(s)))
     tiers = _model_tiers_render(ctx, s, _instruction_keys(s, pid, ctx, front))
     if tiers:
         parts.append(tiers)
@@ -2492,7 +2454,7 @@ def run_record(root, phase, file, reviewer=None, round_=None, run_id=None,
     if handler is None:
         return st.envelope("record", False, 2, s, {"phase": pid},
                            "`%s` 의 제출 처리는 아직 구현되지 않았다." % pid, None)
-    # **제출을 세지 않는다** (M26). 계수는 `next`·`review07`·`gate` 가 기동을
+    # **제출을 세지 않는다** (M26). 계수는 `next`·`gate` 가 기동을
     # 지시하는 자리에서 일어난다 — `_instruction_keys` 를 보라.
     try:
         env = handler(root, paths, s, phase_item, ctx, Path(file), reviewer,
@@ -2550,6 +2512,10 @@ def _instruction_keys(s, pid, ctx, front=None):
         if r == 1 and node.get("mode") == "merged" and len(planned) > 1:
             return ["05:r1:merged"]
         return ["05:r%d:%s" % (r, c) for c in planned]
+    if pid == "07-pr-review":
+        # `/code-review` 1회. 스킬 호출이라 `record --reviewer` 를 남기지 않는다 —
+        # 지시 기준으로 세야 표본에 들어온다 (M26).
+        return ["07:code-review"]
     return []
 
 
@@ -2912,35 +2878,45 @@ def _previous_open(rounds, round_, reviewer=None):
     return out
 
 
-def _open_from_05(s):
-    """05 가 열어 둔 채 07 에 넘긴 지적. 07 의 dedup 선언이 가리킬 대상이다.
+def _keys_from_05(s):
+    """05 가 낸 지적 전부 — 07 의 `dup_05` 가 가리킬 대상이다.
 
-    라운드 번호를 마지막보다 크게 잡아 **모든 회차**를 훑는다 — 05 는 이미
-    끝났고, 남은 물음은 "무엇이 열린 채로 왔나" 하나다 (M48).
+    원천은 `phases.05-code-review.rounds` 하나다. `05_review.json` 은 라운드마다
+    덮어써져 델타 라운드 뒤엔 델타 리뷰어의 것만 남는다 — `pr._minor_open` 이
+    같은 이유로 `review.open_findings` 를 쓴다. 같은 키는 첫 등장이 이기고,
+    어느 라운드에서든 닫힌 키는 `closed` 로 표시한다. 실패 슬롯(`keys is None`)은
+    읽지 않는다.
     """
     node = (s.get("phases") or {}).get("05-code-review") or {}
     rounds = node.get("rounds") or {}
-    if not rounds:
-        return []
-    return _previous_open(rounds, max(int(r) for r in rounds) + 1)
+    seen, closed = {}, set()
+    for rn in sorted(rounds, key=int):
+        for code, sub in (rounds[rn] or {}).items():
+            if sub.get("keys") is None:
+                continue
+            for f in sub.get("findings") or []:
+                key = verdict.finding_key(f)
+                seen.setdefault(key, {"key": key, "severity": f.get("severity"),
+                                      "reviewer": code,
+                                      "title": f.get("title") or "제목 없음"})
+            closed |= set(sub.get("closed") or [])
+    return [dict(v, closed=v["key"] in closed) for v in seen.values()]
 
 
-def _open_from_05_render(open_):
+def _keys_from_05_render(keys):
     """봉투가 목록을 직접 준다 — 모델이 재구성하면 그 재구성이 곧 결함이다."""
-    if not open_:
-        return ("## 05 가 이미 낸 지적\n\n(없다) — 05 가 연 채로 넘긴 것이 없다. "
-                "여기서 잡는 것은 전부 새 것이다.")
-    lines = ["## 05 가 이미 낸 지적 — 같은 것이면 가리켜라", "",
-             "아래는 05 가 **열어 둔 채** 넘긴 것이다. 같은 결함에 다른 이름을 "
-             "붙이면 기계는 새 것으로 세고, 그러면 `escaped_05` 가 05 를 실제보다 "
-             "나쁘게 적는다 (M48). 같은 것이면 그 finding 에 "
-             '`"reraised_from_previous": "<키>"` 를 단다.', ""]
-    for k in open_:
-        lines.append("- `%s` (`%s`, `%s`) — %s"
-                     % (k.get("key"), k.get("severity"), k.get("reviewer"),
-                        k.get("title_norm") or k.get("title") or "제목 없음"))
-    lines += ["", "**목록에 없는 키를 가리키면 exit 8 이다.** 새 것이면 아무것도 "
-                  "달지 않는다 — 안 다는 것이 기본이고, 다는 것이 주장이다."]
+    if not keys:
+        return ("## 05 가 낸 지적\n\n(없다) — 여기서 잡는 것은 전부 새 것이다. "
+                "`finding_key` 를 달지 마라.")
+    lines = ["## 05 가 낸 지적 — 같은 것이면 그 키를 가리켜라", "",
+             "`/code-review` 가 낸 것이 아래와 **같은 결함**이면 그 finding 에 "
+             '`"finding_key": "<키>"` 를 단다. 05 가 이미 본 것은 escaped 가 아니다. '
+             "같은 결함에 키를 안 달면 새 것으로 세고, 목록에 없는 키를 달면 exit 8 이다. "
+             "안 다는 것이 기본이고, 다는 것이 주장이다.", ""]
+    for k in keys:
+        lines.append("- `%s` (`%s`, `%s`%s) — %s"
+                     % (k["key"], k.get("severity"), k.get("reviewer"),
+                        " · 닫힘" if k.get("closed") else "", k.get("title")))
     return "\n".join(lines)
 
 
@@ -3780,7 +3756,7 @@ def _planned_guard(s, node, reviewer, round_):
             "## 라우팅이 부르지 않은 리뷰어다\n\n"
             "`%s` 는 이 라운드의 계획(%s)에 없다. 라우팅은 결정론이고 "
             "모델이 정하지 않는다 — 부르지 않은 리뷰어의 제출을 받으면 "
-            "`escaped_05` 를 세는 것이 의미를 잃는다."
+            "리뷰의 결정론이 무너진다."
             % (reviewer, ", ".join("`%s`" % c for c in planned) or "없음"),
             None)
     return None
@@ -4008,8 +3984,7 @@ def _delta_reviewer(blocking, planned, slot):
     """델타 재리뷰를 맡을 **한 명**. 결정론이다 — 모델이 고르지 않는다.
 
     막은 지적을 가장 많이 낸 리뷰어이고, 동률이면 `planned` 순서다. 모델이
-    고르면 라우팅 결정론(§3.5)이 델타 라운드에서만 무너지고, 그러면
-    `escaped_05` 가 라운드마다 다른 것을 센다.
+    고르면 라우팅 결정론(§3.5)이 델타 라운드에서만 무너진다.
 
     성공한 리뷰어만 후보다 — 실패한 리뷰어를 다시 지목하면 그 라운드가
     구조적으로 또 실패한다.
@@ -4081,18 +4056,17 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None,
 
 
 PR_CLOSED_STATES = ("closed", "merged")
+CODE_REVIEW_STATES = ("done", "skipped")
 
 
 def _record_07(root, paths, s, phase_item, ctx, file, reviewer, round_):
-    """07 제출 — 외부·내장 리뷰를 받고 `escaped_05` 를 센다.
+    """07 제출 — `/code-review` 1회의 결과를 받고 **05 가 놓친 것**을 센다.
 
     **PR 이 닫혔거나 머지됐으면 아무것도 하지 않고 정상 종료한다** (§E8).
-    이미 끝난 것을 수리하거나 머지된 코드에 코멘트를 다는 것은 소음이다.
+    판정은 기록과 등급뿐이다 — Critical/Major 가 새로 나와도 수리 루프를
+    돌리지 않고 사람에게 넘긴다. `dup_05` 는 메인의 선언이고, 기계는 그 키가
+    05 의 목록(`_keys_from_05`)에 있는지만 본다.
     """
-    import ledger
-    import review as review_mod
-    import review07 as rv7
-
     file = Path(file)
     if not file.exists():
         return st.envelope("record", False, 3, s, {},
@@ -4106,157 +4080,59 @@ def _record_07(root, paths, s, phase_item, ctx, file, reviewer, round_):
     pr_state = (s.get("pr") or {}).get("state")
     if pr_state in PR_CLOSED_STATES:
         st.demote(s, st.GRADES[1], "pr_%s" % pr_state)
-        s.setdefault("review07", {}).update(
-            {"external": {"status": "skipped_pr_%s" % pr_state, "major": 0},
-             "code_review": "skipped", "escaped_05": 0})
+        s["review07"] = {"code_review": "skipped", "skip_reason": "pr_%s" % pr_state,
+                         "findings": 0, "dup_05": 0, "escaped": []}
         st.save(paths, s)
         return _advance_to_next(root, paths, s, phase_item, ctx)
 
-    # **외부 계수의 권위는 `review07` 의 재계수에 있다** — 봇이 요약하지 않은
-    # 원본을 본 것은 그쪽뿐이다. 여기서 제출의 값을 쓰면 `normalize_external`
-    # 이 불변식 8 을 지키려고 다시 센 것을 자진 신고가 이긴다 (G-6).
-    decided = (s.get("review07") or {}).get("external")
-    if not decided:
-        return st.envelope(
-            "record", False, 3, s, {},
-            "`review07` 을 먼저 돌린다. 외부 리뷰의 상태와 Major 수는 **거기서 "
-            "기계가 세고**, 여기서는 그 값을 쓴다 — 제출자가 신고한 숫자를 "
-            "저장하면 확인 가능한 것을 확인하지 않은 것이 된다.",
-            "python scripts/pipeline/cli.py review07 --run-id %s" % s["run_id"])
-
     errors = []
-    ext = payload.get("external") or {}
-    if ext:
-        # 실으면 대조한다. 안 실으면 그냥 결정된 값을 쓴다.
-        for key in ("status", "major"):
-            if key in ext and ext[key] != decided.get(key):
-                errors.append(
-                    "`external.%s` 가 기계 계수와 다르다 — 제출 %r vs "
-                    "`review07` %r. 이 값은 신고하는 것이 아니라 대조되는 것이다."
-                    % (key, ext[key], decided.get(key)))
-    if payload.get("code_review") not in rv7.EFFORTS:
+    mode = payload.get("code_review")
+    if mode not in CODE_REVIEW_STATES:
         errors.append("`code_review` 는 %s 중 하나다 (받은 값: %r)"
-                      % (" · ".join(rv7.EFFORTS), payload.get("code_review")))
-
+                      % (" · ".join(CODE_REVIEW_STATES), mode))
+    reason = payload.get("skip_reason")
+    if mode == "skipped" and not (isinstance(reason, str) and reason.strip()):
+        errors.append("`code_review: \"skipped\"` 에는 `skip_reason` 이 필수다 — "
+                      "사유 없는 생략은 받지 않는다")
     findings = payload.get("findings") or []
-    known = ledger.categories(root)
+    known = {k["key"] for k in _keys_from_05(s)}
     for f in findings:
-        if f.get("source") not in ledger.SOURCES:
-            errors.append("finding %s: `source` 가 어휘 밖이다 (%r) — %s"
-                          % (f.get("id"), f.get("source"),
-                             " · ".join(ledger.SOURCES)))
-        if f.get("category") not in known:
-            errors.append("finding %s: taxonomy 에 없는 category 다 (%r)"
-                          % (f.get("id"), f.get("category")))
-        else:
-            # 05 와 **같은 층**에서 같은 대조를 한다 (ADR-H035). 07 을 빼면
-            # 반사실의 `doc_contradicts_code` 후보 4건 중 2건이 사라진다.
-            errors += review_mod.slug_errors(f, known[f["category"]])
+        label = f.get("id") or f.get("title")
         if f.get("severity") not in verdict.SEVERITIES:
             errors.append("finding %s: severity 가 어휘 밖이다 (%r)"
-                          % (f.get("id"), f.get("severity")))
-
-    # **인용은 원문에 실재해야 한다** (ADR-H073). 07 의 finding 은 메인이 봇
-    # 출력을 옮겨 적은 것이라, 대조가 없으면 「밖이 이렇게 말했다」를 옮긴 쪽이
-    # 지어낼 수 있다 — 01·05 가 `.raw.md` 에 대고 하는 것과 같은 검사다.
-    # **`code-review` 와 `human` 은 대조하지 않는다**: 전자의 원문은 내장
-    # 리뷰어의 출력이라 저장되지 않고, 후자는 수리 대상이 아니라 보고
-    # 대상이다. **건초더미가 없는 것을 검사한 척하지 않는다.**
-    errors += _external_quote_errors(paths, findings)
-
-    # 가리킨 대상이 실재해야 선언이 대조 가능한 사실이 된다 (M48).
-    errors += rv7.check_reraise(findings, _open_from_05(s))
-
-    # "고쳤다" 는 git 으로 확인 가능하므로 확인한다 (M49 · 불변식 8).
-    head_sha = (s.get("pr") or {}).get("head_sha")
-    res_errors, res_unverified = rv7.check_resolution(root, findings, head_sha)
-    errors += res_errors
-
-    if payload.get("change_requested") and not findings:
-        errors.append("`change_requested` 가 참인데 findings 가 비었다 — "
-                      "무엇을 고치라는 것인지 없이 차단만 하는 제출이다.")
+                          % (label, f.get("severity")))
+        if not str(f.get("title") or "").strip():
+            errors.append("finding %s: `title` 이 없다" % label)
+        key = f.get("finding_key")
+        if key and key not in known:
+            errors.append("finding %s: `finding_key` %r 가 05 의 목록에 없다 — 봉투의 "
+                          "「05 가 낸 지적」 절에 있는 키만 가리킨다" % (label, key))
     if errors:
         return st.envelope("record", False, 8, s, {"errors": errors},
                            "\n".join(["## 제출이 규약을 어겼다", ""]
                                      + ["- %s" % e for e in errors]),
                            None)
 
-    open05 = _open_from_05(s)
-    got = rv7.escaped(root, findings, s["run_id"], previous_open=open05)
-    # **dedup 은 버리는 것이 아니라 세는 것이다** — 여기서 처음 잡힌
-    # Critical/Major 가 05 라우팅이 놓친 것이다.
-    # **하드코딩된 `deferred` 를 걷었다** (M49). 고쳐진 지적이 `deferred` 로
-    # 굳으면 `EXCLUDED_FROM_COUNT` 밖이라 "반복되는 미해결" 로 승격 집계에
-    # 학습된다. 다만 대조가 불가능하면 주장을 받지 않고 갭으로 드러낸다 —
-    # 확인할 수 없는 것을 확인한 것처럼 적지 않는다.
-    if res_unverified:
-        gap = "repair_unverified"
-        if gap not in s.setdefault("gaps", []):
-            s["gaps"].append(gap)
-    rows = []
-    for f in got["findings"]:
-        res = f.get("resolution") or "deferred"
-        if res == "repaired" and res_unverified:
-            res = "deferred"
-        rows.append(dict(f, resolution=res))
-    ledger.append(root, s["run_id"], "07", rows)
-
-    s.setdefault("review07", {}).update(
-        {"external": dict(decided),
-         "code_review": payload.get("code_review"),
-         "escaped_05": got["escaped_05"],
-         "deduped": got["deduped"],
-         "human_comments": len(payload.get("human_comments") or [])})
-
-    if payload.get("change_requested"):
-        used, max_, exceeded = st.counter_inc(s,
-                                              _loop_counter(phase_item["front"]),
-                                              _loop_max(phase_item["front"]),
-                                              "external_change_requested",
-                                              paths=paths)
-        st.save(paths, s)
-        if exceeded:
-            _loop_on_exceed(phase_item["front"])
-            st.escalate(paths, s, "외부 변경 요청이 수리 예산 안에서 안 닫혔다",
-                        options=["사람이 직접 수리한 뒤 재개", "PR 을 닫는다",
-                                 "중단"], phase="07-pr-review")
-            st.save(paths, s)
-            return _escalation_envelope("record", paths, s)
-        return st.envelope("record", False, 10, s,
-                           {"findings": findings, "repair": used},
-                           "\n".join([
-                               "## 변경 요청이 열려 있다", "",
-                               "**미해결로 07 을 끝낼 수 없다.** PR 체크가 "
-                               "빨간불인데 파이프라인이 초록불인 척하게 된다.",
-                               "", "수리 %d/%d 회차다." % (used, max_)]),
-                           None)
-
+    # **dedup 은 버리는 것이 아니라 세는 것이다** — 05 가 낸 키를 가리키지 않은
+    # Critical/Major 가 05 가 놓친 것이다. 수리는 여기서 하지 않는다.
+    dup = [f for f in findings if f.get("finding_key")]
+    escaped = [{"severity": f.get("severity"), "title": f.get("title"),
+                "path": f.get("path")}
+               for f in findings
+               if not f.get("finding_key") and f.get("severity") in verdict.BLOCKING]
+    s["review07"] = {"code_review": mode,
+                     "skip_reason": reason.strip() if mode == "skipped" else None,
+                     "findings": len(findings), "dup_05": len(dup),
+                     "escaped": escaped}
+    if mode == "skipped":
+        st.demote(s, st.GRADES[1], "pr_review_skipped")
+    if escaped:
+        st.demote(s, st.GRADES[1], "pr_review_open")
     st.save(paths, s)
     return _advance_to_next(root, paths, s, phase_item, ctx)
 
 
 PR_STATES = ("open", "closed", "merged")
-
-
-def _external_quote_errors(paths, findings):
-    """`source: "external"` finding 의 `quote` 가 봇 페이로드 원문에 있는가.
-
-    **원문이 없으면 「없어서 통과」가 아니라 거부다.** 밖이 말했다는 주장인데
-    밖의 기록이 없으면 그 주장은 대조 불가능하다 — 스킵을 통과로 세지 않는
-    것이 이 리포의 규율이다.
-    """
-    claims = [f for f in findings if f.get("source") == "external" and f.get("quote")]
-    if not claims:
-        return []
-    raw_path = paths.run_dir / EXTERNAL_RAW
-    if not raw_path.exists():
-        return ["`source: \"external\"` 인 finding 이 %d개인데 봇 페이로드 원문(%s)이 "
-                "없다 — `review07 --external` 로 받은 런에만 그 출처를 쓸 수 있다"
-                % (len(claims), EXTERNAL_RAW)]
-    hay = verdict.normalize_ws(raw_path.read_text(encoding="utf-8"))
-    return ["finding %s: `quote` 가 봇 페이로드 원문에 없다 — 옮겨 적는 쪽이 "
-            "지어냈거나 바꿨다" % f.get("id")
-            for f in claims if verdict.normalize_ws(f["quote"]) not in hay]
 
 
 def _record_06(root, paths, s, phase_item, ctx, file, reviewer, round_):
@@ -4886,19 +4762,6 @@ def run_report(root, out=None, run_id=None):
                                "", "`%s`" % paths.rel(paths.escalation)]),
                            None)
 
-    staged = [p for p in (s.get("promotions") or [])
-              if p.get("status") == "staged"]
-    if staged:
-        return st.envelope("report", False, 6, s, {"staged": staged},
-                           "\n".join([
-                               "## 승격이 종결되지 않았다", "",
-                               "`staged` 가 %d 건 남아 있다. 08 은 미종결을 "
-                               "통과시키지 않는다." % len(staged), "",
-                               "python scripts/pipeline/cli.py promote --flush "
-                               "--run-id %s" % s["run_id"]]),
-                           "python scripts/pipeline/cli.py promote --flush "
-                           "--run-id %s" % s["run_id"])
-
     # **지시문 검토는 보고서보다 먼저다** (ADR-H056). 열린 런은 검토 파일이
     # 없거나 자진신고가 원장·diff 와 어긋나면 보고서를 쓰지 않고 되묻는다 —
     # 80자 되묻기와 같이 파일을 고쳐 같은 명령을 치면 닫힌다. 닫힌 런의
@@ -5253,423 +5116,6 @@ def _instruction_slots(root, config):
         per_file[rel] = used
     return {"used": sum(per_file.values()), "budget": budget,
             "prose_lines": prose, "per_file": per_file}
-
-
-# ------------------------------------------------------------------- review07
-
-def cmd_review07(root, args):
-    return st.emit(run_review07(root, args.external, args.run_id))
-
-
-def run_review07(root, external=None, run_id=None):
-    """생략 조건과 effort 를 **결정론으로** 정한다. 종료 코드 0 / 3 / 8.
-
-    모델이 effort 를 고르면 같은 상황이 런마다 다른 리뷰를 받고, 그러면
-    `escaped_05` 가 생략 정책의 근거가 되지 못한다.
-    """
-    import review07 as rv7
-
-    root = Path(root)
-    paths, s = st.load(root, run_id)
-    if s is None:
-        return st.envelope("review07", False, 3, None, {},
-                           "런이 없다. `init --feature` 로 시작한다.", None)
-    if s.get("escalated"):
-        return _escalation_envelope("review07", paths, s)
-
-    config, _adapter = adapters.load(root)
-    ext_cfg = config.get("external_pr_review") or {}
-
-    if not ext_cfg.get("enabled"):
-        # **봇이 꺼져 있으면 소스 자체가 없다.** `disabled` 는 gap 이 아니다 —
-        # config 로 뺀 관측기이고, 내장 리뷰를 부를지는 05 의 결과와 수리
-        # 흔적이 정한다 (ADR-H043 · `review07.decide`).
-        norm = {"status": "disabled", "major": 0, "findings": [],
-                "human_comments": [], "change_requested": False,
-                "note": "config.external_pr_review.enabled 가 false 다."}
-    elif not external:
-        norm = {"status": "timeout", "major": 0, "findings": [],
-                "human_comments": [], "change_requested": False,
-                "note": "외부 리뷰 파일이 주어지지 않았다 — 무응답으로 본다."}
-    else:
-        f = Path(external)
-        if not f.exists():
-            return st.envelope("review07", False, 3, s, {},
-                               "외부 리뷰 파일이 없다: %s" % f, None)
-        try:
-            payload = harness._read_json(f)
-        except (OSError, ValueError) as exc:
-            return st.envelope("review07", False, 8, s, {},
-                               "JSON 을 읽지 못했다: %s" % exc, None)
-        if (payload.get("status") is not None
-                and payload["status"] not in rv7.EXTERNAL_STATUS):
-            return st.envelope("review07", False, 8, s,
-                               {"status": payload.get("status")},
-                               "`status` 는 %s 중 하나다 (받은 값: %r)"
-                               % (" · ".join(rv7.EXTERNAL_STATUS),
-                                  payload.get("status")), None)
-        norm = rv7.normalize_external(payload)
-        # **건초더미를 남긴다** (ADR-H073). 07 의 finding 은 메인이 봇 출력을
-        # 옮겨 적은 것이고, 원문이 안 남으면 「밖이 이렇게 말했다」가 대조
-        # 불가능한 주장이 된다 — 01·05 가 `.raw.md` 에 대고 하는 것과 같은
-        # 규율이다 (불변식 8). `produces` 에 넣지 않는다: 이것은 워커가 내는
-        # 것이 아니라 실행기가 받은 것이고, 넣으면 진입 검사가 워커에게
-        # 요구한다 (ADR-H070 이 02 에서 배운 것).
-        (paths.run_dir / EXTERNAL_RAW).write_text(
-            f.read_text(encoding="utf-8"), encoding="utf-8")
-
-    audit = rv7.audit_due(root)
-    got = rv7.decide(s, norm, config, audit=audit)
-
-    s.setdefault("audit", {}).update(
-        {"is_audit_run": bool(audit),
-         "reason": ("5런 주기" if audit else None)})
-    s.setdefault("review07", {}).update(
-        {"external": {"status": norm["status"], "major": norm["major"]},
-         "code_review": got["effort"], "escaped_05": None,
-         # 정책 생략의 사유. 보고서가 "생략이라 0" 과 "봤는데 0" 을 가른다.
-         "skip_reason": got.get("skip_reason")})
-    for gap in got["gaps"]:
-        st.demote(s, st.GRADES[1], gap)
-    if not got["skip"]:
-        # 내장 `/code-review` 는 `record --reviewer` 를 남기지 않아 제출
-        # 기준에서 통째로 빠져 있었다 — ADR-H014 가 지목한 그 1회다.
-        st.count_instructions(s, "07-pr-review", ["07:code-review"])
-    st.save(paths, s)
-
-    data = dict(got, external=norm)
-    if got["skip"]:
-        # 스킵되는 것은 `/code-review` 호출뿐이다. `record --phase 07` 과
-        # `promote` 는 그대로 돈다 — 승격 쓰기가 07 안에 있다.
-        next_cmd = ("python scripts/pipeline/cli.py record --phase 07 "
-                    "--file {07_pr_review.json} --run-id %s" % s["run_id"])
-    else:
-        next_cmd = "/code-review --effort %s" % got["effort"]
-    return st.envelope("review07", True, 0, s, data, _review07_render(got, norm),
-                       next_cmd)
-
-
-def _review07_render(got, norm):
-    lines = ["## 07 리뷰 판정", ""]
-    lines.append("- 외부: **%s** (Major %d)" % (norm["status"], norm["major"]))
-    lines.append("- 내장 리뷰: **%s**" % got["effort"])
-    if got["audit_run"]:
-        lines.append("- **감사 런이다**")
-    lines += [""] + ["- %s" % r for r in got["reasons"]]
-    if not got["skip"]:
-        lines += ["", "`/code-review --effort %s` 를 그대로 부른다. "
-                      "**effort 를 네가 고르지 마라.**" % got["effort"]]
-    else:
-        lines += ["", "**내장 리뷰를 부르지 않는다** (사유: `%s`). "
-                      "`07_pr_review.json` 을 `code_review: \"skipped\"` · "
-                      "findings 빈 배열로 내고 바로 `record --phase 07` 로 간다 — "
-                      "`promote` 는 그 뒤에 그대로 돈다." % got.get("skip_reason")]
-    if norm.get("human_comments"):
-        lines += ["", "사람 코멘트 %d 건은 **수리 대상이 아니라 보고 대상**이다."
-                  % len(norm["human_comments"])]
-    return "\n".join(lines)
-
-
-# --------------------------------------------------------------------- promote
-
-def cmd_promote(root, args):
-    return st.emit(run_promote(root, scan=args.scan, stage=args.stage,
-                               apply=args.apply, flush=args.flush,
-                               verdict_file=args.verdict_file,
-                               run_id=args.run_id))
-
-
-def run_promote(root, scan=False, stage=False, apply=False, flush=False,
-                verdict_file=None, run_id=None, runner=None):
-    """승격. 종료 코드 **0 / 4 / 6 / 8** (네 플래그가 한 행을 공유한다).
-
-    명세는 `--apply` 단독의 종료 코드를 따로 적지 않았다 — **명세 미규정이고,
-    여기서는 판정 위반을 8, 자동 쓰기 차단을 10 으로 쓴다.**
-
-    `runner` 는 베이스라인 측정용 주입점이다 (테스트).
-    """
-    import promote as pm
-
-    root = Path(root)
-    paths, s = st.load(root, run_id)
-    if s is None:
-        return st.envelope("promote", False, 3, None, {},
-                           "런이 없다. `init --feature` 로 시작한다.", None)
-    if s.get("escalated"):
-        return _escalation_envelope("promote", paths, s)
-
-    if not (scan or stage or apply or flush):
-        return st.envelope("promote", False, 2, s, {},
-                           "플래그가 필요하다: --scan / --stage / --apply / --flush",
-                           None)
-
-    scanned = pm.scan(root)
-
-    if flush:
-        import ledger as ledger_mod
-
-        promos = s.setdefault("promotions", [])
-        n = pm.flush(promos)
-        # **시한이 지난 뒤의 미룸은 등급이 치른다** (ADR-H051). 시한은 표시로만
-        # 있었고(ADR-H033) 파일럿 40dc 는 「12 / 9 — 판정할 때다」 를 찍은 채
-        # 후보 셋을 전부 skip 했다. 여기는 런당 한 번, 승격이 종결되는 자리다.
-        # prose 후보는 staged 되지 않으므로(ADR-H056) 여기 들 수 없다.
-        overdue = bool(ledger_mod.verdict_deadline(root).get("due")) and any(
-            p.get("status") == "skipped" for p in promos)
-        if overdue:
-            st.demote(s, st.GRADES[1], "promotion_overdue")
-        st.save(paths, s)
-        return st.envelope("promote", True, 0, s,
-                           {"flushed": n, "promotions": promos,
-                            "promotion_overdue": overdue},
-                           "잔여 승격 %d 건을 `skipped` 로 종결했다 — 임계가 다시 "
-                           "충족되면 다음 런에서 재승격 후보가 된다." % n
-                           + ("\n\n**승격 판정 시한이 지났는데 후보를 미뤘다** — gap "
-                              "`promotion_overdue` 로 등급이 내려간다 (ADR-H051). "
-                              "다음 런에서는 판정(`create`/`amend`)하거나 임계를 "
-                              "고친다." if overdue else ""), None)
-
-    if scan or stage:
-        # **덮어쓰지 않고 병합한다** (G-3). 07 의 절차는 `--scan` → 판정 →
-        # `--apply` 이고 `--scan` 이 적재를 겸한다. 그런데 대입이면 `--apply`
-        # 뒤에 다시 훑는 것만으로 `applied` 가 `staged` 로 되돌아간다 —
-        # `report` 가 exit 6 을 내고 두 번째 `--apply` 에서 changelog 가
-        # 중복된다. **한 번 일어난 일이 재집계로 없던 일이 되면 안 된다.**
-        promos = s.setdefault("promotions", [])
-        pm.merge_staged(promos, pm.stage(scanned["candidates"]))
-        if scanned["needs_model"]:
-            # 승격 판정은 모델 호출이다 — 지시하는 자리에서 센다 (ADR-H042).
-            st.count_instructions(s, "07-pr-review", ["07:promote"])
-        st.save(paths, s)
-        data = dict(scanned, promotions=promos)
-        return st.envelope("promote", True, 0, s, data,
-                           _promote_scan_render(scanned),
-                           None if not scanned["needs_model"] else
-                           "python scripts/pipeline/cli.py promote --apply "
-                           "--verdict-file {07_promo_verdict.json} --run-id %s"
-                           % s["run_id"])
-
-    # --- apply
-    if not verdict_file:
-        return st.envelope("promote", False, 2, s, {},
-                           "`--apply` 는 판정 파일이 필요하다: --verdict-file",
-                           None)
-    vf = Path(verdict_file)
-    if not vf.exists():
-        return st.envelope("promote", False, 3, s, {},
-                           "판정 파일이 없다: %s" % vf, None)
-    try:
-        payload = harness._read_json(vf)
-    except (OSError, ValueError) as exc:
-        return st.envelope("promote", False, 8, s, {},
-                           "JSON 을 읽지 못했다: %s" % exc, None)
-    verdicts = payload.get("verdicts") or []
-
-    # `or` 가 적법하게 빈 `[]` 를 거짓으로 읽으면, 아무것도 staged 되지 않은
-    # 런에서 판정만으로 후보가 되살아나 `--stage` 를 건너뛴 승격이 성립한다.
-    # G-4 의 `planned or [reviewer]` 와 같은 모양의 결함이다.
-    staged_now = s.get("promotions")
-    if staged_now is None:
-        staged_now = pm.stage(scanned["candidates"])
-    errors, blocked = pm.check_verdicts(root, verdicts, staged_now)
-    if blocked:
-        st.escalate(paths, s,
-                    "승격 판정이 `contradicts` 다 — 기존 규칙과 싸운다",
-                    options=["규칙을 사람이 조정한 뒤 재개",
-                             "이 승격을 포기하고 진행", "중단"],
-                    phase="07-pr-review")
-        st.save(paths, s)
-        return _escalation_envelope("promote", paths, s)
-    if errors:
-        return st.envelope("promote", False, 8, s, {"errors": errors},
-                           "\n".join(["## 승격 판정이 규약을 어겼다", ""]
-                                     + ["- %s" % e for e in errors]),
-                           None)
-
-    # 베이스라인은 **기계가 잰다.** lint 승격이 하나도 없으면 재지 않는다.
-    baseline = None
-    if pm.wants_baseline(verdicts):
-        config, adapter = adapters.load(root)
-        baseline = pm.measure_baseline(root, adapter, runner=runner)
-        if baseline["state"] == "infra":
-            # 시스템 문제다. **아무것도 쓰지 않고** 카운터도 태우지 않는다 —
-            # 이것을 rejected 로 적으면 "규칙이 아무것도 안 막는다" 가 된다.
-            return st.envelope("promote", False, 10, s, {"baseline": baseline},
-                               "\n".join(["## 베이스라인을 재지 못했다", "",
-                                          baseline["reason"], "",
-                                          "**인프라 실패다.** 승격은 하나도 "
-                                          "쓰이지 않았고 다시 치면 된다."]),
-                               None)
-        mismatch = [v for v in verdicts
-                    if v.get("enforceable") == "lint"
-                    and pm.baseline_mismatch(v.get("baseline_diff"),
-                                             baseline["diff"])]
-        if mismatch:
-            return st.envelope(
-                "promote", False, 8, s,
-                {"baseline": baseline,
-                 "reported": [v.get("baseline_diff") for v in mismatch]},
-                "\n".join(
-                    ["## 신고한 베이스라인이 기계가 잰 것과 다르다", "",
-                     "**`baseline_diff` 를 신고하지 마라** — 재는 것은 기계의 "
-                     "일이다. 실었으면 버리지 않고 대조한다.", "",
-                     "**신고:**", "```", "\n".join(
-                         str(v.get("baseline_diff")) for v in mismatch), "```",
-                     "**기계가 잰 값:**", "```", baseline["diff"] or "(없음)",
-                     "```"]),
-                None)
-
-    promos = staged_now
-    promos, rows = pm.apply(root, s["run_id"], promos, verdicts, baseline)
-    # 자체 게이트는 **실행기가 돌린다** (ADR-H065). changelog 를 쓰기 전이라
-    # infra 면 아무것도 남지 않는다 — 베이스라인과 같은 규율이다.
-    gate = None
-    if pm.wants_self_gate(promos):
-        _config, adapter = adapters.load(root)
-        gate = pm.self_gate(root, adapter, runner=runner)
-        if gate["state"] == "infra":
-            return st.envelope("promote", False, 10, s, {"self_gate": gate},
-                               "\n".join(["## 승격 자체 게이트를 돌리지 못했다", "",
-                                          gate["reason"], "",
-                                          "**인프라 실패다.** 승격은 하나도 "
-                                          "쓰이지 않았고 다시 치면 된다."]),
-                               None)
-        if gate["state"] == "failed":
-            promos, rows = pm.reject_applied(promos, rows, gate["reason"])
-        elif gate["state"] == "unverified":
-            st.demote(s, "PASS_WITH_GAPS", "promotion_selfgate_unverified")
-    s["promotions"] = promos
-    if baseline is not None and baseline["state"] == "unavailable":
-        # 재지 못한 것을 잰 것처럼 적지 않는다 (§E12 가 나열을 요구한다).
-        st.demote(s, "PASS_WITH_GAPS", "promotion_baseline_unverified")
-    written = pm.changelog_append(root, rows)
-
-    out = paths.run_dir / "07_promo_applied.json"
-    _write_json(out, pm.applied_payload(s["run_id"], promos, rows, scanned))
-
-    st.append_event(paths, "promoted", cmd="promote", phase="07-pr-review",
-                    applied=sum(1 for p in promos if p["status"] == "applied"),
-                    rejected=sum(1 for p in promos if p["status"] == "rejected"))
-    st.save(paths, s)
-    return st.envelope("promote", True, 0, s,
-                       {"promotions": promos, "changelog_rows": written},
-                       _promote_apply_render(promos, written), None)
-
-
-def _verdict_deadline_lines(dl):
-    """후보 0 을 보는 사람이 **그 자리에서** 시한을 본다 (ADR-H033).
-
-    이 분기가 초기 런의 최빈 경로다. "표본이 아직 없다" 만 적으면 그 말이
-    몇 런까지 유효한지를 아무도 모른다 — 그것이 `THRESHOLDS` 의 옛 약속이
-    두 배 지나도록 아무도 판정하지 않은 이유다. **못 읽으면 안 적는다.**
-    """
-    if not dl:
-        return []
-    tail = ("**시한이 지났다 — 판정할 때다.**" if dl.get("due")
-            else "남은 런 %d." % dl.get("remaining"))
-    return ["", "**승격 판정 시한** — 원장이 본 런 %s / %s. %s 이 셈의 "
-                "단위는 `distinct_runs` 라 달력의 런 수와 다를 수 있다. "
-                "그때 무엇을 보고 어떻게 가를지는 **ADR-H033** 에 미리 "
-                "적혀 있다."
-            % (dl.get("seen"), dl.get("at"), tail)]
-
-
-def _rule_label(b):
-    """버킷의 규칙 슬러그를 사람이 읽는 꼬리표로. 없으면 빈 문자열.
-
-    `CATEGORY` 가 다대일이라 category 만 찍으면 `BOUNDARY_VIOLATION` 셋이
-    구별되지 않는다 — 무엇을 승격하는지 모르는 채 판정하게 된다 (ADR-H034).
-    """
-    slug = b.get("rule_slug")
-    return " / `%s`" % slug if slug else ""
-
-
-def _recur_label(b):
-    """은퇴 이후 다시 쌓인 버킷이면 그렇게 말한다 — 재발은 0 부터 센 값이다."""
-    at = b.get("retired_at")
-    return (" · 재발(은퇴 %s 이후 %d회)" % (at, b["count"])) if at else ""
-
-
-def _promote_side_lines(got):
-    """원장 승격이 아닌 두 갈래 (ADR-H056). 없으면 빈 목록."""
-    lines = []
-    prose = got.get("prose_candidates") or []
-    if prose:
-        lines += ["", "## 지시문 검토 후보 %d 건 — 08 로 간다" % len(prose), "",
-                  "목적지가 prose 라 여기서 판정하지 않는다. 08 지시문 검토의 "
-                  "입력이다 (ADR-H056)."]
-        lines += ["- %s%s (%s) — %d회 / %d런 · 신원 `%s`%s"
-                  % (c["category"], _rule_label(c), c["severity"], c["count"],
-                     c["distinct_runs"], c.get("rule_key") or c.get("finding_key"),
-                     _recur_label(c))
-                  for c in prose]
-    trace = got.get("trace_repeats") or []
-    if trace:
-        lines += ["", "## 검사 반복 검출 %d 건" % len(trace), "",
-                  "`contract-trace` 가 이미 막는 규칙의 반복이라 승격 후보가 "
-                  "아니다."]
-        lines += ["- %s%s — %d회 / %d런%s"
-                  % (c["category"], _rule_label(c), c["count"],
-                     c["distinct_runs"], _recur_label(c))
-                  for c in trace]
-    if prose or trace:
-        lines += ["", "근본 원인을 하네스에서 고친 규칙은 `action: retire` + "
-                      "`retired_reason` 으로 관측을 끊는다 — 이후 관측은 0 부터 "
-                      "센다."]
-    return lines
-
-
-def _promote_scan_render(got):
-    if not got["candidates"]:
-        lines = ["승격 후보가 없다 — **모델을 부르지 않고 종결한다.**", ""]
-        if got["held"]:
-            lines.append("다만 누적은 넘었는데 `distinct_runs` 에서 막힌 것이 "
-                         "%d 건 있다:" % len(got["held"]))
-            lines += ["- %s%s (%s)"
-                      % (h["category"], _rule_label(h), h["held_because"])
-                      for h in got["held"]]
-        else:
-            lines.append("원장이 본 런은 %d 개다. 임계에 닿을 표본이 아직 "
-                         "없다는 뜻이지 지적이 없었다는 뜻이 아니다."
-                         % got["distinct_runs"])
-        lines += _verdict_deadline_lines(got.get("verdict_deadline"))
-        lines += _promote_side_lines(got)
-        return "\n".join(lines)
-    lines = ["## 승격 후보 %d 건" % len(got["candidates"]), ""]
-    for c in got["candidates"]:
-        lines.append("- **%s**%s (%s) — %d회 / %d런 · 신원 `%s` · 목적지 `%s`%s"
-                     % (c["category"], _rule_label(c), c["severity"],
-                        c["count"], c["distinct_runs"],
-                        c.get("rule_key") or c.get("finding_key"),
-                        c.get("enforceable"), _recur_label(c)))
-        keys = c.get("finding_keys") or []
-        if len(keys) > 1:
-            lines.append("  - 접은 인스턴스 %d 건: %s"
-                         % (len(keys), " · ".join("`%s`" % k for k in keys[:6])
-                            + (" …" if len(keys) > 6 else "")))
-    lines += ["", "각각에 `create` / `amend` / `skip` / `retire` 판정을 내고 "
-                  "근거를 적는다.",
-              "**판정은 위 `신원` 을 `rule_key` 로 그대로 돌려준다** — 이름을 "
-              "부른 것과 다른 지적이 승격되면 그 사실이 어디에도 안 드러난다.",
-              "**`duplicate` 면 `create` 가 금지되고, `contradicts` 면 자동 "
-              "쓰기가 차단된다.**"]
-    lines += _promote_side_lines(got)
-    return "\n".join(lines)
-
-
-def _promote_apply_render(promos, written):
-    by = {}
-    for p in promos:
-        by[p["status"]] = by.get(p["status"], 0) + 1
-    lines = ["## 승격 적용", "",
-             " · ".join("%s %d" % (k, v) for k, v in sorted(by.items())),
-             "", "`rules_changelog.md` 에 %d 줄을 남겼다." % written]
-    rejected = [p for p in promos if p["status"] == "rejected"]
-    if rejected:
-        lines += ["", "**거절된 것:**"]
-        lines += ["- %s — %s" % (p["rule_id"], p["reason"]) for p in rejected]
-    lines += ["", "승격은 **별도 브랜치**로 간다. 기능 PR 에 섞지 않는다."]
-    return "\n".join(lines)
 
 
 # -------------------------------------------------------------------------- pr
@@ -6162,18 +5608,6 @@ def build_parser():
     sp.add_argument("--out", dest="out", default=None)
     sp.add_argument("--run-id", dest="run_id", default=None)
 
-    sp = sub.add_parser("review07", add_help=False)
-    sp.add_argument("--external", dest="external", default=None)
-    sp.add_argument("--run-id", dest="run_id", default=None)
-
-    sp = sub.add_parser("promote", add_help=False)
-    sp.add_argument("--scan", dest="scan", action="store_true")
-    sp.add_argument("--stage", dest="stage", action="store_true")
-    sp.add_argument("--apply", dest="apply", action="store_true")
-    sp.add_argument("--flush", dest="flush", action="store_true")
-    sp.add_argument("--verdict-file", dest="verdict_file", default=None)
-    sp.add_argument("--run-id", dest="run_id", default=None)
-
     sp = sub.add_parser("pr", add_help=False)
     sp.add_argument("--run-id", dest="run_id", default=None)
 
@@ -6221,8 +5655,6 @@ HANDLERS = {
     "precheck": cmd_precheck,
     "approve": cmd_approve,
     "pr": cmd_pr,
-    "promote": cmd_promote,
-    "review07": cmd_review07,
     "report": cmd_report,
 }
 

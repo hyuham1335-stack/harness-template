@@ -256,16 +256,6 @@
         }
       }
     },
-    "external_pr_review": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {"type": "boolean"},
-        "bot_logins": {"type": "array", "items": {"type": "string"}},
-        "poll_sec": {"type": "integer", "minimum": 1},
-        "timeout_sec": {"type": "integer", "minimum": 1}
-      }
-    },
     "cross_verify": {
       "description": "01-plan 의 외부 교차검증기. 부재하면 폴백 에이전트로 대체하고, 둘 다 불가하면 02 를 스킵하되 등급 PASS_WITH_GAPS 로 드러낸다 — 조용히 통과가 아니다.",
       "type": "object",

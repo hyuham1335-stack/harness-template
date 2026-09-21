@@ -46,7 +46,6 @@ GAP_REASONS = {
     "cross_verify:fallback": ("01 의 교차검증이 폴백으로 돈 회차가 있다 — "
                               "독립 관측 둘이라는 전제가 그만큼 약해졌다"),
     "review05": "05 의 리뷰어가 전부 또는 일부 실패했다",
-    "external": "외부 PR 리뷰를 받지 못했다",
     "infra_skipped": "인프라 프로브 실패로 건너뛴 검증이 있다",
     "precheck_policy_override": ("`precheck` 정책 실패(예산·브랜치·base)를 사람이 "
                                  "「그대로 간다」로 정했다 — 넘어간 것이지 통과한 "
@@ -54,12 +53,11 @@ GAP_REASONS = {
     "tests_not_ran": "테스트가 한 건도 돌지 않았다",
     "pr_closed": "PR 이 닫혔다 — 수리·코멘트를 하지 않았다",
     "pr_merged": "PR 이 이미 머지됐다 — 수리·코멘트를 하지 않았다",
+    "pr_review_skipped": ("07 의 `/code-review` 를 사유를 적고 건너뛰었다 — 05 가 "
+                          "놓친 것을 잴 표본이 이 런에는 없다"),
+    "pr_review_open": ("07 의 `/code-review` 가 05 가 낸 키를 가리키지 않는 "
+                       "Critical/Major 를 냈다 — 05 가 놓친 것이고, 수리는 사람이 정한다"),
     "local_only": "원격이 없어 로컬 커밋까지만 했다",
-    "promotion_baseline_unverified":
-        "어댑터에 `baseline_cmd` 가 없어 lint 승격이 무엇을 막는지 재지 못했다",
-    "promotion_selfgate_unverified":
-        ("어댑터에 `lint` 또는 `check` 명령이 없어 승격 자체 게이트를 돌리지 "
-         "못했다 — 규칙이 기존 코드를 깨는지 재지 못한 채 적용했다"),
     "triage_miss": ("00 의 레인 예측이 빗나가 앞 페이즈가 그 양보(콜론 뒤)를 "
                     "적용한 채 지나갔다 — 03·05 의 실물이 상향으로 재판정했다"),
     # 아래 다섯은 gate.py 가 처음부터 만들던 사유인데 어휘에 없었다 — 파일럿
@@ -74,8 +72,6 @@ GAP_REASONS = {
     "test_report_missing": ("테스트 리포트를 한 건도 찾지 못했다 — 리포터 "
                             "경로 설정 오류일 수 있어 인프라로 다룬다"),
     "tests_ran_zero": "테스트가 0개 돌았다 — 빈 스위트의 초록불은 통과가 아니다",
-    "promotion_overdue": ("승격 판정 시한(ADR-H033)이 지났는데 이 런이 후보를 "
-                          "skip 으로 닫았다 — 미룸이 등급을 치른다 (ADR-H051)"),
     "run_record_missing": ("닫힌 런의 PR 갱신인데 런 기록 "
                            "`docs/harness/pipeline/runs/{run_id}.md` 가 diff 에 "
                            "없다 — 08 이 쓴 기록은 기능 PR 에 실린다 (ADR-H052)"),
@@ -585,7 +581,6 @@ def build(state, data, promotions, timing=None):
     tests = state.get("tests") or {}
     r05 = state.get("review05") or {}
     r07 = state.get("review07") or {}
-    audit = state.get("audit") or {}
     cv = state.get("cross_verify") or {}
 
     lines = ["# 런 보고서 — %s" % state.get("run_id"), ""]
@@ -661,27 +656,19 @@ def build(state, data, promotions, timing=None):
         ("05 리뷰어", "%s / %s" % (r05.get("reviewers_ok"),
                                    r05.get("reviewers_planned"))),
         # 레인이 정한 지시 범위다 (ADR-H059). `diff+refs` 로 05 벽시계가 늘면
-        # 이 행과 `escaped_05` 를 나란히 놓고 depth 값을 다시 정한다.
+        # 이 행과 「07 escaped」 를 나란히 놓고 depth 값을 다시 정한다.
         ("05 리뷰 범위", r05.get("depth")),
         ("검토 제외로 드롭", r05.get("dropped_by_enforcement")),
         ("절단됨", r05.get("truncated")),
         ("맥락 부족 요청", len(r05.get("need_more_context") or []) or 0),
-        ("외부 리뷰", (r07.get("external") or {}).get("status")),
-        ("내장 리뷰", r07.get("code_review")),
-        # **이 지표를 그대로 읽으면 안 된다** (M48). 대조는 키 일치와 07 의
-        # 선언 둘이고, 07 이 같은 결함에 다른 이름을 붙이고 선언도 안 하면
-        # 여전히 새 것으로 세어진다. 접힌 수를 함께 적어 그 성격을 드러낸다.
-        ("escaped_05", "%s (05 와 접힘 %s · 키 일치 + 선언 대조)%s"
-         % (r07.get("escaped_05"), r07.get("deduped"),
-            # 생략 런의 0 은 "봤는데 없었다" 가 아니다. 정책의 표본은 감사
-            # 런과 수리 런에서만 나온다 (ADR-H043).
-            " — 내장 리뷰 생략, 표본 아님"
-            if r07.get("code_review") == "skipped" else "")
-         if r07.get("escaped_05") is not None else None),
-        # **생략과 불가는 다르다.** `clean_05` 는 05 의 gen 이 같은 관점을 이미
-        # 봤고 수리가 없었던 것이라 등급이 안 내려간다 (ADR-H043).
-        ("07 생략 사유", r07.get("skip_reason")),
-        ("감사 런", audit.get("is_audit_run")),
+        # 07 은 `/code-review` 1회의 계수다. escaped 는 **메인의 선언**이다 —
+        # 05 가 낸 키를 가리키지 않은 Critical/Major 만 센다 (dup_05=false).
+        ("07 /code-review", ("%s — %s" % (r07.get("code_review"), r07.get("skip_reason"))
+                             if r07.get("skip_reason") else r07.get("code_review"))),
+        ("07 escaped (dup_05=false 인 Major+)",
+         ("%d (findings %s · dup_05 %s)"
+          % (len(r07.get("escaped") or []), r07.get("findings"), r07.get("dup_05")))
+         if r07.get("findings") is not None else None),
         # **01 의 관측 품질이 이 표에 없었다.** 05·07 만 적어서, 교차검증이
         # 다섯 라운드 내내 폴백이어도 보고서는 아무 말도 하지 않았다 (P3).
         # **프로파일이 리뷰어 상한을 정한다.** 그 값이 어디서 나왔는지가
@@ -702,6 +689,10 @@ def build(state, data, promotions, timing=None):
         ("지시문 검토", _instruction_review_cell(state)),
         ("지시문 슬롯", _slots_cell(state)),
     ])
+    # 05 가 낸 키를 가리키지 않은 Critical/Major — 사람이 정할 목록이다.
+    for f in r07.get("escaped") or []:
+        lines.append("- **07 escaped** `%s` — %s (`%s`)"
+                     % (f.get("severity"), f.get("title"), f.get("path") or "경로 없음"))
     if cv.get("last_primary_error"):
         lines += ["", "- **교차검증 primary 가 실패한 적이 있다** — `%s`. "
                   "부재가 아니라 일시 실패다." % cv["last_primary_error"]]
