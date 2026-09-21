@@ -107,27 +107,6 @@ def push(root, config, branch):
     return {"ok": ok, "remote": remote, "branch": branch, "detail": detail}
 
 
-# ------------------------------------------------------------ 백그라운드 조인
-
-def join_pending(state):
-    """04 의 백그라운드 전체 회귀를 06 진입 전에 조인한다.
-
-    `04-gate.md` 가 `join_before: "06-pr"` 를 적어 두고도 06 이 없어 아무 데도
-    걸리지 않던 값이다. 이 스택은 지금 `background_full_regression: false` 라
-    조인할 것이 없지만, **없다는 것과 안 본다는 것은 다르다** — 안 보면 다른
-    스택에서 회귀가 안 끝난 채로 push 한다.
-    """
-    node = (state.get("phases") or {}).get("04-gate") or {}
-    pending = node.get("background")
-    if not pending:
-        return {"joined": False, "blocked": False,
-                "reason": "백그라운드 회귀가 없었다"}
-    if pending.get("status") == "passed":
-        return {"joined": True, "blocked": False, "reason": "이미 끝나 있었다"}
-    return {"joined": False, "blocked": True,
-            "reason": "백그라운드 전체 회귀가 아직 끝나지 않았다"}
-
-
 # --------------------------------------------------------------------- PR 본문
 
 def _read(p, limit=None):
@@ -491,7 +470,7 @@ def _verified_lines(root, state, config):
     head = ["**무엇이 검증됐나**", ""]
     if not units:
         return head + ["_계약 유닛이 없다._", ""]
-    _config, adapter, _cal = adapters.load(root)
+    _config, adapter = adapters.load(root)
     tests = trace_contract._unit_test_files(adapter, trace_contract.repo_files(root),
                                             parsed)
     tinfo = state.get("tests") or {}

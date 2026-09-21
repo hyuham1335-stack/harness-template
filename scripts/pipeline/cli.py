@@ -54,7 +54,7 @@ REQUIRED_SECTIONS = ("## 목적", "## 진입 조건", "## 절차",
 ROLE_TEMPLATE_SECTION = "## 역할 프롬프트 템플릿"
 
 _PLACEHOLDER = re.compile(r"\$\{([a-zA-Z0-9_.\[\]]+)\}")
-_NAMESPACES = ("config", "calibration", "run")
+_NAMESPACES = ("config", "run")
 
 # lint 는 런 없이 돈다. 경로 길이를 최악으로 재기 위한 자리표시자다 —
 # run_id 18자 + slug 40자로 채운 값이 240자 상한을 넘지 않아야 한다.
@@ -386,8 +386,8 @@ def load_phases(root, phases_dir=None):
 
 # ------------------------------------------------------------ 플레이스홀더
 
-def build_context(root, paths=None, state=None, config=None, calibration=None):
-    """`${config|calibration|run}` 세 네임스페이스. **state 는 여기에 없다.**
+def build_context(root, paths=None, state=None, config=None):
+    """`${config|run}` 두 네임스페이스. **state 는 여기에 없다.**
 
     state 는 `${}` 보간 대상이 아니라 `pointer`·`unless` 의 조건식 전용이다.
     보간 대상으로 만들면 페이즈 파일이 런 중 상태를 문자열로 끌어다 쓰기 시작하고,
@@ -396,15 +396,6 @@ def build_context(root, paths=None, state=None, config=None, calibration=None):
     root = Path(root)
     if config is None:
         config = harness._read_json(root / harness.CONFIG_REL)
-    if calibration is None:
-        cal_rel = config.get("calibration_file")
-        if cal_rel and (root / cal_rel).exists():
-            try:
-                calibration = harness._read_json(root / cal_rel)
-            except (OSError, ValueError):
-                calibration = {}
-        else:
-            calibration = {}
 
     if paths is not None:
         run_id, run_dir = paths.run_id, paths.run_dir.as_posix()
@@ -417,7 +408,6 @@ def build_context(root, paths=None, state=None, config=None, calibration=None):
                 or "_workspace/contract_{slug}.md")
     return {
         "config": config,
-        "calibration": calibration or {},
         "run": {"id": run_id, "dir": run_dir, "slug": slug,
                 "contract_file": template.replace("{slug}", slug)},
     }
@@ -427,7 +417,7 @@ def _lookup(ctx, dotted):
     ns = dotted.split(".")[0]
     if ns not in _NAMESPACES:
         raise PlaceholderError(
-            "`%s` 는 참조할 수 없는 네임스페이스다 — %s 셋만 쓴다"
+            "`%s` 는 참조할 수 없는 네임스페이스다 — %s 둘만 쓴다"
             % (ns, "·".join(_NAMESPACES)))
     node = ctx
     for part in dotted.split("."):
@@ -545,7 +535,7 @@ def _req_state(root, req, ctx, state):
 
 def _req_adapter_stage(root, req, ctx, state):
     try:
-        _config, adapter, _cal = adapters.load(root)
+        _config, adapter = adapters.load(root)
     except (OSError, ValueError, KeyError) as exc:
         return _bad("adapter_stage", "어댑터를 읽지 못했다: %s" % exc)
     absent = [n for n in req.get("steps") or []
@@ -852,11 +842,11 @@ def lint_phases(root, phases_dir=None):
         return out
 
     try:
-        config, adapter, calibration = adapters.load(root)
+        config, adapter = adapters.load(root)
     except (OSError, ValueError, KeyError) as exc:
         add(harness.CONFIG_REL, "config", "FAIL", "설정·어댑터를 읽지 못했다: %s" % exc)
         return out
-    ctx = build_context(root, config=config, calibration=calibration)
+    ctx = build_context(root, config=config)
 
     _lint_runner_bin(root, adapter, config, add)
     _lint_infra_preflight(adapter, config, add)
@@ -915,8 +905,6 @@ def lint_phases(root, phases_dir=None):
             sid = step.get("id")
             if sid not in (adapter.get("stages") or {}):
                 add(name, "stage", "FAIL", "어댑터에 없는 스테이지 이름: %r" % sid)
-            if "background" in step:
-                _lint_background(name, step, ctx, add)
 
         # ── 어휘
         for req in front.get("requires") or []:
@@ -1177,28 +1165,11 @@ def _lint_infra_preflight(adapter, config, add):
                 % probe.get("name"))
 
 
-def _lint_background(name, step, ctx, add):
-    """참으로 해석되면 거부한다 — 조용히 동기로 낙하시키지 않는다.
-
-    이 스켈레톤은 백그라운드 경로를 만들지 않았다. 없는 기계를 있는 척
-    통과시키는 것이 이 문서군이 막으려는 실패다.
-    """
-    try:
-        value = resolve(step["background"], ctx)
-    except PlaceholderError as exc:
-        add(name, "placeholder", "FAIL", str(exc))
-        return
-    if value:
-        add(name, "background", "FAIL",
-            "background 가 참으로 해석된다. 이 실행기는 동기 실행만 지원하므로 "
-            "거부한다 — 조용히 동기로 돌리면 없는 기계를 통과시키는 것이다")
-
-
 def _lint_placeholders(name, front, ctx, add):
     try:
         resolve({k: v for k, v in front.items() if k != "gate"}, ctx)
         for step in (front.get("gate") or {}).get("steps") or []:
-            resolve({k: v for k, v in step.items() if k != "background"}, ctx)
+            resolve(step, ctx)
     except PlaceholderError as exc:
         add(name, "placeholder", "FAIL", str(exc))
 
@@ -2213,7 +2184,7 @@ def _journey_hint(root, s):
     """
     if ((s.get("contract") or {}).get("mode")) == "no_contract":
         return ""
-    _config, adapter, _cal = adapters.load(root)
+    _config, adapter = adapters.load(root)
     why = _e2e_absent_reason(adapter)
     if why is None:
         return ""
@@ -2250,7 +2221,7 @@ def _contract_precheck_03(root, ctx, s):
     parsed = contract_mod.parse(full.read_text(encoding="utf-8"), ctx["config"])
     if not parsed.get("journeys") and not parsed.get("journeys_dropped"):
         return None
-    _config, adapter, _cal = adapters.load(root)
+    _config, adapter = adapters.load(root)
     state = adapters.stage_state(adapter, "e2e")
     why = _e2e_absent_reason(adapter)
     if why is not None:
@@ -3368,11 +3339,10 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
                          for r in got["rollback"]) or "- (없음)"),
             _same_command(s, "03"))
 
-    _config, adapter, calibration = adapters.load(root)
+    _config, adapter = adapters.load(root)
     if adapters.stage_state(adapter, "compile") == "present":
         log = paths.gates / "03_compile.log"
-        result = adapters.run_stage(root, adapter, "compile", log_path=log,
-                                    calibration=calibration)
+        result = adapters.run_stage(root, adapter, "compile", log_path=log)
         st.append_event(paths, "stage_done", cmd="record", phase="03-implement",
                         stage="compile", exit=result.get("exit"))
         if result.get("exit"):
@@ -4398,7 +4368,7 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
                                "## 게이트 진입 거부\n\n" +
                                "\n".join("- %s" % c["message"] for c in failed), None)
 
-    config, adapter, calibration = adapters.load(root)
+    config, adapter = adapters.load(root)
     # **수리 라운드마다 계약을 다시 읽는다.** 메인이 여기서 계약 델타를 적용하고,
     # 그 델타가 스코프 선택과 프로파일을 함께 바꾼다. 예전에는 스코프만 새 계약을
     # 보고 프로파일은 03 이 정한 값으로 굳어 있었다 (M34).
@@ -4408,7 +4378,7 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
     log_path = paths.gates / ("gr-%d.stdout.log" % round_no)
 
     st.append_event(paths, "stage_start", cmd="gate", phase=pid, round=round_no)
-    report = gate_mod.run_gate(root, config, adapter, calibration, s,
+    report = gate_mod.run_gate(root, config, adapter, s,
                                phase_item["front"], paths.run_dir,
                                only_stage=only_stage, replay=replay,
                                log_path=log_path)
@@ -4686,7 +4656,7 @@ def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
         # **면제된 프로브는 등급이 치른다** (M44 · §E9). 어휘는 이미 있었고
         # 소비자(`pr.build_body`·`report.GAP_REASONS`)도 있었는데 **쓰는 코드가
         # 없었다** — 선언만 있고 코드가 안 읽는 M36 과 같은 모양이다.
-        # `NON_DEMOTING_GAPS`(calibration_stale) 는 이름만 남기고 등급은 그대로다
+        # `NON_DEMOTING_GAPS` 는 이름만 남기고 등급은 그대로다
         # — 사람이 할 일이 밀렸다는 표시이지 이 런의 관측 결손이 아니다 (ADR-H047).
         import report as rep
         for gap in got.get("gaps") or []:
@@ -4773,13 +4743,6 @@ def _precheck_render(got):
         # **면제를 조용히 넘기지 않는다** (M44). "전부 맞다" 로만 적으면
         # 면제가 통과와 구분되지 않는다.
         for gap in got.get("gaps") or []:
-            if gap == "calibration_stale":
-                stale = [c for c in got["checks"] if c["name"] == "캘리브레이션"]
-                lines += ["", "**캘리브레이션이 낡았다** — %s. 등급은 그대로이고 "
-                              "`calibration_stale` 로 보고서에 남는다. 다음 런 전에 "
-                              "`python scripts/harness.py calibrate` 를 돌린다."
-                          % (stale[0]["message"] if stale else gap)]
-                continue
             if gap == PRECHECK_OVERRIDE_GAP:
                 fp = (got.get("policy_override") or {}).get("fingerprint") or {}
                 lines += ["", "**정책 실패를 사람이 넘기기로 한 상태다: `%s`.** "
@@ -4856,7 +4819,7 @@ def run_approve(root, phase="06", revoke=False, auto=False, run_id=None):
                            "승인을 철회했다. 다시 승인하기 전에는 push 하지 않는다.",
                            None)
 
-    config, _adapter, _cal = adapters.load(root)
+    config, _adapter = adapters.load(root)
     node.update({
         "granted": True,
         "mode": "auto" if auto else "user",
@@ -4941,7 +4904,7 @@ def run_report(root, out=None, run_id=None):
     # 80자 되묻기와 같이 파일을 고쳐 같은 명령을 치면 닫힌다. 닫힌 런의
     # 재작성은 종전 계약대로 파일을 요구하지 않는다(있으면 멱등 은퇴만).
     import ledger as ledger_mod
-    _config, _adapter, cal = adapters.load(root)
+    _config, _adapter = adapters.load(root)
     review, errors = _instruction_review(root, paths, s, _config)
     closed = s.get("run_status") == st.DONE
     if errors and not closed:
@@ -5008,8 +4971,7 @@ def run_report(root, out=None, run_id=None):
     # 소요는 `events.jsonl` 의 유도값이고, 08 시점에 그 파일은 이미 완결이다
     # — 미완 구간이 없다.
     timing = st.phase_durations(paths)
-    text, missing = rep.build(s, data, cal or {}, s.get("promotions") or [],
-                              timing)
+    text, missing = rep.build(s, data, s.get("promotions") or [], timing)
 
     target = Path(out) if out else (
         root / "docs" / "harness" / "pipeline" / "runs"
@@ -5315,7 +5277,7 @@ def run_review07(root, external=None, run_id=None):
     if s.get("escalated"):
         return _escalation_envelope("review07", paths, s)
 
-    config, _adapter, _cal = adapters.load(root)
+    config, _adapter = adapters.load(root)
     ext_cfg = config.get("external_pr_review") or {}
 
     if not ext_cfg.get("enabled"):
@@ -5456,29 +5418,16 @@ def run_promote(root, scan=False, stage=False, apply=False, flush=False,
             p.get("status") == "skipped" for p in promos)
         if overdue:
             st.demote(s, st.GRADES[1], "promotion_overdue")
-        # 런당 한 번 도는 자리 — 테스트 수 하한을 이 런의 전체 회귀로 올린다
-        # (ADR-H047). `state.tests.ran` 은 04/05 의 `full` 이 테스트 리포트에서 셌다.
-        config, _adapter, _cal = adapters.load(root)
-        floor = adapters.raise_tests_floor(
-            root, config, (s.get("tests") or {}).get("ran"), s["run_id"])
         st.save(paths, s)
-        note = ""
-        if floor:
-            note = ("\n\n테스트 수 하한을 %s → %d 로 올렸다 (`calibration.derived."
-                    "tests_ran_floor`, 이 런의 전체 회귀 %d개 × %.1f)."
-                    % (floor["from"], floor["to"], s["tests"]["ran"],
-                       harness.TESTS_FLOOR_RATIO))
         return st.envelope("promote", True, 0, s,
                            {"flushed": n, "promotions": promos,
-                            "tests_ran_floor": floor,
                             "promotion_overdue": overdue},
                            "잔여 승격 %d 건을 `skipped` 로 종결했다 — 임계가 다시 "
                            "충족되면 다음 런에서 재승격 후보가 된다." % n
                            + ("\n\n**승격 판정 시한이 지났는데 후보를 미뤘다** — gap "
                               "`promotion_overdue` 로 등급이 내려간다 (ADR-H051). "
                               "다음 런에서는 판정(`create`/`amend`)하거나 임계를 "
-                              "고친다." if overdue else "")
-                           + note, None)
+                              "고친다." if overdue else ""), None)
 
     if scan or stage:
         # **덮어쓰지 않고 병합한다** (G-3). 07 의 절차는 `--scan` → 판정 →
@@ -5540,7 +5489,7 @@ def run_promote(root, scan=False, stage=False, apply=False, flush=False,
     # 베이스라인은 **기계가 잰다.** lint 승격이 하나도 없으면 재지 않는다.
     baseline = None
     if pm.wants_baseline(verdicts):
-        config, adapter, _cal = adapters.load(root)
+        config, adapter = adapters.load(root)
         baseline = pm.measure_baseline(root, adapter, runner=runner)
         if baseline["state"] == "infra":
             # 시스템 문제다. **아무것도 쓰지 않고** 카운터도 태우지 않는다 —
@@ -5576,7 +5525,7 @@ def run_promote(root, scan=False, stage=False, apply=False, flush=False,
     # infra 면 아무것도 남지 않는다 — 베이스라인과 같은 규율이다.
     gate = None
     if pm.wants_self_gate(promos):
-        _config, adapter, _cal = adapters.load(root)
+        _config, adapter = adapters.load(root)
         gate = pm.self_gate(root, adapter, runner=runner)
         if gate["state"] == "infra":
             return st.envelope("promote", False, 10, s, {"self_gate": gate},
@@ -5746,7 +5695,7 @@ def run_pr(root, run_id=None):
     if s.get("escalated"):
         return _escalation_envelope("pr", paths, s)
 
-    config, adapter, _cal = adapters.load(root)
+    config, adapter = adapters.load(root)
     data = {}
 
     # 1. 브랜치 — 규약과 보호. **자동 생성하지 않는다.**
@@ -5757,15 +5706,6 @@ def run_pr(root, run_id=None):
                            "\n".join(["## 브랜치가 맞지 않는다", "", msg, "",
                                       "**브랜치를 자동으로 만들지 않는다.**"]),
                            None)
-
-    # 2. 백그라운드 전체 회귀 조인 (04 의 join_before: 06-pr)
-    join = pr_mod.join_pending(s)
-    data["join"] = join
-    if join.get("blocked"):
-        return st.envelope("pr", False, 3, s, data,
-                           "\n".join(["## 회귀가 아직 안 끝났다", "",
-                                      join["reason"], "",
-                                      "끝나기 전에 push 하지 않는다."]), None)
 
     # 2-b. **닫힌 런의 PR 갱신**에는 런 기록이 실려야 한다 (ADR-H052 결정 4).
     # 08 이 쓴 `runs/{run_id}.md` 가 base 이후 diff 에 없으면 gap — 06 의 첫
@@ -6041,7 +5981,7 @@ def run_contract_trace(root, contract=None, run_id=None):
     if s.get("escalated"):
         return _escalation_envelope("contract-trace", paths, s)
 
-    config, adapter, _cal = adapters.load(root)
+    config, adapter = adapters.load(root)
     ctx = build_context(root, paths, s)
     no_contract = (s.get("contract") or {}).get("mode") == "no_contract"
     rel = contract or resolve("${run.contract_file}", ctx)

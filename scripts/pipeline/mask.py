@@ -66,7 +66,7 @@ def secret_values(root, config=None):
     """
     root = Path(root)
     if config is None:
-        config, _adapter, _cal = adapters.load(root)
+        config, _adapter = adapters.load(root)
     files = list((config.get("project") or {}).get("secret_files") or [])
     values, missing = set(), []
     for rel in files:

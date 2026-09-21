@@ -216,7 +216,6 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
     paths.request.write_bytes(raw)
 
     config = harness._read_json(root / harness.CONFIG_REL)
-    _adapter, calibration = _adapter_and_calibration(root, config)
 
     s = {
         "schema": 1,
@@ -232,7 +231,6 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
         },
         "profile": _initial_profile(profile),
         "adapter": {"id": config.get("adapter")},
-        "calibration": _calibration_summary(calibration),
         "vcs": {"baseline": _vcs_baseline(root)},
         "phase": "00-triage",
         "phases": {},
@@ -302,30 +300,6 @@ def note_model_instruction(s, key, tier):
     node = s.setdefault("models", _models_node())
     node.setdefault("instructed", {})[key] = tier
     return node
-
-
-def _adapter_and_calibration(root, config):
-    adapter = calibration = None
-    try:
-        adapter = harness._read_json(
-            root / harness.ADAPTER_DIR_REL / ("%s.json" % config["adapter"]))
-    except (OSError, ValueError, KeyError):
-        pass
-    cal_rel = config.get("calibration_file")
-    if cal_rel:
-        try:
-            calibration = harness._read_json(root / cal_rel)
-        except (OSError, ValueError):
-            pass
-    return adapter, calibration
-
-
-def _calibration_summary(calibration):
-    if calibration is None:
-        return {"present": False}
-    return {"present": True,
-            "partial": bool(calibration.get("partial")),
-            "adapter_verified": bool(calibration.get("adapter_verified"))}
 
 
 def _cross_verify_init(config):

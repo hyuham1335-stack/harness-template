@@ -40,7 +40,6 @@
 | **봉투**(envelope) | 실행기가 표준 출력으로 내보내는 JSON 객체 하나입니다. "지금 할 일" 과 "다음에 칠 명령" 이 들어 있습니다 |
 | **원장**(ledger) | 리뷰 지적을 append-only 로 쌓는 기록 파일입니다 |
 | **승격**(promote) | 반복해서 나온 지적을 린트 규칙 같은 자동 검사로 올리는 일입니다 |
-| **캘리브레이션**(calibration) | 각 스테이지의 실제 소요 시간을 한 번 재 두는 일입니다. 타임아웃 값이 여기서 나옵니다 |
 | **에스컬레이션**(escalation) | 자동으로 풀 수 없을 때 진행을 멈추고 사람에게 넘기는 일입니다 |
 | **`PASS_WITH_GAPS`** | "통과했지만 실행하지 못한 검사가 있다" 는 결과 등급입니다 |
 
@@ -51,8 +50,8 @@
    **규칙은 작업자가 실제로 읽어야 지켜집니다** ([ROADMAP](docs/harness/ROADMAP.md) §4).
 2. **순차 실행기 `scripts/execute.py` 는 들어 있지 않습니다.** 권한 승인을 건너뛴 채 모델을
    돌리는 방식이어서 제외했습니다 ([DECISIONS](docs/harness/DECISIONS.md) ADR-H005 · ADR-H037).
-3. **아직 검증되지 않은 부분이 있습니다.** `harness/calibration.json` 이 미검증
-   상태이고, 검증 현황은 [ROADMAP](docs/harness/ROADMAP.md) §6 의 표에 있습니다.
+3. **아직 검증되지 않은 부분이 있습니다.** 검증 현황은
+   [ROADMAP](docs/harness/ROADMAP.md) §6 의 표에 있습니다.
 
 ## 빠른 시작
 
@@ -60,8 +59,7 @@
 flowchart LR
     C["git clone"] --> D["CLAUDE.md · docs/ 채우기"]
     D --> I["harness.py init<br/>doctor 통과"]
-    I --> K["harness.py calibrate"]
-    K --> R["/feature 요청"]
+    I --> R["/feature 요청"]
 ```
 
 ### 1. 클론한 뒤 문서부터 채웁니다
@@ -121,16 +119,7 @@ python scripts/pipeline/cli.py doctor
 **exit 2 가 나오면 거기서 멈추고 FAIL 항목부터 고칩니다.** 경고는 통과시키되 전부
 출력합니다. 건너뛴 검사는 통과가 아니어서 마지막 보고서까지 따라갑니다.
 
-### 4. 캘리브레이션을 한 번 돌립니다
-
-각 스테이지를 한 번씩 실행해 소요 시간을 `harness/calibration.json` 에 기록합니다.
-타임아웃 값과 전체 테스트의 백그라운드 실행 여부가 여기서 나옵니다.
-
-```
-python scripts/harness.py calibrate
-```
-
-### 5. `/feature <요청>` 을 칩니다
+### 4. `/feature <요청>` 을 칩니다
 
 여기서부터는 파이프라인이 끌고 갑니다.
 
@@ -156,8 +145,7 @@ python scripts/harness.py calibrate
    진입점 테스트 검사에서 빠집니다 — E2E 스펙이 유닛 테스트의 부재를 가리지 않게 하려는 것입니다
 5. **`test_report.glob` 에는 E2E 리포트를 넣지 않습니다.** 테스트 수 신호는 전체 테스트(`full`)
    전용이고, 지난 런의 리포트가 이번에 안 돈 런의 실적이 됩니다
-6. **`python scripts/harness.py doctor` 와 `calibrate --stage e2e` 를 다시 돌립니다** — 타임아웃과
-   백그라운드 실행 여부가 실측에서 나옵니다
+6. **`python scripts/harness.py doctor` 를 다시 돌립니다**
 
 켜고 나면 이렇게 돕니다.
 
@@ -230,7 +218,6 @@ flowchart TD
 | `profiles/<어댑터>/config.json` | 미리 채워 둔 설정 프로필입니다. `harness.py init` 이 복사하면서 프로젝트 이름만 바꿔 넣습니다. 템플릿 `config.json` 과 키가 같아야 합니다 |
 | `phases/00~08.md` | 각 페이즈의 정의입니다. 문서 맨 위 JSON 에 요구(`requires`)·산출(`produces`)·재시도 상한(`loop`)이 적혀 있습니다 |
 | `templates/contract.md` | 계약 문서의 빈 틀입니다. 절 제목은 `config.json` 과 글자까지 같아야 하고, 다르면 `doctor` 가 미리 막습니다 |
-| `calibration.json` | `calibrate` 의 실측값과 거기서 나온 정책입니다. **"미측정" 과 "0초" 를 같은 칸에 쓰지 않습니다** |
 
 **어댑터는 스택 지식을 한 곳에 격리합니다.** 스테이지 이름 8개
 (`compile` · `lint` · `check` · `scoped` · `full` · `e2e` · `build` · `docs`)는 코어가
@@ -242,7 +229,7 @@ flowchart TD
 
 | 경로 | 무엇 |
 |---|---|
-| `harness.py` | 설정을 다루는 명령들입니다 — `init` · `doctor` · `calibrate` |
+| `harness.py` | 설정을 다루는 명령들입니다 — `init` · `doctor` |
 | `pipeline/cli.py` | 8단계 파이프라인의 입구입니다. 명령을 해석하고, 페이즈 정의를 읽고, 진입 조건을 따지고, 결과를 JSON 으로 내보냅니다 |
 | `pipeline/state.py` | 런 폴더와 진행 상태, 이벤트 기록, 작업 트리 해시를 다룹니다. 상태 이름과 등급 이름이 이 파일 하나에서 나옵니다 |
 | `pipeline/adapters.py` | 어댑터를 읽고 스테이지를 실행합니다. 판정하거나 상태를 쓰지는 않습니다 |
@@ -296,7 +283,6 @@ flowchart TD
 |---|---|
 | `init --adapter <이름> --name <프로젝트>` | `harness/profiles/<이름>/config.json` 을 복사해 `harness/config.json` 을 만듭니다. 이미 있으면 `--force` 없이는 덮어쓰지 않습니다 |
 | `doctor` | 설정과 저장소가 어긋난 곳을 찾아 사람이 읽는 보고서로 냅니다 |
-| `calibrate [--stage <이름>] [--replace]` | 스테이지를 한 번씩 돌려 소요 시간을 기록합니다. 하나라도 실패하면 **파일을 쓰지 않습니다** — 코드가 깨진 상태의 실측값은 기준이 될 수 없습니다 |
 
 ### `python scripts/pipeline/cli.py` — 파이프라인을 돌립니다
 

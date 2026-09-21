@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """어댑터 계층 — 스택 지식이 코어로 새지 않게 하는 유일한 문.
 
-여기가 갖는 것: 어댑터·캘리브레이션 읽기 · 스테이지 실행 · 리포트 파싱 위임 ·
+여기가 갖는 것: 어댑터 읽기 · 스테이지 실행 · 리포트 파싱 위임 ·
 타임아웃 유도 · 변경 파일 매칭 · 인프라 패턴 · 선택자 조립의 어댑터 쪽 절반.
 
 여기가 갖지 않는 것: 판정(등급·귀속·카운터·소유자) · 상태 쓰기 · stdout.
@@ -11,7 +11,6 @@
 """
 
 import json
-import math
 import sys
 import time
 from pathlib import Path
@@ -29,52 +28,12 @@ DEFAULT_TIMEOUT_SEC = 600
 
 
 def load(root):
-    """(config, adapter, calibration). 캘리브레이션은 없을 수 있다."""
+    """(config, adapter)."""
     root = Path(root)
     config = harness._read_json(root / harness.CONFIG_REL)
     adapter = harness._read_json(
         root / harness.ADAPTER_DIR_REL / ("%s.json" % config["adapter"]))
-    calibration = None
-    cal_rel = config.get("calibration_file")
-    if cal_rel and (root / cal_rel).exists():
-        try:
-            calibration = harness._read_json(root / cal_rel)
-        except (OSError, ValueError):
-            calibration = None
-    return config, adapter, calibration
-
-
-def raise_tests_floor(root, config, ran, run_id):
-    """`derived.tests_ran_floor` 를 **단조 증가**로 올린다. 반환 {from, to} 또는 None.
-
-    캘리브레이션은 1회 측정이라 그 뒤 테스트가 늘어도 하한이 안 움직인다 —
-    파일럿 15런이 전부 `expected_min: 14` 로 돌았고 마지막 런은 652개였다
-    (ADR-H047). 07 의 `promote --flush` 가 런당 한 번 도는 자리라 거기서
-    부른다. 내리지는 않는다 — 급감을 잡는 것이 이 값의 목적이다.
-    `TESTS_FLOOR_RATIO` 는 `calibrate` 와 같은 상수를 쓴다.
-    """
-    if not ran or ran <= 0:
-        return None
-    cal_rel = (config or {}).get("calibration_file")
-    if not cal_rel:
-        return None
-    path = Path(root) / cal_rel
-    if not path.exists():
-        return None
-    try:
-        cal = harness._read_json(path)
-    except (OSError, ValueError):
-        return None
-    derived = cal.setdefault("derived", {})
-    old = derived.get("tests_ran_floor")
-    new = int(math.floor(ran * harness.TESTS_FLOOR_RATIO))
-    if old is not None and new <= old:
-        return None
-    derived["tests_ran_floor"] = new
-    derived["tests_ran_source"] = {"run_id": run_id, "ran": ran}
-    path.write_text(json.dumps(cal, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8")
-    return {"from": old, "to": new}
+    return config, adapter
 
 
 def stage_spec(adapter, name):
@@ -97,22 +56,8 @@ def stage_state(adapter, name):
     return "present"
 
 
-def derived(calibration, key):
-    """캘리브레이션의 유도 정책. **없으면 None 이고 0 이 아니다.**
-
-    0 으로 채우면 "재지 않았다"와 "0 이었다"가 같은 칸에 들어간다.
-    """
-    if not calibration:
-        return None
-    return (calibration.get("derived") or {}).get(key)
-
-
-def stage_timeout(adapter, calibration, name):
-    """(초, 출처). 실측이 어댑터 선언을 이긴다 — 상수가 아니라 함수다."""
-    if name == "full":
-        got = derived(calibration, "full_timeout_sec")
-        if got:
-            return int(got), "calibration"
+def stage_timeout(adapter, name):
+    """(초, 출처). 어댑터 선언이 없으면 기본값이다 — 출처가 같이 남는다."""
     spec = stage_spec(adapter, name) or {}
     if spec.get("timeout_sec"):
         return int(spec["timeout_sec"]), "adapter"
@@ -204,8 +149,7 @@ def infra_match(adapter, exit_code, text):
     return None
 
 
-def run_stage(root, adapter, name, select=None, log_path=None,
-              calibration=None, runner=None):
+def run_stage(root, adapter, name, select=None, log_path=None, runner=None):
     """스테이지 하나를 돌린다.
 
     반환에서 **못 잰 칸은 만들지 않는다** — 스킵된 스테이지에 `sec: 0` 을 넣으면
@@ -216,7 +160,7 @@ def run_stage(root, adapter, name, select=None, log_path=None,
         return {"id": name, "state": "skipped", "reason": state}
 
     argv = stage_argv(root, adapter, name, select)
-    timeout, t_src = stage_timeout(adapter, calibration, name)
+    timeout, t_src = stage_timeout(adapter, name)
     cwd = Path(root) / ((stage_spec(adapter, name) or {}).get("cwd")
                         or (adapter.get("runner") or {}).get("cwd") or ".")
 

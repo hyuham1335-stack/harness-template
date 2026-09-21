@@ -351,7 +351,7 @@ def measure_baseline(root, adapter, runner=None):
                 "reason": "어댑터에 `baseline_cmd`(또는 `baseline_file`)가 없다 "
                           "— lint 승격이 무엇을 막는지 재지 못했다"}
 
-    timeout, _src = adapters.stage_timeout(adapter, None, "lint")
+    timeout, _src = adapters.stage_timeout(adapter, "lint")
     run = runner or adapters._default_runner
     code, out = run("lint-baseline", argv, str(root), timeout)
     if code in _INFRA_EXITS:

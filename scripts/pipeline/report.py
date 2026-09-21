@@ -7,11 +7,6 @@
 
 분업이 요점이다 — **표는 실행기가 조립하고 서술은 모델이 쓴다.** 특히 승격
 규칙 목록은 원장에서 자동으로 나오므로 **모델이 빠뜨릴 수 없다.**
-
-그리고 `## 캘리브레이션 상태` 가 필수 섹션인 이유가 이 리포에서 지금 그대로
-성립한다 — `calibration.json` 이 `partial: true` 이고 어댑터가
-`verified: false` 다. 보고서가 그것을 적지 않으면 런은 초록불로 끝나고 다음
-런이 같은 미검증 값을 물려받는다.
 """
 
 import re
@@ -23,7 +18,7 @@ sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))
 
 REQUIRED_SECTIONS = ("## 완료 등급", "## 승격된 규칙", "## 건너뛴 게이트",
-                     "## 비용과 시간", "## 캘리브레이션 상태")
+                     "## 비용과 시간")
 
 # 서술 필드의 하한 (ADR-H052 결정 5). `5568` 의 08 은 서술이 통째로 비었고
 # 그 런은 07 major 6건으로 최다였다 — 「왜 그랬는가는 이 런이 말하지 않았다」.
@@ -76,7 +71,6 @@ GAP_REASONS = {
                           "다르다. 전체 회귀로 낙하시키지 않았다"),
     "scoped_degenerate": ("scoped 선택자가 사실상 전체 회귀다 — 절감이 없는데 "
                           "\"scoped 통과\" 로 적히는 것을 막는다"),
-    "uncalibrated_run": "캘리브레이션 파일이 없다 — 타임아웃·테스트 수 하한을 모른다",
     "test_report_missing": ("테스트 리포트를 한 건도 찾지 못했다 — 리포터 "
                             "경로 설정 오류일 수 있어 인프라로 다룬다"),
     "tests_ran_zero": "테스트가 0개 돌았다 — 빈 스위트의 초록불은 통과가 아니다",
@@ -85,10 +79,6 @@ GAP_REASONS = {
     "run_record_missing": ("닫힌 런의 PR 갱신인데 런 기록 "
                            "`docs/harness/pipeline/runs/{run_id}.md` 가 diff 에 "
                            "없다 — 08 이 쓴 기록은 기능 PR 에 실린다 (ADR-H052)"),
-    "calibration_stale": ("캘리브레이션 측정 뒤 완주 런이 기준 이상 쌓였다 — "
-                          "게이트의 타임아웃·테스트 수 하한이 옛 실측이다. "
-                          "`python scripts/harness.py calibrate` 로 다시 잰다. "
-                          "표시이고 등급은 내리지 않는다 (ADR-H047)"),
     # 08 지시문 검토 (ADR-H056 추기). 앞 셋은 표시이고 등급을 내리지 않는다.
     "instruction_review_manual": ("08 지시문 검토를 스킬 없이 사람이 했다 — "
                                   "config 의 `instruction_review.skill` 이 null 이다"),
@@ -109,7 +99,7 @@ GAP_REASONS = {
 # `instruction_slot_over_budget` 은 ADR-H074 가 **걷어냈다** — 아무도 안 내는
 # 어휘를 남기면 그것이 곧 "어휘가 기계를 앞서는" M36 의 거울상이다. 숫자는
 # `_slots_cell` 이 계속 렌더한다.
-NON_DEMOTING_GAPS = ("calibration_stale", "instruction_review_manual",
+NON_DEMOTING_GAPS = ("instruction_review_manual",
                      "instruction_slot_unmeasured", "instruction_changed")
 
 
@@ -582,7 +572,7 @@ def _tbl(rows):
     return out
 
 
-def build(state, data, calibration, promotions, timing=None):
+def build(state, data, promotions, timing=None):
     """보고서 마크다운. 반환: (text, missing_sections).
 
     **필수 섹션이 빠져도 파이프라인을 실패시키지 않는다** — 원장에 기록만
@@ -718,23 +708,6 @@ def build(state, data, calibration, promotions, timing=None):
     lines += _declined_lines(state, data)
     lines.append("")
 
-    lines += ["## 캘리브레이션 상태", ""]
-    partial = calibration.get("partial")
-    lines += _tbl([
-        ("측정 시각", calibration.get("measured_at")),
-        ("부분 측정(partial)", partial),
-    ])
-    notes = []
-    if partial:
-        notes.append("**`partial: true` 다** — 옛 값을 쓰는 스테이지가 있고, "
-                     "거기서 유도된 정책은 그만큼 오래된 것이다.")
-    if "calibration_stale" in gaps:
-        notes.append("**측정 뒤 완주 런이 기준 이상 쌓였다** (`calibration_stale`) — "
-                     "다음 런 전에 `python scripts/harness.py calibrate` 로 다시 "
-                     "잰다. 등급은 내리지 않았다 (ADR-H047).")
-    lines += ([""] + ["- %s" % n for n in notes] if notes
-              else ["", "- 캘리브레이션에 표시할 결손이 없다."])
-    lines.append("")
 
     lines += ["## 서술", ""]
     if narrative:

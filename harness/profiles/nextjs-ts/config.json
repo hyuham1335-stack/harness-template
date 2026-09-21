@@ -138,7 +138,5 @@
     "xv":        {"default": "opus"},
     "roles":     {"default": "sonnet", "fix": "sonnet"},
     "reviewers": {"default": "sonnet", "fix": "sonnet", "normal": "opus"}
-  },
-  "background_threshold_sec": 180,
-  "calibration_file": "harness/calibration.json"
+  }
 }

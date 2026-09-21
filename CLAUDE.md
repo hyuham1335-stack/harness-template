@@ -89,7 +89,6 @@
 ```
 python scripts/pipeline/cli.py doctor         # 설정·경계·전제조건 검사
 python scripts/pipeline/cli.py lint-phases    # 페이즈 파일 정합
-python scripts/harness.py calibrate           # 스테이지 1회 실측 → calibration.json
 python -m pytest scripts/                     # 하네스 자신의 테스트
 ```
 

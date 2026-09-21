@@ -50,7 +50,6 @@ COPIED = [
     "harness/config.schema.json",
     "harness/adapters/adapter.schema.json",
     "harness/adapters/nextjs-ts.json",
-    "harness/calibration.json",
     "harness/templates/contract.md",
     # 05 는 기동 전에 리뷰어 스킬의 실재를 확인한다. 실물을 복사해 두므로
     # 스킬 하나를 지우거나 이름을 바꾸면 이 테스트가 먼저 깨진다.
@@ -61,49 +60,6 @@ COPIED = [
     ".claude/skills/docs-reviewer/SKILL.md",
     ".claude/skills/general-reviewer/SKILL.md",
 ]
-
-# 픽스처의 실측은 **리포 자신의 실측과 별개 사실이다** — 어댑터에서 같은 판단을
-# 한 자리가 ADR-H038 결정 2 이고, 이쪽은 캘리브레이션이다.
-#
-# 템플릿의 `harness/calibration.json` 은 **영구히 미측정**이다(ADR-H039 결정 2 —
-# 남의 실측을 상속하지 않는다). 그래서 그것을 복사하면 픽스처는 `derived` 가 전부
-# null 인 리포가 되고, 타임아웃·테스트 수 하한을 소비하는 검사들이 *"값이 틀렸다"*
-# 가 아니라 *"값이 없다"* 로 깨진다 — **재지 않은 것을 잰 것처럼 쓰는 것을 막느라
-# 잰 것을 쓰는 테스트까지 막은 것**이다.
-#
-# 픽스처가 자기 실측을 선언한다. 아래 숫자는 Next.js 모양 리포에서 나올 법한
-# 값이고, **어느 실물의 측정도 아니다** — 이 검사들이 묻는 것은 값이 얼마인가가
-# 아니라 그 값이 소비자까지 도달하는가다.
-FIXTURE_CALIBRATION = {
-    "measured_at": "2026-01-01T00:00:00+0900",
-    "adapter": "nextjs-ts",
-    "adapter_verified": False,
-    "partial": False,
-    "stages": {
-        "compile": {"sec": 5.8, "ok": True, "exit_code": 0, "state": "measured"},
-        "lint": {"sec": 40.58, "ok": True, "exit_code": 0, "state": "measured"},
-        "check": {"sec": 8.06, "ok": True, "exit_code": 0, "state": "measured"},
-        "scoped": {"sec": 4.33, "ok": True, "exit_code": 0, "state": "measured"},
-        "full": {"sec": 35.36, "ok": True, "exit_code": 0, "state": "measured",
-                 "tests_ran": 1403, "suites": 47, "failures": 0},
-        "e2e": {"sec": None, "skipped": True, "state": "absent",
-                "reason": "cmd:null — 이 스택에 없는 스테이지"},
-        "build": {"sec": 20.66, "ok": True, "exit_code": 0, "state": "measured"},
-        "docs": {"sec": None, "skipped": True, "state": "absent",
-                 "reason": "cmd:null — 이 스택에 없는 스테이지"},
-    },
-    "retry": {"steps_recorded": 29, "steps_unrecorded": 20,
-              "steps_retried": 0, "max_attempts_observed": 1},
-    "report_glob_matched": True,
-    "infra": {},
-    "derived": {
-        "background_threshold_sec": 180,
-        "background_full_regression": False,
-        "full_timeout_sec": 300,
-        "tests_ran_floor": 1262,
-        "retry_budget": 2,
-    },
-}
 
 
 def _git(root, *args):
@@ -128,12 +84,6 @@ def repo(tmp_path):
     cfg["adapter"] = "nextjs-ts"
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
                         encoding="utf-8")
-
-    # 캘리브레이션도 같다 — 실물은 영구히 미측정이고 픽스처는 잰 것이 있어야 한다.
-    # 위 FIXTURE_CALIBRATION 주석을 본다 (ADR-H039 결정 2).
-    (tmp_path / "harness" / "calibration.json").write_text(
-        json.dumps(FIXTURE_CALIBRATION, ensure_ascii=False, indent=2) + chr(10),
-        encoding="utf-8")
 
     (tmp_path / "src" / "lib").mkdir(parents=True)
     (tmp_path / "src" / "lib" / "match.ts").write_text(
@@ -770,12 +720,12 @@ class TestCounterSpendReason:
     def test_모든_호출처가_사유를_준다(self, repo):
         """어휘가 있는데 코드가 안 쓰는 것이 [[ADR-H025]](M36) 의 모양이다.
 
-        P6 의 `events.jsonl` 은 `counter_inc` 0건이었다 — 일곱 호출처 중
+        P6 의 `events.jsonl` 은 `counter_inc` 0건이었다 — 여섯 호출처 중
         하나만 이벤트를 냈기 때문이다.
         """
         text = (ROOT / "scripts" / "pipeline" / "cli.py").read_text(encoding="utf-8")
         spots = [m.start() for m in re.finditer(r"st\.counter_inc\(", text)]
-        assert len(spots) >= 7, "호출처를 못 찾았다 — 이 검사가 무의미해졌다"
+        assert len(spots) >= 6, "호출처를 못 찾았다 — 이 검사가 무의미해졌다"
         for i in spots:
             window = text[i:i + 320]
             assert any('"%s"' % r in window for r in st.COUNTER_REASONS), window
@@ -887,7 +837,7 @@ class TestCounterExceededIsConsumed:
         """3항 언패킹이거나, 안 읽는 이유를 같은 자리에 적은 것만 허용한다."""
         text = (ROOT / "scripts" / "pipeline" / "cli.py").read_text(encoding="utf-8")
         spots = [m.start() for m in re.finditer(r"st\.counter_inc\(", text)]
-        assert len(spots) >= 7, "호출처를 못 찾았다 — 이 검사가 무의미해졌다"
+        assert len(spots) >= 6, "호출처를 못 찾았다 — 이 검사가 무의미해졌다"
         for i in spots:
             before = text[max(0, i - 160):i]
             around = text[max(0, i - 400):i + 200]
@@ -1210,14 +1160,6 @@ class TestLintPhases:
         _rewrite(phases / "04-gate.md",
                  lambda f: f["loop"].__setitem__("counter", "made_up"))
         assert _fails(_lint(repo), "counter")
-
-    def test_background_true_is_refused_not_silently_downgraded(self, repo, phases):
-        """켜지지 않는 기계를 조용히 동기로 낙하시키지 않는다."""
-        cal = repo / "harness" / "calibration.json"
-        data = json.loads(cal.read_text(encoding="utf-8"))
-        data["derived"]["background_full_regression"] = True
-        cal.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        assert _fails(_lint(repo), "background")
 
     def test_duplicate_produces_key(self, repo, phases):
         _rewrite(phases / "04-gate.md",
@@ -1545,15 +1487,6 @@ class TestPhaseParser:
             (repo / "harness/config.json").read_text(encoding="utf-8"))["project"]["name"]
         assert cli.resolve("${config.project.name}", ctx) == expected
         assert cli.resolve("${run.dir}/x.md", ctx).endswith("x.md")
-
-        # 기대값을 리터럴로 박지 않는다 — 이 칸은 `calibrate` 가 다시 잴 때마다
-        # 바뀌는 **실측값**이고, 숫자를 여기 적으면 재측정이 이 테스트를 깬다.
-        # 이 검사가 묻는 것은 값이 얼마인가가 아니라 `calibration` 네임스페이스가
-        # 파일까지 도달하는가다.
-        floor = json.loads(
-            (repo / "harness" / "calibration.json").read_text(encoding="utf-8")
-        )["derived"]["tests_ran_floor"]
-        assert cli.resolve("${calibration.derived.tests_ran_floor}", ctx) == floor
 
     def test_unresolved_placeholder_raises(self, repo, phases, request_file):
         paths, s = st.create_run(repo, "demo", request_file)
@@ -2397,7 +2330,7 @@ class TestProfileReconfirmation:
         cli.run_next(repo, run_id=paths.run_id)
 
         _, after = st.load(repo, paths.run_id)
-        text, _missing = rep_mod.build(after, {}, {}, [])
+        text, _missing = rep_mod.build(after, {}, [])
         line = next(l for l in text.splitlines() if l.startswith("| 프로파일"))
         assert "normal" in line and "small" in line, line
         assert "유닛 5" in line, line
@@ -2519,7 +2452,7 @@ class TestRoundBudgetAfterRoundTrip:
         self._converge_01(repo, paths)
         self._verdict(repo, paths, [dict(self.CRITICAL)])
         _, after = st.load(repo, paths.run_id)
-        text, _missing = rep_mod.build(after, {}, {}, [])
+        text, _missing = rep_mod.build(after, {}, [])
         line = next(l for l in text.splitlines() if l.startswith("| 라운드"))
         assert "지급" in line, line
 
@@ -3025,7 +2958,7 @@ class TestTestsRequiredAt03:
 
     def test_05_와_03_이_같은_함수로_센다(self, repo):
         """두 자리가 다른 목록을 보면 03 통과가 05 지적을 예고하지 못한다."""
-        config, adapter, _cal = _load(repo)
+        config, adapter = _load(repo)
         p = _write_contract(repo, TESTS_REQUIRED_CONTRACT)
         _route(repo, "analyze")
         req = tr.required_tests(repo, config, adapter, p)
@@ -3165,7 +3098,7 @@ class TestCleanOwnership:
 class TestAdapters:
 
     def test_null_cmd_is_absent_and_never_runs(self, repo):
-        _config, adapter, cal = adapters.load(repo)
+        _config, adapter = adapters.load(repo)
         assert adapters.stage_state(adapter, "e2e") == "absent"
         called = []
         got = adapters.run_stage(repo, adapter, "e2e",
@@ -3175,38 +3108,35 @@ class TestAdapters:
         assert "sec" not in got, "못 잰 값에 0 을 넣지 않는다"
 
     def test_when_touched_miss(self, repo):
-        _config, adapter, _cal = adapters.load(repo)
+        _config, adapter = adapters.load(repo)
         assert adapters.when_touched_hit(adapter, "build", ["docs/TRD.md"]) is False
         assert adapters.when_touched_hit(adapter, "build", ["src/app/page.tsx"]) is True
         assert adapters.when_touched_hit(adapter, "compile", ["x"]) is None
 
-    def test_full_timeout_comes_from_calibration_not_the_adapter(self, repo):
-        """실측이 어댑터 선언을 이긴다 — 상수가 아니라 함수다."""
-        _config, adapter, cal = adapters.load(repo)
+    def test_full_timeout_comes_from_the_adapter(self, repo):
+        """어댑터 선언이 없으면 기본값이다 — 값과 출처가 같이 남는다."""
+        _config, adapter = adapters.load(repo)
         assert adapter["stages"]["full"]["timeout_sec"] == 1800
-        assert adapters.stage_timeout(adapter, cal, "full") == (300, "calibration")
-        assert adapters.stage_timeout(adapter, None, "full") == (1800, "adapter")
-
-    def test_derived_is_none_not_zero_when_absent(self, repo):
-        assert adapters.derived(None, "tests_ran_floor") is None
-        assert adapters.derived({}, "tests_ran_floor") is None
+        assert adapters.stage_timeout(adapter, "full") == (1800, "adapter")
+        assert adapters.stage_timeout({"stages": {"full": {"cmd": ["x"]}}}, "full") == (
+            adapters.DEFAULT_TIMEOUT_SEC, "default")
 
     def test_multi_selector_becomes_path_arguments(self, repo):
         """이 어댑터는 select 를 두지 않는다 — 선택자가 경로 필터로 붙는다."""
-        _config, adapter, _cal = adapters.load(repo)
+        _config, adapter = adapters.load(repo)
         argv = adapters.stage_argv(repo, adapter, "scoped",
                                    ["src/lib/a.test.ts", "src/lib/b.test.ts"])
         assert argv[-2:] == ["src/lib/a.test.ts", "src/lib/b.test.ts"]
 
     def test_parse_report_agrees_with_the_contract_layer(self, repo):
-        _config, adapter, _cal = adapters.load(repo)
+        _config, adapter = adapters.load(repo)
         _write_report(repo, tests=7, failures=2)
         mine = adapters.parse_report(repo, adapter)
         theirs = harness._parse_junit(repo, adapter)
         assert (mine["ran"], mine["suites"], mine["failures"], mine["matched"]) == theirs
 
     def test_infra_pattern_ignored_when_exit_is_zero(self, repo):
-        _config, adapter, _cal = adapters.load(repo)
+        _config, adapter = adapters.load(repo)
         assert adapters.infra_match(adapter, 0, "ECONNREFUSED 가 로그에 스쳤다") is None
         assert adapters.infra_match(adapter, 1, "ECONNREFUSED") == "ECONNREFUSED"
 
@@ -3242,7 +3172,7 @@ class TestAttribution:
 
     def test_symbol_not_found_in_contract_forces_the_primary_role(self, repo, config):
         """경로만 보고 테스트 역할에 보내면 매번 오귀속된다."""
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         log = ("src/lib/match.test.ts(3,10): error TS2305: "
                "Module './match' has no exported member 'matchTitle'.")
         got = attr.attribute_compile(adapter, config, {"matchTitle"}, log)
@@ -3250,13 +3180,13 @@ class TestAttribution:
         assert "primary_role" in got[0]["owner_reason"]
 
     def test_plain_compile_error_uses_the_path(self, repo, config):
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         log = "src/lib/match.ts(9,3): error TS2322: Type 'string' is not assignable."
         got = attr.attribute_compile(adapter, config, set(), log)
         assert got and got[0]["owner"] == "impl"
 
     def test_assertion_in_contract_is_ambiguous(self, repo, config):
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         units = [{"unit": "matchTitle 는 0 을 돌려준다", "file": "src/lib/match.test.ts",
                   "ftype": "AssertionError", "message": "expected 1 to be 0",
                   "detail": "at src/lib/match.ts:4"}]
@@ -3265,7 +3195,7 @@ class TestAttribution:
         assert got[0]["owner"] == "ambiguous"
 
     def test_assertion_outside_contract_goes_to_the_test_role(self, repo, config):
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         units = [{"unit": "지어낸 심볼", "file": "src/lib/match.test.ts",
                   "ftype": "AssertionError", "message": "expected", "detail": ""}]
         got = attr.attribute_tests(adapter, config, {"matchTitle"}, units,
@@ -3275,7 +3205,7 @@ class TestAttribution:
 
     def test_frames_only_count_files_that_exist(self, repo, config):
         """스택 문법에 의존하지 않는다 — 리포에 실재하는 파일만 프레임이다."""
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         frames = attr.frames_from(
             "at wonder (src/lib/match.ts:4)\nat nowhere (vendor/ghost.ts:9)",
             ["src/lib/match.ts", "src/lib/match.test.ts"])
@@ -3305,7 +3235,7 @@ class TestAttribution:
         실제로 그랬고 사람이 되돌렸다 — 오배정의 대가가 「라운드 하나」가
         아니라 **프로덕션 코드 오염**이다 (백로그 27).
         """
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         f = {"id": "F-1", "kind": "test", "owner": "ambiguous", "sig": "t1",
              "file": "src/lib/match.test.ts",
              "frames": ["src/lib/match.test.ts"]}
@@ -3315,7 +3245,7 @@ class TestAttribution:
 
     def test_앱_프레임이_섞이면_기본_역할이_먼저다(self, repo, config):
         """면제가 아니라 **전부** 테스트 파일일 때의 규칙이다."""
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         f = {"id": "F-1", "kind": "test", "owner": "ambiguous", "sig": "t2",
              "file": "src/lib/match.test.ts",
              "frames": ["src/lib/match.test.ts", "src/lib/match.ts"]}
@@ -3330,7 +3260,7 @@ class TestAttribution:
         r1 과 같은 역할을 다시 받고 `impl` 은 한 번도 안 시도된 채 계약
         결함이 된다 — [[ADR-H023]]·M33 이 막으려던 모양 그대로다.
         """
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         flip = {}
         only_test = {"id": "F-1", "kind": "test", "owner": "ambiguous",
                      "sig": "t3", "file": "src/lib/match.test.ts",
@@ -3550,6 +3480,16 @@ def _gate(repo, fixture, **kw):
     return cli.run_gate_cmd(repo, phase="04", replay=str(fixture), **kw)
 
 
+def _finished_run(repo, run_id, closed_at, ran):
+    """완주 런 하나를 `_workspace/runs/` 에 세운다 — 04 가 테스트 수 하한을 읽는 곳."""
+    d = repo / "_workspace" / "runs" / run_id
+    d.mkdir(parents=True, exist_ok=True)
+    s = {"run_id": run_id, "run_status": "done", "closed_at": closed_at}
+    if ran is not None:
+        s["tests"] = {"ran": ran}
+    (d / "state.json").write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8")
+
+
 class TestRulesFired:
     """어떤 어댑터 규칙이 **판정을 냈는가** — 불린 것과 결정한 것은 다르다.
 
@@ -3559,13 +3499,13 @@ class TestRulesFired:
     """
 
     def test_컴파일_기록은_정규식이_매칭됐다는_증거다(self, repo, config):
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         log = "src/lib/match.ts(9,3): error TS2322: Type 'string' is not assignable."
         got = attr.attribute_compile(adapter, config, set(), log)
         assert attr.rules_fired(adapter, got) == {"compile_error_regex"}
 
     def test_심볼_강제는_따로_센다(self, repo, config):
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         log = ("src/lib/match.test.ts(3,10): error TS2305: "
                "Module './match' has no exported member 'matchTitle'.")
         got = attr.attribute_compile(adapter, config, {"matchTitle"}, log)
@@ -3574,7 +3514,7 @@ class TestRulesFired:
 
     def test_앱_프레임이_잡혀야_접두와_glob_이_결정한_것이다(self, repo, config):
         """단언이 아닌 예외 + 앱 프레임 — `first_app_frame` 이 값을 내는 유일한 경로."""
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         units = [{"unit": "u", "file": "src/lib/match.test.ts", "ftype": "TypeError",
                   "message": "boom", "detail": "at src/lib/match.ts:4"}]
         got = attr.attribute_tests(adapter, config, set(), units,
@@ -3585,7 +3525,7 @@ class TestRulesFired:
 
     def test_테스트_프레임만_있으면_아무것도_결정하지_않았다(self, repo, config):
         """banana 21건이 전부 이 모양이었다 — 관측 0 이어야 한다."""
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         units = [{"unit": "u", "file": "src/lib/match.test.ts",
                   "ftype": "AssertionError", "message": "expected 1 to be 0",
                   "detail": "at src/lib/match.test.ts:9"}]
@@ -3594,16 +3534,16 @@ class TestRulesFired:
         assert attr.rules_fired(adapter, got) == set()
 
     def test_못_읽은_대체_기록은_규칙이_아니다(self, repo):
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         assert attr.rules_fired(adapter, [{"kind": "stage", "frames": []}]) == set()
 
     def test_실패가_없으면_증거도_없다(self, repo):
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         assert attr.rules_fired(adapter, []) == set()
 
     def test_어댑터가_선언하지_않은_규칙은_관측되지_않는다(self, repo):
         """선언이 없으면 그 규칙은 돌 수가 없다 — 관측에도 나오면 안 된다."""
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         adapter["attribution"] = dict(adapter["attribution"])
         adapter["attribution"]["symbol_not_found_patterns"] = []
         got = attr.rules_fired(adapter, [{"kind": "compile", "in_contract": True}])
@@ -3742,14 +3682,39 @@ class TestGateReplay:
         assert not (after.get("counters") or {}).get("repair")
 
     def test_shrank_tests_block(self, gated, fxdir):
-        """테스트가 삭제·스킵된 것을 잡는다."""
+        """직전 완주 런의 테스트 수 × 0.9 가 하한이다 — 삭제·스킵을 잡는다."""
         repo, paths, s = gated
+        _finished_run(repo, "prev", "2026-01-01T00:00:00+0900", ran=1300)
         fx = make_fixture(fxdir, "tests-shrank", dict(ALL_PASS), tests=100)
         env = _gate(repo, fx)
         report = json.loads((paths.run_dir / "04_gate_report.json")
                             .read_text(encoding="utf-8"))
         assert report["tests"]["status"] == "shrank"
+        assert report["tests"]["expected_min"] == 1170
+        assert report["tests"]["source"] == "previous_run"
         assert env["exit"] in (4, 5, 10)
+
+    def test_no_finished_run_means_no_floor(self, gated, fxdir):
+        """새 클론의 첫 런은 하한이 없다 — 0 이 아니라 None 이고 `ok` 다."""
+        repo, paths, s = gated
+        fx = make_fixture(fxdir, "no-floor", dict(ALL_PASS), tests=100)
+        env = _gate(repo, fx)
+        report = json.loads((paths.run_dir / "04_gate_report.json")
+                            .read_text(encoding="utf-8"))
+        assert report["tests"]["expected_min"] is None
+        assert report["tests"]["status"] == "ok"
+        assert env["exit"] == 0, env["render"]
+
+    def test_floor_skips_finished_runs_without_a_test_count(self, gated, fxdir):
+        """docs 레인처럼 full 이 안 돈 완주 런이 감지를 끄지 않는다."""
+        repo, paths, s = gated
+        _finished_run(repo, "older", "2026-01-01T00:00:00+0900", ran=1300)
+        _finished_run(repo, "newer", "2026-01-02T00:00:00+0900", ran=None)
+        fx = make_fixture(fxdir, "skip-docs-run", dict(ALL_PASS), tests=100)
+        _gate(repo, fx)
+        report = json.loads((paths.run_dir / "04_gate_report.json")
+                            .read_text(encoding="utf-8"))
+        assert report["tests"]["expected_min"] == 1170
 
     def test_infra_pattern_escalates_without_spending_the_counter(self, gated, fxdir):
         repo, paths, s = gated
@@ -4253,7 +4218,7 @@ class TestFalsePositiveResolution:
                 {"reporter": "sec", "total": 3, "repaired": 1, "deferred": 1,
                  "false_positive": 1, "warn_only": 0,
                  "dropped_by_enforcement": 0}]}},
-            {"partial": False}, [])
+            [])
         assert "리뷰어별 해소" in text
         assert "| `sec` | 3 | 1 | 1 | 1 |" in text
 
@@ -5087,7 +5052,7 @@ def _load(repo):
 
 
 def _trace(repo, contract_path, **kw):
-    config, adapter, _cal = _load(repo)
+    config, adapter = _load(repo)
     return tr.run(repo, config, adapter, contract_path, **kw)
 
 
@@ -5275,7 +5240,7 @@ class TestContractTraceErrorsAndEntrypoints:
 
     def test_no_resolver_skips_only_that_check(self, repo):
         """스킵을 통과로 적지 않는다. 나머지 4종은 수행한다."""
-        config, adapter, _cal = _load(repo)
+        config, adapter = _load(repo)
         adapter = dict(adapter)
         adapter.pop("entrypoint_resolver", None)
         got = tr.run(repo, config, adapter, _write_contract(repo))
@@ -5350,7 +5315,7 @@ class TestContractTraceAdapterConventions:
 
     def test_어댑터가_관례를_선언하지_않으면_종전_동작이다(self, repo):
         rel = self._route_file(repo, "analyze")
-        config, adapter, _cal = _load(repo)
+        config, adapter = _load(repo)
         adapter = json.loads(json.dumps(adapter))
         adapter["entrypoint_resolver"].pop("implied_exports", None)
         adapter["entrypoint_resolver"].pop("param_styles", None)
@@ -5423,7 +5388,7 @@ class TestConventionFilesBeyondTheEntrypointMap:
 
     def test_어댑터가_관례_글롭을_선언하지_않으면_종전_동작이다(self, repo):
         rel = self._write(repo, "src/app/items/page.tsx", self.PAGE)
-        config, adapter, _cal = _load(repo)
+        config, adapter = _load(repo)
         adapter = json.loads(json.dumps(adapter))
         adapter["entrypoint_resolver"].pop("convention_globs", None)
         got = tr.run(repo, config, adapter, _write_contract(repo), changed=[rel])
@@ -5462,7 +5427,7 @@ class TestConventionFilesBeyondTheEntrypointMap:
         """
         rel = self._write(repo, "src/lib/shapes.ts",
                           "export type ItemRow = { id: string }\n")
-        config, adapter, _cal = _load(repo)
+        config, adapter = _load(repo)
         adapter = json.loads(json.dumps(adapter))
         adapter.setdefault("attribution", {})["public_symbol_regex"] = (
             r"^\s*export\s+(?:type|const)\s+(?P<name>[^\W\d][\w$]*)")
@@ -5946,7 +5911,7 @@ class TestContractTraceUntestedEntrypoint:
         assert got["entrypoints_unresolved"] == ["POST /api/analyze"]
 
     def test_no_resolver_skips_it(self, repo):
-        config, adapter, _cal = _load(repo)
+        config, adapter = _load(repo)
         adapter = dict(adapter)
         adapter.pop("entrypoint_resolver", None)
         got = tr.run(repo, config, adapter, _write_contract(repo), changed=[])
@@ -6007,7 +5972,7 @@ class TestContractTraceAuthzUntested:
 
     def test_adapter_without_pattern_skips_with_a_reason(self, repo):
         _route(repo, "analyze", "expect(res.status).toBe(200)\n")
-        config, adapter, _cal = _load(repo)
+        config, adapter = _load(repo)
         adapter = json.loads(json.dumps(adapter))
         adapter["attribution"].pop("authz_denied_pattern", None)
         got = tr.run(repo, config, adapter, _write_contract(repo, self.TAGGED),
@@ -6028,7 +5993,7 @@ class TestContractTraceAuthzUntested:
 class TestContractTraceNoContract:
 
     def test_no_contract_mode_is_recorded_not_passed(self, repo):
-        config, adapter, _cal = _load(repo)
+        config, adapter = _load(repo)
         got = tr.run(repo, config, adapter, None, no_contract=True)
         assert got["status"] == "skipped_no_contract"
         assert got["findings"] == []
@@ -6444,93 +6409,6 @@ class TestPrecheckInfra:
         assert "sk-비밀값-12345" not in json.dumps(got, ensure_ascii=False)
 
 
-def _done_run(repo, run_id, closed_at, adapter="nextjs-ts", phases=None,
-              statuses=None, rules=None):
-    """완주 런 하나를 `_workspace/runs/` 에 상태로 세운다.
-
-    `phases` 는 페이즈 id 목록이고 전부 `passed` 다 — `statuses` 로 일부를
-    덮는다. 완주 판정(`run_status: done`)과 페이즈 상태는 다른 사실이다.
-    `rules` 는 04 가 적은 귀속 규칙 관측이다 ([[ADR-H069]]) — 기본은 전부 봤다.
-    """
-    d = repo / "_workspace" / "runs" / run_id
-    d.mkdir(parents=True, exist_ok=True)
-    ph = {pid: {"status": (statuses or {}).get(pid, "passed")}
-          for pid in (phases or [])}
-    if "04-gate" in ph:
-        ph["04-gate"]["attribution_rules"] = list(
-            harness.ADAPTER_RULE_NAMES if rules is None else rules)
-    (d / "state.json").write_text(json.dumps({
-        "run_id": run_id, "run_status": "done", "closed_at": closed_at,
-        "adapter": {"id": adapter}, "phases": ph}, ensure_ascii=False),
-        encoding="utf-8")
-    return d
-
-
-class TestPrecheckCalibrationStale:
-    """[[ADR-H047]] 결정 2 — 캘리브레이션 뒤 완주 런이 쌓이면 `precheck` 가 말한다.
-
-    `calibration.json` 은 2026-09-13 에 한 번 측정됐고 그 뒤 15런 동안 테스트가
-    113 → 652 개로 늘었는데 아무도 재측정을 권하지 않았다. 표시다 — 등급은
-    내리지 않는다. 그래서 `GAP_REASONS` 에 있되 `NON_DEMOTING_GAPS` 다.
-    """
-
-    AFTER = "2026-02-%02dT00:00:00+0900"     # 픽스처 measured_at 은 2026-01-01
-    BEFORE = "2025-12-%02dT00:00:00+0900"
-
-    def _runs(self, repo, n, fmt=None):
-        for i in range(n):
-            _done_run(repo, "r%d" % i, (fmt or self.AFTER) % (i + 1))
-
-    def test_기준_미만이면_조용하다(self, repo):
-        _branch(repo, "feat-x")
-        _bulk_change(repo, 1)
-        self._runs(repo, pc.CALIBRATION_STALE_RUNS - 1)
-        got = pc.run(repo, scope="pr")
-        assert "calibration_stale" not in got["gaps"], got["gaps"]
-
-    def test_기준_이상이면_gap_이고_등급은_그대로다(self, repo, request_file):
-        _branch(repo, "feat-x")
-        _bulk_change(repo, 1)
-        self._runs(repo, pc.CALIBRATION_STALE_RUNS)
-        got = pc.run(repo, scope="pr")
-        assert "calibration_stale" in got["gaps"], got["gaps"]
-        assert got["exit"] == 0, "표시이지 실패가 아니다"
-        cal = [c for c in got["checks"] if c["name"] == "캘리브레이션"]
-        assert cal and cal[0]["ok"] and cal[0]["stale_runs"] == \
-            pc.CALIBRATION_STALE_RUNS, cal
-
-        cli.run_init(repo, "x", request_file)
-        env = cli.run_precheck(repo, scope="pr")
-        _, s = st.load(repo, env["run_id"])
-        assert "calibration_stale" in s["gaps"], s["gaps"]
-        assert s.get("grade") is None, "등급을 내리지 않는다 — 표시다"
-        assert "calibrate" in env["render"], env["render"]
-
-    def test_측정_전의_런은_세지_않는다(self, repo):
-        _branch(repo, "feat-x")
-        _bulk_change(repo, 1)
-        self._runs(repo, pc.CALIBRATION_STALE_RUNS, fmt=self.BEFORE)
-        got = pc.run(repo, scope="pr")
-        assert "calibration_stale" not in got["gaps"], got["gaps"]
-
-    def test_미측정이면_검사하지_않는다(self, repo):
-        """템플릿 자신은 영구 미측정이다 (ADR-H039) — 거기서 이 gap 이 나면 소음이다."""
-        _branch(repo, "feat-x")
-        _bulk_change(repo, 1)
-        cal = repo / "harness" / "calibration.json"
-        data = json.loads(cal.read_text(encoding="utf-8"))
-        data["measured_at"] = None
-        cal.write_text(json.dumps(data), encoding="utf-8")
-        self._runs(repo, pc.CALIBRATION_STALE_RUNS + 2)
-        got = pc.run(repo, scope="pr")
-        assert "calibration_stale" not in got["gaps"], got["gaps"]
-
-    def test_보고서가_재측정을_권한다(self, repo):
-        s = {"gaps": ["calibration_stale"], "grade": "PASS"}
-        assert "calibrate" in rep_mod.explain_gap("calibration_stale")
-        assert "calibration_stale" in rep_mod.NON_DEMOTING_GAPS
-
-
 class TestStageNotApplicable:
     """[[ADR-H047]] 추기 — 스택에 **구조적으로 없는** 스테이지는 부재와 다른 사실이다.
 
@@ -6561,7 +6439,6 @@ class TestStageNotApplicable:
 
     def test_비강등_판정은_하나의_함수다(self):
         assert rep_mod.is_non_demoting("stage_na:docs")
-        assert rep_mod.is_non_demoting("calibration_stale")
         assert not rep_mod.is_non_demoting("stage_absent:e2e")
         assert not rep_mod.is_non_demoting("attribution_unparsed"),             "파싱이 깨진 것은 표시가 아니라 결함이다"
         assert rep_mod.gap_reason("stage_na:docs"), "어휘에 있어야 보고서가 설명한다"
@@ -10364,49 +10241,6 @@ class TestPromoteFlush:
         assert all(p["status"] in ("applied", "rejected", "skipped")
                    for p in s["promotions"])
 
-    # ---- 테스트 수 하한은 런이 갱신한다 (ADR-H047)
-    #
-    # 파일럿 15런 전부 `tests.expected_min: 14`, `source: calibration` 이었다 —
-    # 2026-09-13 의 1회 캘리브레이션(16개) 뒤 테스트가 652개까지 늘었는데
-    # `tests_ran_floor` 는 14 에 못 박혀 급감 감지가 사실상 꺼져 있었다.
-    # `promote --flush` 는 07 에서 런당 정확히 한 번 도는 자리라 여기서 올린다.
-
-    def _flush_with_tests(self, repo, request_file, phases, ran):
-        run_id, _p = _staged_authz(repo, request_file, phases)
-        _pp, s = st.load(repo, run_id)
-        if ran is None:
-            s.pop("tests", None)
-        else:
-            s["tests"] = {"ran": ran, "expected_min": 1262, "status": "ok",
-                          "source": "calibration"}
-        st.save(_pp, s)
-        env = cli.run_promote(repo, flush=True, run_id=run_id)
-        assert env["exit"] == 0
-        cal = harness._read_json(repo / "harness" / "calibration.json")
-        return run_id, env, cal
-
-    def test_flush_가_하한을_단조_증가로_올린다(self, repo, request_file, phases):
-        run_id, env, cal = self._flush_with_tests(repo, request_file, phases, 2000)
-        assert cal["derived"]["tests_ran_floor"] == 1800
-        assert cal["derived"]["tests_ran_source"] == {"run_id": run_id, "ran": 2000}
-        assert env["data"]["tests_ran_floor"] == {"from": 1262, "to": 1800}
-
-    def test_줄어든_수로는_내리지_않는다(self, repo, request_file, phases):
-        _r, env, cal = self._flush_with_tests(repo, request_file, phases, 500)
-        assert cal["derived"]["tests_ran_floor"] == 1262
-        assert "tests_ran_source" not in cal["derived"]
-        assert env["data"]["tests_ran_floor"] is None
-
-    def test_테스트_신호가_없으면_건드리지_않는다(self, repo, request_file, phases):
-        _r, env, cal = self._flush_with_tests(repo, request_file, phases, None)
-        assert cal["derived"]["tests_ran_floor"] == 1262
-        assert env["data"]["tests_ran_floor"] is None
-
-    def test_올린_하한을_다음_게이트가_읽는다(self, repo, request_file, phases):
-        self._flush_with_tests(repo, request_file, phases, 2000)
-        _c, _a, cal = adapters.load(repo)
-        assert adapters.derived(cal, "tests_ran_floor") == 1800
-
 
 # ---------------------------------------------------------------------------
 # Q. review07 — 생략 조건은 결정론이다. 봇이 없으면 생략이 성립하지 않는다
@@ -11779,7 +11613,7 @@ class TestReport08:
         """못 잰 것을 0 으로 채우지 않는다 (`_tbl` 의 규율과 동형)."""
         run_id, _paths = _enter_08(repo, request_file, phases)
         _p, s = st.load(repo, run_id)
-        text, _missing = rep_mod.build(s, {}, {}, [], None)
+        text, _missing = rep_mod.build(s, {}, [], None)
         assert "소요 시간은 미측정이다" in text
         assert "벽시계(대기 포함)" not in text
 
@@ -11814,8 +11648,8 @@ class TestGapVocabulary:
 
     파일럿 40dc(FR-014) 의 08 보고서가 `stage_no_selector:scoped` 를
     "어휘에 없는 사유다 (보고서가 설명하지 못한다)" 로 적었다 — gate.py 가
-    만드는 사유 다섯(`stage_no_selector` · `scoped_degenerate` ·
-    `uncalibrated_run` · `test_report_missing` · `tests_ran_zero`)이 어휘에
+    만드는 사유 넷(`stage_no_selector` · `scoped_degenerate` ·
+    `test_report_missing` · `tests_ran_zero`)이 어휘에
     없었다. 08-report.md 도 "gaps[] 의 어휘가 열거형으로 정의돼 있지 않다" 를
     명시적 미규정으로 적어 뒀다. 이 테스트가 그 열거를 강제한다 — 새 gap 을
     만드는 코드는 여기서 먼저 깨진다.
@@ -11865,9 +11699,9 @@ class TestGapVocabulary:
         import pr as pr_mod
         assert pr_mod._gap_display("cross_verify:fallback") != "cross_verify:fallback"
 
-    def test_gate_가_만드는_다섯_사유가_설명된다(self):
+    def test_gate_가_만드는_네_사유가_설명된다(self):
         for gap in ("stage_no_selector:scoped", "scoped_degenerate",
-                    "uncalibrated_run", "test_report_missing", "tests_ran_zero"):
+                    "test_report_missing", "tests_ran_zero"):
             assert "어휘에 없는 사유" not in rep_mod.explain_gap(gap), gap
 
 
@@ -13319,7 +13153,7 @@ class TestTriageMiss:
             FIVE_UNIT_CONTRACT, encoding="utf-8")
         cli.run_next(repo, run_id=paths.run_id)
         _, after = st.load(repo, paths.run_id)
-        text, _missing = rep_mod.build(after, {}, {}, [])
+        text, _missing = rep_mod.build(after, {}, [])
         line = next(l for l in text.splitlines() if l.startswith("| 프로파일"))
         assert "빗나감" in line and "00 예측 small" in line, line
         assert "| 00 트리아지" in text and "machine → small" in text, text
@@ -13385,7 +13219,7 @@ class TestModelTierRouting:
         paths, s = _init(repo, SOURCE_REQUEST)
         cli.run_next(repo, run_id=paths.run_id)
         _, after = st.load(repo, paths.run_id)
-        text, _missing = rep_mod.build(after, {}, {}, [])
+        text, _missing = rep_mod.build(after, {}, [])
         assert "| 지시된 모델 등급" in text and "sonnet: 1" in text, text
 
     def test_lint_warns_when_an_agent_file_pins_a_model(self, repo, phases):
@@ -13606,7 +13440,7 @@ class TestContractTraceJourneys:
             assert self._got(repo) == [], body
 
     def test_03_도_같은_검사를_센다(self, repo):
-        config, adapter, _cal = _load(repo)
+        config, adapter = _load(repo)
         p = _write_contract(repo, JOURNEY_CONTRACT)
         _route(repo, "analyze", "expect(body.code).toBe('MATCH_EMPTY')\n")
         req = tr.required_tests(repo, config, adapter, p)
@@ -13923,7 +13757,7 @@ class TestUiAttribution:
         assert self._ladder(config, self.F, None)[:3] == ["impl", "test", "contract"]
 
     def test_게이트가_디스패치_기록을_넘긴다(self, repo, config):
-        _c, adapter, _cal = adapters.load(repo)
+        _c, adapter = adapters.load(repo)
         state = {"phases": {"03-implement": {"dispatched_roles": ["impl", "test", "ui"]}}}
         report = {"failed": {"id": "full", "exit": 1, "output": "boom"}}
         owners = []
@@ -14324,7 +14158,7 @@ class TestReviewDepth:
         assert s["review05"]["depth"] == "diff+refs"
         s.update({"run_id": "r", "slug": "x", "grade": "PASS", "phases": {},
                   "counters": {}, "budget": {}, "profile": {"name": "normal"}})
-        text, _missing = rep_mod.build(s, {}, {}, [])
+        text, _missing = rep_mod.build(s, {}, [])
         assert "05 리뷰 범위" in text and "diff+refs" in text, text
 
 

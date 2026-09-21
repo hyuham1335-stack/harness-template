@@ -363,7 +363,7 @@ python scripts/pipeline/cli.py resume --ack --answer-file <경로>   # 잠금 �
   레인별로 정한 결정론이고, 실행기가 검증할 수 없는 지시라 네가 바꾸면 아무도
   모른다. effort 도 같다 — 프론트매터가 정하고 너는 넘길 수단이 없다
 - **계약을 역할 에이전트에게 쓰게 하지 마라.** 이유: 메인 단독 소유다
-- **`harness/config.json` · `harness/adapters/*` · `harness/calibration.json` 을
-  고치지 마라.** 이유: 게이트가 검사할 기준을 게이트를 통과하려고 고치는 것이다
+- **`harness/config.json` · `harness/adapters/*` 를 고치지 마라.** 이유: 게이트가
+  검사할 기준을 게이트를 통과하려고 고치는 것이다
 - **실패를 요약해 없애지 마라.** 이유: 스킵·미측정·미검증이 보고서에 드러나는 것이
   이 파이프라인의 존재 이유다
