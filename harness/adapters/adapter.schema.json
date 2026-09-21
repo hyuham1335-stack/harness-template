@@ -5,7 +5,6 @@
   "type": "object",
   "required": [
     "id",
-    "verified",
     "runner",
     "stages",
     "test_report"
@@ -15,10 +14,6 @@
     "id": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9-]*$"
-    },
-    "verified": {
-      "description": "실제 프로젝트에서 완주시킨 뒤에만 true. false면 doctor 가 경고하고 첫 런을 미캘리브레이션으로 표기한다.",
-      "type": "boolean"
     },
     "requires": {
       "description": "이 어댑터를 쓸 수 있는 리포인가. doctor 가 /feature 진입 전에 검사한다.",

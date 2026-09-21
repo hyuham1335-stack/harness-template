@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Harness 계약 계층 CLI — init · doctor · calibrate.
+"""Harness 계약 계층 CLI — init · doctor.
 
 하네스는 프로젝트의 언어를 쓰지 않는다. python stdlib 만으로 돌아가므로
 의존성·빌드 산출물이 깨진 상태에서도 게이트가 동작한다.
@@ -7,14 +7,10 @@
 Usage:
     python scripts/harness.py doctor
     python scripts/harness.py init --adapter nextjs-ts --name my-app [--force]
-    python scripts/harness.py calibrate [--stage <name>] [--select <test-name>]
-    python scripts/harness.py verify-adapter [--min-runs N]
 
 종료 코드:
     0  통과 (경고는 허용한다 — 단, 전부 출력에 드러난다)
     2  미통과. 무엇이 어긋났는지 출력에 명시된다
-    3  verify-adapter 의 완주 런이 기준에 못 미친다. 아무것도 바꾸지 않는다
-   10  calibrate 중 스테이지가 실패했다. 잰 값을 쓰지 않는다
 
 순차 step 실행기는 이 템플릿에 없다 (ADR-H037). 8페이즈 실행기는
 scripts/pipeline/cli.py 다.
@@ -22,14 +18,11 @@ scripts/pipeline/cli.py 다.
 
 import argparse
 import json
-import math
 import os
 import re
 import shutil
 import subprocess
 import sys
-import time
-from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -42,12 +35,9 @@ ADAPTER_SCHEMA_REL = "harness/adapters/adapter.schema.json"
 CONTRACT_TEMPLATE_REL = "harness/templates/contract.md"
 PHASES_DIR_REL = "harness/phases"
 # 런 디렉터리. `state.py` 가 이 값을 그대로 쓴다 — 완주 런을 세는 쪽
-# (`completed_runs`)이 이 층에 있어야 precheck 와 verify-adapter 가 같은 것을
-# 센다. state 는 harness 를 import 하므로 역방향은 안 된다.
+# (`completed_runs`)이 이 층에 있어야 다른 층이 같은 것을 센다. state 는
+# harness 를 import 하므로 역방향은 안 된다.
 RUNS_REL = "_workspace/runs"
-# 어댑터 `verified` 를 올리는 완주 런 수의 바닥 (ADR-H047 결정 3). 미검증
-# 초기값이다 — 2차 파일럿 15런이 전부 01~08 `passed` 였으므로 즉시 충족된다.
-ADAPTER_VERIFY_MIN_RUNS = 3
 
 # 어댑터 `attribution` 의 규칙 이름 = 어댑터 필드명. 승격 판정이 **선언**과
 # **관측**을 같은 어휘로 대조한다 (ADR-H069). 관측을 내는 쪽은
@@ -383,13 +373,13 @@ def run_doctor(root):
     if config is None:
         _skip_rest(report, ["어댑터", "어댑터 전제조건", "러너 바이너리", "스테이지 명령",
                             "스킵될 스테이지", "역할", "소유 경계", "메인 소유 경계",
-                            "계약 절 ↔ 템플릿", "VCS", "경로 길이", "캘리브레이션 상태"])
+                            "계약 절 ↔ 템플릿", "VCS", "경로 길이", "테스트 리포트"])
         return report
 
     adapter = _check_adapter(root, config, report)
     if adapter is None:
         _skip_rest(report, ["어댑터 전제조건", "러너 바이너리", "스테이지 명령", "스킵될 스테이지",
-                            "캘리브레이션 상태"])
+                            "테스트 리포트"])
     else:
         _check_adapter_requires(root, adapter, report)
         _check_runner_bin(root, adapter, report)
@@ -404,7 +394,7 @@ def run_doctor(root):
     _check_vcs(root, config, report)
     _check_path_limit(root, config, report)
     if adapter is not None:
-        _check_calibration(root, config, adapter, report)
+        _check_test_report(root, adapter, report)
 
     return report
 
@@ -522,13 +512,6 @@ def _check_adapter(root, config, report):
         except (ValueError, SchemaError):
             stale.append(other.name)
     notes = []
-    if not adapter.get("verified"):
-        notes.append("verified:false 다 — 지금은 정적으로 검사한 것까지만 참이다. "
-                     "완주 런 %d 이상 **그리고** 어댑터가 선언한 귀속 규칙이 전부 실물 "
-                     "실패에서 판정을 낸 뒤에 `python scripts/harness.py verify-adapter` "
-                     "가 올린다 (ADR-H069). 완주만으로는 올라가지 않는다 — 그 필드들은 "
-                     "실패를 분류할 때만 불린다."
-                     % ADAPTER_VERIFY_MIN_RUNS)
     if stale:
         notes.append("다른 어댑터가 스키마를 어긴다: %s" % ", ".join(stale))
 
@@ -803,7 +786,6 @@ def _check_path_limit(root, config, report):
     slug = "x" * 40
     candidates = [
         config["contract"]["path_template"].replace("{slug}", slug),
-        config.get("calibration_file", ""),
     ]
     too_long = []
     for rel in [c for c in candidates if c]:
@@ -818,21 +800,9 @@ def _check_path_limit(root, config, report):
         report.add("경로 길이", "PASS", "하네스가 만들 경로가 %d자 이내" % PATH_LIMIT)
 
 
-def _check_calibration(root, config, adapter, report):
-    """캘리브레이션은 '실측이 있는가'만 본다.
-
-    어댑터의 verified 여부는 여기가 아니라 어댑터 검사에 있다 — 둘은 다른 것이다.
-    실측을 했다고 어댑터가 검증된 것이 아니고, 그 반대도 아니다.
-    """
+def _check_test_report(root, adapter, report):
+    """테스트 리포트를 셀 수 있는가 — 빈 스위트의 초록불을 막는 유일한 신호다."""
     notes = []
-    calibration_rel = config.get("calibration_file")
-    calibration = _load_calibration(root, config)
-
-    if calibration_rel and calibration is None:
-        notes.append("%s 가 없다 — 미캘리브레이션 런이다. 타임아웃·백그라운드 회귀 여부·"
-                     "테스트 수 하한이 실측이 아니라 보수적 기본값으로 간다. "
-                     "`python scripts/harness.py calibrate` 로 잰다." % calibration_rel)
-
     globs = adapter["test_report"]["glob"]
     matched = [p for g in globs for p in root.glob(g)]
     if adapter["test_report"]["format"] == "none":
@@ -842,54 +812,19 @@ def _check_calibration(root, config, adapter, report):
         notes.append("test_report.glob(%s) 매칭 0건 — 아직 테스트를 한 번도 돌리지 않았거나 "
                      "리포트 경로 설정이 어긋난 것이다. 게이트 전에 한 번 돌려 확인하라."
                      % ", ".join(globs))
-
     if notes:
-        report.add("캘리브레이션 상태", "WARN", "\n".join("- " + n for n in notes))
+        report.add("테스트 리포트", "WARN", "\n".join("- " + n for n in notes))
         return
-
-    # 셋을 한 칸에 뭉개지 않는다 — 없는 것(absent) · 모르는 것(unmeasured) ·
-    # 옛 값(stale)은 다른 사실이고, 뭉개면 "이번에 못 쟀다"가 "잰 적 없다"로
-    # 읽힌다 (M14). state 가 없는 옛 파일은 skipped 로 갈라 읽는다.
-    by_state = {"measured": [], "stale": [], "unmeasured": [], "absent": []}
-    for name, entry in calibration["stages"].items():
-        state = entry.get("state")
-        if state not in by_state:
-            state = "unmeasured" if entry.get("skipped") else "measured"
-        by_state[state].append(name)
-
-    derived = calibration.get("derived", {})
-
-    def _names(key):
-        return ", ".join(sorted(by_state[key])) or "없음"
-
-    body = ("%s 기준 실측 — 측정 %d종(%s) · 옛 값 %d종(%s) · 미측정 %d종(%s) · 없음 %d종(%s)\n"
-            "정책: 백그라운드 전체 회귀 %s · full 타임아웃 %ss · 테스트 수 하한 %s · "
-            "재시도 상한 %s"
-            % (calibration.get("measured_at", "?"),
-               len(by_state["measured"]), _names("measured"),
-               len(by_state["stale"]), _names("stale"),
-               len(by_state["unmeasured"]), _names("unmeasured"),
-               len(by_state["absent"]), _names("absent"),
-               "ON" if derived.get("background_full_regression") else "OFF",
-               derived.get("full_timeout_sec", "?"),
-               derived.get("tests_ran_floor", "미측정"),
-               derived.get("retry_budget") or "미측정(MAX_RETRIES 바닥값)"))
-
-    if by_state["stale"]:
-        report.add("캘리브레이션 상태", "WARN",
-                   body + "\n- 옛 값을 쓰는 스테이지가 있다 — 이번 런에서 재지 못했다. "
-                          "그 값에서 유도된 정책은 그만큼 오래된 것이다")
-        return
-    report.add("캘리브레이션 상태", "PASS", body)
+    report.add("테스트 리포트", "PASS",
+               "test_report.glob(%s) 매칭 %d건" % (", ".join(globs), len(matched)))
 
 
 def completed_runs(root):
     """완주(`run_status: done`)한 런의 state 목록, `closed_at` 순.
 
     `_workspace/` 는 gitignore 라 **로컬에만 있는 자료**다 — 새 클론에서는
-    0 이다. 그래서 이것으로 굳히는 판정(verify-adapter)은 결과를 파일에 적고,
-    표시만 하는 판정(calibration_stale)은 등급을 안 건드린다 (ADR-H047).
-    깨진 state 파일은 건너뛴다 — 세지 못한 런은 없는 런이다.
+    0 이다. 그래서 여기서 유도하는 값(04 의 테스트 수 하한)은 없을 수 있고,
+    없으면 없다고 적는다. 깨진 state 파일은 건너뛴다 — 세지 못한 런은 없는 런이다.
     """
     runs = Path(root) / RUNS_REL
     if not runs.is_dir():
@@ -905,181 +840,10 @@ def completed_runs(root):
     return sorted(out, key=lambda s: s.get("closed_at") or "")
 
 
-def phase_ids(root):
-    """`harness/phases/*.md` 의 stem. 페이즈 파일의 `id` 와 같다."""
-    d = Path(root) / PHASES_DIR_REL
-    if not d.is_dir():
-        return []
-    return sorted(p.stem for p in d.glob("*.md"))
+# ------------------------------------------------------------------ 스테이지
 
-
-def _classify_runs(root, adapter_id, ids):
-    """완주 런을 [(run_id, [])] 자격 · [(run_id, passed 아닌 페이즈)] 탈락으로 가른다.
-
-    `skipped` 는 세지 않는다: 정책 생략은 관측이 없었던 것이다. 다른 어댑터로
-    돈 런도 세지 않는다.
-    """
-    qualified, rejected = [], []
-    for s in completed_runs(root):
-        if ((s.get("adapter") or {}).get("id")) != adapter_id:
-            continue
-        phases = s.get("phases") or {}
-        bad = [pid for pid in ids if (phases.get(pid) or {}).get("status") != "passed"]
-        (rejected if bad else qualified).append((s.get("run_id"), bad))
-    return qualified, rejected
-
-
-def qualified_runs(root, adapter_id):
-    """`verify-adapter` 가 세는 런의 id — 08 보고서가 "기준 충족" 을 같은 셈으로 말한다."""
-    ids = phase_ids(root)
-    if not ids:
-        return []
-    return [r for r, _ in _classify_runs(root, adapter_id, ids)[0]]
-
-
-def observed_rules(root, adapter_id):
-    """완주 런들이 04 에 적어 둔 귀속 규칙의 합집합.
-
-    한 런이 규칙 전부를 겪을 필요는 없다 — 드문 경로는 드물게 온다. `_workspace/`
-    는 로컬 자료라 새 클론에서는 빈 집합이고, 그래서 이것으로 굳히는 판정은
-    결과를 파일에 적는다 (ADR-H047 · ADR-H069).
-    """
-    out = set()
-    for s in completed_runs(root):
-        if ((s.get("adapter") or {}).get("id")) != adapter_id:
-            continue
-        node = (s.get("phases") or {}).get("04-gate") or {}
-        out |= set(node.get("attribution_rules") or [])
-    return out
-
-
-def required_rules(adapter):
-    """어댑터가 **선언한** 규칙만 요구한다 — 없는 규칙은 돌 수가 없다."""
-    att = adapter.get("attribution") or {}
-    return set(r for r in ADAPTER_RULE_NAMES if att.get(r))
-
-
-def run_verify_adapter(root, min_runs=ADAPTER_VERIFY_MIN_RUNS, now=None):
-    """완주 런 ≥ `min_runs` 이고 그 런들이 페이즈 전부를 `passed` 로 지났으면
-    어댑터 `verified` 를 `true` 로 올린다 (ADR-H047 결정 3).
-
-    ROADMAP §6 의 "일부러 실패를 만들지 않는다" 와 충돌하지 않는다 — 실패를
-    만든 것이 아니라 완주를 셌다. `skipped` 는 세지 않는다: 정책 생략은 관측이
-    없었던 것이다. 다른 어댑터로 돈 런도 세지 않는다.
-
-    어댑터 스키마가 새 키를 막으므로(`additionalProperties: false`) 근거는
-    기존 `_verified_note` 에 적고, `calibration.json` 이 있으면 거기에
-    `adapter_verified` · `adapter_verified_source` 를 함께 굳힌다 — 08 표가
-    읽는 값이 어댑터 파일과 어긋나지 않도록. 반환: 0 올림 · 3 미달 · 2 설정 결손.
-    """
-    root = Path(root)
-    config = _read_json(root / CONFIG_REL)
-    adapter_id = config["adapter"]
-    path = root / ADAPTER_DIR_REL / ("%s.json" % adapter_id)
-    adapter = _read_json(path)
-    ids = phase_ids(root)
-    if not ids:
-        print("  %s 에 페이즈 파일이 없다 — 무엇을 완주라 부를지 모른다." % PHASES_DIR_REL)
-        return 2
-
-    qualified, rejected = _classify_runs(root, adapter_id, ids)
-
-    print("\n  verify-adapter — %s" % adapter_id)
-    print("  완주 런 %d · 그중 %s 전부 passed 인 런 %d / 기준 %d"
-          % (len(qualified) + len(rejected), "%s~%s" % (ids[0], ids[-1]),
-             len(qualified), min_runs))
-    for run_id, bad in rejected:
-        print("  - %s: passed 가 아닌 페이즈 — %s" % (run_id, ", ".join(bad)))
-    observed = observed_rules(root, adapter_id)
-    required = required_rules(adapter)
-    missing = sorted(required - observed)
-    print("  귀속 규칙 — 선언 %d · 실물 실패에서 판정을 낸 것 %d"
-          % (len(required), len(required & observed)))
-    for rule in missing:
-        print("  - %s: 아직 아무것도 결정한 적이 없다" % rule)
-    if len(qualified) < min_runs or missing:
-        print("  기준 미달 — 어댑터를 바꾸지 않았다. verified 는 %s 그대로다."
-              % json.dumps(bool(adapter.get("verified"))))
-        return 3
-
-    stamp = now or datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
-    run_ids = [r for r, _ in qualified]
-    adapter["verified"] = True
-    rule_list = ", ".join(sorted(required))
-    adapter["_verified_note"] = (
-        "verify-adapter: 완주 런 %d (%s) · %s — %s 전부 passed 이고, 어댑터가 "
-        "선언한 귀속 규칙(%s)이 **전부 실물 실패에서 판정을 냈다** (ADR-H069). "
-        "일부러 만든 실패가 아니라 관측이다."
-        % (len(run_ids), ", ".join(run_ids), stamp, "%s~%s" % (ids[0], ids[-1]),
-           rule_list))
-    path.write_text(json.dumps(adapter, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8")
-    print("  올림: %s → verified: true" % path.relative_to(root).as_posix())
-
-    cal_rel = config.get("calibration_file")
-    cal_path = root / cal_rel if cal_rel else None
-    if cal_path is not None and cal_path.is_file():
-        try:
-            cal = _read_json(cal_path)
-        except ValueError:
-            cal = None
-        if isinstance(cal, dict):
-            cal["adapter_verified"] = True
-            cal["adapter_verified_source"] = {"runs": run_ids, "at": stamp,
-                                              "rules": sorted(required)}
-            cal_path.write_text(json.dumps(cal, indent=2, ensure_ascii=False) + "\n",
-                                encoding="utf-8")
-            print("  갱신: %s → adapter_verified: true" % cal_rel)
-    return 0
-
-
-def _load_calibration(root, config):
-    rel = config.get("calibration_file")
-    if not rel:
-        return None
-    path = root / rel
-    if not path.is_file():
-        return None
-    try:
-        data = _read_json(path)
-    except ValueError:
-        return None
-    return data if isinstance(data, dict) and "stages" in data else None
-
-
-# ------------------------------------------------------------------ calibrate
-#
-# 목표 파이프라인의 정책(백그라운드 회귀 여부·타임아웃·테스트 수 하한)은 전부
-# 실측값의 함수다. 이 명령이 그 실측을 만든다. 재지 않은 것은 재지 않았다고
-# 적는다 — "미측정"과 "0"을 같은 칸에 쓰지 않는 것이 이 파일의 전부다.
-
+# 이름 8종은 코어가 고정한다. 명령만 스택이 정한다.
 STAGE_ORDER = ["compile", "lint", "check", "scoped", "full", "e2e", "build", "docs"]
-
-DEFAULT_FULL_TIMEOUT_FLOOR = 300
-FULL_TIMEOUT_FACTOR = 4
-TESTS_FLOOR_RATIO = 0.9
-
-# 재시도 상한을 실측에서 유도하기 위한 상수 (ADR-H007).
-# 이만큼의 step 이 attempts 를 남기기 전에는 retry_budget 을 내지 않는다 —
-# 표본 3개로 상한을 정하는 것은 상수를 박는 것과 다르지 않다.
-RETRY_RECORD_MIN = 10
-# 유도된 상한의 바닥. 1이면 자가 교정 장치 자체가 없어진다.
-RETRY_BUDGET_FLOOR = 2
-
-
-def _subprocess_runner(stage, cmd, cwd, timeout_sec):
-    """기본 러너. 테스트는 이것을 쓰지 않는다 — 실제 빌드 도구를 돌리지 않기 위해."""
-    started = time.monotonic()
-    try:
-        result = subprocess.run(cmd, cwd=str(cwd), capture_output=True,
-                                text=True, encoding="utf-8", timeout=timeout_sec)
-        code = result.returncode
-    except subprocess.TimeoutExpired:
-        code = 124
-    except OSError as exc:
-        print("  실행할 수 없다: %s (%s)" % (" ".join(cmd), exc))
-        code = 127
-    return code, round(time.monotonic() - started, 2)
 
 
 def _resolve_bin(root, name):
@@ -1195,250 +959,13 @@ def _junit_failed_units(root_el):
 def _parse_junit(root, adapter):
     """junit XML 에서 테스트 수를 읽는다. 없으면 (None, None, None, False).
 
-    calibrate 가 쓰는 좁은 시각. 정본은 parse_test_report 다.
+    좁은 시각이다. 정본은 parse_test_report 다.
     """
     if adapter["test_report"]["format"] != "junit-xml":
         return None, None, None, False
     r = _junit_report(root, adapter)
     return r["ran"], r["suites"], r["failures"], r["matched"]
 
-
-def _collect_retry(root):
-    """phases/*/index.json 에서 step 별 attempts 를 모은다.
-
-    execute.py 가 attempts 를 남기기 전에 끝난 step 은 **미기록**이다.
-    "재시도 0회"라고 적지 않는다 — 파일럿 20 step 이 실제로 재시도 없이
-    통과했다는 것은 콘솔을 지켜본 사람의 기억이고 데이터가 아니었다.
-    """
-    recorded, unrecorded, retried, observed = 0, 0, 0, None
-    phases_dir = Path(root) / "phases"
-    for index_file in sorted(phases_dir.glob("*/index.json")):
-        try:
-            steps = _read_json(index_file).get("steps") or []
-        except (OSError, ValueError):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            attempts = step.get("attempts")
-            if isinstance(attempts, int) and attempts >= 1:
-                recorded += 1
-                observed = attempts if observed is None else max(observed, attempts)
-                if attempts > 1:
-                    retried += 1
-            elif step.get("status") in ("completed", "error"):
-                # 끝났는데 attempts 가 없다 = 기록 이전에 돈 step.
-                unrecorded += 1
-    return {
-        "steps_recorded": recorded,
-        "steps_unrecorded": unrecorded,
-        "steps_retried": retried,
-        "max_attempts_observed": observed,
-    }
-
-
-def _derive_policy(stages, config, retry=None):
-    """상수를 함수로 바꾸는 지점. 입력이 없으면 정책도 '미측정'이다."""
-    full = stages.get("full", {})
-    sec = full.get("sec")
-    tests_ran = full.get("tests_ran")
-    threshold = config.get("background_threshold_sec", 180)
-
-    derived = {
-        "background_threshold_sec": threshold,
-        "background_full_regression": None,
-        "full_timeout_sec": None,
-        "tests_ran_floor": None,
-        "retry_budget": None,
-    }
-    if sec is not None:
-        derived["background_full_regression"] = sec > threshold
-        derived["full_timeout_sec"] = max(DEFAULT_FULL_TIMEOUT_FLOOR,
-                                          int(math.ceil(sec * FULL_TIMEOUT_FACTOR)))
-    if tests_ran:
-        derived["tests_ran_floor"] = int(math.floor(tests_ran * TESTS_FLOOR_RATIO))
-
-    # 표본이 충분할 때만 상한을 낸다. 그전에는 실행기가 MAX_RETRIES 를
-    # 바닥값으로 쓴다 — 실측이 없으면 정책도 없다.
-    if retry and retry["steps_recorded"] >= RETRY_RECORD_MIN:
-        observed = retry["max_attempts_observed"] or 1
-        derived["retry_budget"] = max(RETRY_BUDGET_FLOOR, observed + 1)
-    return derived
-
-
-def _probe_infra(adapter):
-    """env 프로브는 존재 여부만 남긴다. 값은 절대 기록하지 않는다 —
-    calibration.json 은 커밋 대상이므로 여기에 시크릿이 실리면 리포로 샌다."""
-    infra = {}
-    for probe in adapter.get("infra_preflight", []):
-        if probe["kind"] == "env":
-            infra[probe["name"]] = bool(os.environ.get(probe.get("var", "")))
-    return infra
-
-
-def _prior_stages(target):
-    """이전 calibration 의 스테이지 항목. 없으면 빈 dict.
-
-    옛 값을 방금 잰 척하지 않는다 — 잰 시각을 항목마다 남긴다.
-    """
-    if not target.exists():
-        return {}
-    try:
-        prior = _read_json(target)
-    except (ValueError, OSError):
-        return {}
-    if not prior:
-        return {}
-    out = {}
-    for name, entry in (prior.get("stages") or {}).items():
-        if isinstance(entry, dict):
-            entry = dict(entry)
-            entry.setdefault("measured_at", prior.get("measured_at"))
-            out[name] = entry
-    return out
-
-
-def run_calibrate(root, stage=None, select=None, runner=None, now=None, replace=False):
-    root = Path(root)
-    runner = runner or _subprocess_runner
-
-    report = run_doctor(root)
-    if report.exit_code != 0:
-        print(report.text())
-        print("\n  calibrate 거부 — doctor 가 통과하지 않았다. "
-              "어긋난 설정으로 잰 값은 근거가 아니다.")
-        return 2
-
-    config = _read_json(root / CONFIG_REL)
-    adapter = _read_json(root / ADAPTER_DIR_REL / ("%s.json" % config["adapter"]))
-    cwd = root / (adapter["runner"].get("cwd") or ".")
-
-    targets = [stage] if stage else STAGE_ORDER
-    unknown = [s for s in targets if s not in adapter["stages"]]
-    if unknown:
-        print("ERROR: 어댑터에 없는 스테이지: %s" % ", ".join(unknown))
-        return 2
-
-    stages = {}
-    failed = []
-    for name in targets:
-        spec = adapter["stages"][name]
-        if not spec.get("cmd"):
-            na = str(spec.get("not_applicable") or "").strip()
-            stages[name] = {"sec": None, "skipped": True,
-                            "state": "na" if na else "absent",
-                            "reason": ("cmd:null — 해당 없음: %s" % na) if na
-                            else "cmd:null — 이 스택에 없는 스테이지"}
-            continue
-        if name == "scoped" and not select:
-            stages[name] = {"sec": None, "skipped": True, "state": "unmeasured",
-                            "reason": "선택 대상 없음 — 계약이 있어야 측정된다. "
-                                      "--select <test-name> 으로 수동 측정할 수 있다"}
-            continue
-
-        argv = _stage_argv(root, adapter, name, select)
-        print("  재는 중: %-8s %s" % (name, " ".join(argv)))
-        code, seconds = runner(name, argv, cwd, spec.get("timeout_sec", 600))
-        entry = {"sec": seconds, "ok": code == 0, "exit_code": code}
-        if name == "full":
-            tests, suites, failures, matched = _parse_junit(root, adapter)
-            entry.update({"tests_ran": tests, "suites": suites, "failures": failures})
-        stages[name] = entry
-        if code != 0:
-            failed.append("%s (exit %d)" % (name, code))
-
-    if failed:
-        print("\n  calibrate 실패 — 스테이지가 통과하지 못했다: %s" % ", ".join(failed))
-        print("  빨간 트리에서 잰 값은 캘리브레이션이 아니다. "
-              "%s 를 쓰지 않는다." % config.get("calibration_file", "calibration.json"))
-        return 10
-
-    _, _, _, report_matched = _parse_junit(root, adapter)
-    stamp = now or datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
-    target = root / config["calibration_file"]
-
-    # 이번에 실제로 잰 것에만 이번 시각을 단다. 못 잰 칸에 stamp 를 달면
-    # "언제 잰 값인가"가 사라진다.
-    for entry in stages.values():
-        if entry.get("skipped"):
-            entry.setdefault("state", "unmeasured")
-        else:
-            entry["state"] = "measured"
-            entry["measured_at"] = stamp
-
-    prior_stages = _prior_stages(target) if not replace else {}
-
-    # M14 — 못 잰 것이 잰 것을 지우지 않는다.
-    #
-    # `--select` 없이 전체 calibrate 를 돌리면 scoped 가 "선택 대상 없음"으로
-    # 건너뛰어지는데, 그것이 런 #4 의 실측 21.81s 를 덮었다. **M9 의 형제다**
-    # — 그때는 부분이 전체를 덮었고 이번엔 전체가 부분을 덮었다. 셋을 구분한다:
-    #   absent     — cmd:null. 이 스택에 **없는** 것
-    #   unmeasured — 이번에 못 쟀고 옛 값도 없다. **모르는** 것
-    #   stale      — 이번에 못 쟀지만 옛 실측이 있다. **옛** 값 (sec 보존)
-    for name, entry in list(stages.items()):
-        if entry.get("state") != "unmeasured":
-            continue
-        old_entry = prior_stages.get(name)
-        if not old_entry or old_entry.get("sec") is None:
-            continue
-        revived = dict(old_entry)
-        revived["skipped"] = True
-        revived["state"] = "stale"
-        revived["stale_reason"] = entry.get("reason")
-        stages[name] = revived
-
-    # 부분 측정은 그 스테이지만 갱신한다. 통째로 덮어쓰면 나머지 실측이
-    # 사라지고 derived 의 정책이 전부 null 이 된다 — 실측이 정책의 유일한
-    # 근거인 구조에서 되돌릴 방법은 재측정뿐이다 (파일럿 런 #3 M9).
-    # 전체 교체는 --replace 로 명시했을 때만 한다.
-    if stage and prior_stages:
-        merged = dict(prior_stages)
-        merged.update(stages)
-        stages = merged
-
-    retry = _collect_retry(root)
-    payload = {
-        "measured_at": stamp,
-        "adapter": adapter["id"],
-        "adapter_verified": bool(adapter.get("verified")),
-        "partial": (any(name not in stages for name in STAGE_ORDER)
-                    or any((stages.get(n) or {}).get("state") == "stale"
-                           for n in STAGE_ORDER)),
-        "stages": stages,
-        "retry": retry,
-        "report_glob_matched": report_matched,
-        "infra": _probe_infra(adapter),
-        "derived": _derive_policy(stages, config, retry),
-    }
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print("\n  생성: %s" % config["calibration_file"])
-    d = payload["derived"]
-    full_sec = stages.get("full", {}).get("sec")
-    if full_sec is None:
-        print("  정책 — full 미측정이라 백그라운드 회귀·타임아웃을 결정하지 못했다. "
-              "부분 캘리브레이션이다.")
-    else:
-        print("  정책 — 백그라운드 전체 회귀 %s (full %ss vs 임계 %ss) · full 타임아웃 %ss · "
-              "테스트 수 하한 %s"
-              % ("ON" if d["background_full_regression"] else "OFF",
-                 full_sec, d["background_threshold_sec"],
-                 d["full_timeout_sec"], d["tests_ran_floor"] or "미측정"))
-
-    if d["retry_budget"] is None:
-        print("  재시도 상한 — 미측정 (attempts 기록 %d step · 미기록 %d step, "
-              "%d 이상이어야 유도한다). 실행기가 MAX_RETRIES 를 바닥값으로 쓴다."
-              % (retry["steps_recorded"], retry["steps_unrecorded"], RETRY_RECORD_MIN))
-    else:
-        print("  재시도 상한 — %d회 (기록 %d step 중 재시도 %d건 · 최대 시도 %d회)"
-              % (d["retry_budget"], retry["steps_recorded"], retry["steps_retried"],
-                 retry["max_attempts_observed"] or 1))
-    return 0
-
-
-# ----------------------------------------------------------------------- init
 
 def run_init(root, adapter, name, force=False):
     root = Path(root)
@@ -1485,26 +1012,10 @@ def main(argv=None):
     p_init.add_argument("--name", required=True)
     p_init.add_argument("--force", action="store_true")
 
-    p_cal = sub.add_parser("calibrate", help="스테이지를 1회씩 실측해 calibration.json 을 쓴다")
-    p_cal.add_argument("--stage", help="이 스테이지만 잰다")
-    p_cal.add_argument("--select", help="scoped 스테이지의 테스트 선택자")
-    p_cal.add_argument("--replace", action="store_true",
-                       help="--stage 와 함께: 기존 실측을 병합하지 않고 통째로 교체한다")
-
-    p_ver = sub.add_parser("verify-adapter",
-                           help="완주 런 수로 어댑터 verified 를 올린다 (ADR-H047)")
-    p_ver.add_argument("--min-runs", type=int, default=ADAPTER_VERIFY_MIN_RUNS,
-                       help="필요한 완주 런 수 (기본 %d)" % ADAPTER_VERIFY_MIN_RUNS)
-
     args = parser.parse_args(argv)
 
-    if args.cmd == "verify-adapter":
-        return run_verify_adapter(ROOT, min_runs=args.min_runs)
     if args.cmd == "init":
         return run_init(ROOT, adapter=args.adapter, name=args.name, force=args.force)
-    if args.cmd == "calibrate":
-        return run_calibrate(ROOT, stage=args.stage, select=args.select,
-                             replace=args.replace)
     if args.cmd == "doctor":
         report = run_doctor(ROOT)
         print("\n  harness doctor — %s" % ROOT)

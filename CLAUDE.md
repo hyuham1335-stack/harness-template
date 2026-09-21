@@ -33,13 +33,11 @@
 | `/docs/ARCHITECTURE.md` | 디렉토리 구조, 패턴, 데이터 흐름, 상태 관리 |
 | `/docs/ADR.md` | 기술 선택의 배경과 트레이드오프 |
 | `/docs/UI_GUIDE.md` | 디자인 원칙, 색상, 컴포넌트, 레이아웃, 타이포그래피 |
-| `/docs/PIPELINE-LOG.md` | 파이프라인이 이 프로젝트에서 무엇을 했나 — `/log` 가 §5 에 쓴다 |
+| `/docs/PIPELINE-LOG.md` | 파이프라인이 이 프로젝트에서 무엇을 했나 — 런 보고서(08)를 근거로 사람이 적는다 |
 
 `docs/harness/`는 하네스 템플릿 자체의 문서다 (`ROADMAP.md` — 승격 로드맵, `DECISIONS.md` — `ADR-H` 결정 기록, `PILOT-LOG.md` — 런별 실측 기록). 프로젝트 작업 중에는 **읽기만 하고 고치지 않는다.**
 
-하네스 구조(`harness/phases/` 8페이즈 · `scripts/pipeline/` 실행기 · `.claude/agents/` 역할 · `.claude/skills/*-reviewer/` 리뷰어)와 진입점 `/feature` · `/log` 는 `README.md` 의 표가 단일 출처다. 여기 중복해서 적지 않는다.
-
-`docs/pipeline-ledger.jsonl` 은 세션 훅이 append 하는 원장이라 클론에서는 작업 트리에 늘 수정 상태로 보인다. 되돌리거나 stash 하지 말 것 — `/log` 가 읽는다.
+하네스 구조(`harness/phases/` 8페이즈 · `scripts/pipeline/` 실행기 · `.claude/agents/` 역할 · `.claude/skills/*-reviewer/` 리뷰어)와 진입점 `/feature` 는 `README.md` 의 표가 단일 출처다. 여기 중복해서 적지 않는다.
 
 ## 스택 · 배포
 
@@ -91,7 +89,6 @@
 ```
 python scripts/pipeline/cli.py doctor         # 설정·경계·전제조건 검사
 python scripts/pipeline/cli.py lint-phases    # 페이즈 파일 정합
-python scripts/harness.py calibrate           # 스테이지 1회 실측 → calibration.json
 python -m pytest scripts/                     # 하네스 자신의 테스트
 ```
 

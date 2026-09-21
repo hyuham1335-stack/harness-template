@@ -77,7 +77,6 @@ COUNTER_REASONS = (
     "review_blocking",        # 05 의 Critical/Major 를 수리한다
     "format_reject",          # 제출이 규약을 어겨 되돌아왔다 — 수리가 아니다
     "external_change_requested",  # 07 의 외부 변경 요청
-    "manual",                 # `retry` — 사람이 사유를 따로 적는다
 )
 
 # 닫힌 어휘다. budget.model_calls 가 봉투의 지시에서 유도되므로, 어휘가
@@ -217,7 +216,6 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
     paths.request.write_bytes(raw)
 
     config = harness._read_json(root / harness.CONFIG_REL)
-    adapter, calibration = _adapter_and_calibration(root, config)
 
     s = {
         "schema": 1,
@@ -232,9 +230,7 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
             "bytes": len(raw),
         },
         "profile": _initial_profile(profile),
-        "adapter": {"id": config.get("adapter"),
-                    "verified": bool((adapter or {}).get("verified"))},
-        "calibration": _calibration_summary(calibration),
+        "adapter": {"id": config.get("adapter")},
         "vcs": {"baseline": _vcs_baseline(root)},
         "phase": "00-triage",
         "phases": {},
@@ -304,30 +300,6 @@ def note_model_instruction(s, key, tier):
     node = s.setdefault("models", _models_node())
     node.setdefault("instructed", {})[key] = tier
     return node
-
-
-def _adapter_and_calibration(root, config):
-    adapter = calibration = None
-    try:
-        adapter = harness._read_json(
-            root / harness.ADAPTER_DIR_REL / ("%s.json" % config["adapter"]))
-    except (OSError, ValueError, KeyError):
-        pass
-    cal_rel = config.get("calibration_file")
-    if cal_rel:
-        try:
-            calibration = harness._read_json(root / cal_rel)
-        except (OSError, ValueError):
-            pass
-    return adapter, calibration
-
-
-def _calibration_summary(calibration):
-    if calibration is None:
-        return {"present": False}
-    return {"present": True,
-            "partial": bool(calibration.get("partial")),
-            "adapter_verified": bool(calibration.get("adapter_verified"))}
 
 
 def _cross_verify_init(config):
@@ -479,27 +451,6 @@ def _parse_stamp(value):
         return datetime.strptime(value, STAMP_FORMAT)
     except ValueError:
         return None
-
-
-def session_touched_run(born, updated, start, end):
-    """이 세션이 그 런을 **만졌는가**. 판정할 수 없으면 `None` (M59).
-
-    귀속을 **한 시점**으로 보면 안 된다. 세션 창은 `[직전 원장 줄의 ts, 이
-    줄의 ts]` 이고 런 구간은 `[created_at, updated_at]` 이며, 둘은 서로를
-    가로지른다 — P8 은 17:20 에 시작해 다음날 01:08 에 닫혔고 세션 둘이
-    걸쳐 있어서 `updated_at` 만 보면 앞 세션이 통째로 빠진다.
-
-    `start` 가 `None` 인 것은 **판정 불가가 아니다** — 원장 첫 줄이라 앞
-    경계가 없을 뿐이고 창이 열려 있다. 판정 불가는 런의 구간을 모르는
-    경우(`born`·`updated` 부재)이고, 그때 `latest_only` 로 단정하면 못 잰
-    것이 "무관하다" 는 주장으로 바뀐다 ([[ADR-H007]]).
-
-    **쓰는 쪽(`session_log`)과 읽는 쪽(`cost-state`)이 같은 함수를 부른다.**
-    같은 식을 두 곳이 각자 쓰면 갈라지고, 그때 원장이 자기와 모순된다.
-    """
-    if born is None or updated is None or end is None:
-        return None
-    return born <= end and (start is None or updated > start)
 
 
 def phase_durations(paths):

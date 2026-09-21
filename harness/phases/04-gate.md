@@ -25,9 +25,7 @@
       {"id": "lint"},
       {"id": "check"},
       {"id": "scoped", "tests_from": "contract", "loop_stage": true},
-      {"id": "full", "once_after_loop": true,
-       "background": "${calibration.derived.background_full_regression}",
-       "join_before": "06-pr", "assert_tests_ran": true},
+      {"id": "full", "once_after_loop": true, "assert_tests_ran": true},
       {"id": "e2e"},
       {"id": "build"},
       {"id": "docs"}

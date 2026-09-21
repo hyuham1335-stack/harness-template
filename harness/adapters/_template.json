@@ -3,7 +3,6 @@
   "_rule": "어댑터는 선언만 한다. 분기 로직이 필요해지면 그건 코어에 빠진 개념이라는 신호이므로 필드를 늘리지 말고 코어에 스테이지·신호를 추가한다.",
 
   "id": "template",
-  "verified": false,
 
   "_requires": "이 어댑터를 쓸 수 있는 리포인지 doctor 가 /feature 진입 전에 확인한다. kind: file | dir | json_key.",
   "requires": [],
@@ -11,7 +10,7 @@
   "_runner": "bin 은 adapter.schema.json 의 화이트리스트 enum 안에서만 고른다. 목록을 늘리려면 스키마를 고친다 — 실행기 코드가 아니라. npm·pnpm·yarn 처럼 러너가 매니페스트에 선언된 스크립트를 `<verb> <script>` 로 부르는 스택이면 script_manifest 를 선언한다 (예: {file: package.json, pointer: scripts, verb: run}). 선언하지 않으면 doctor 가 스테이지 명령의 스크립트 존재 검사를 '검사 안 함'으로 보고한다 — 통과가 아니다. make 처럼 그 개념이 없는 러너는 선언하지 않는 것이 맞다.",
   "runner": {"bin": "make", "common_args": [], "cwd": "."},
 
-  "_stages": "이름 8종은 코어가 고정한다. 명령만 스택이 정한다. 없는 스테이지는 cmd:null — '스킵됨'으로 기록되며 통과가 아니다.",
+  "_stages": "이름 8종은 코어가 고정한다. 명령만 스택이 정한다. 없는 스테이지는 cmd:null — '스킵됨'으로 기록되며 통과가 아니다. 스테이지마다 timeout_sec(초)을 선언한다 — 없으면 600 이다.",
   "stages": {
     "compile": {"cmd": null},
     "lint": {"cmd": null},

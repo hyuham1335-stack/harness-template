@@ -50,7 +50,7 @@ def replay_runner(fixture_dir):
     return run
 
 
-def run_gate(root, config, adapter, calibration, state, phase_front,
+def run_gate(root, config, adapter, state, phase_front,
              run_dir, only_stage=None, replay=None, log_path=None):
     """게이트 한 회차. 반환은 리포트 dict 이고 상태를 고치지 않는다."""
     root = Path(root)
@@ -80,7 +80,7 @@ def run_gate(root, config, adapter, calibration, state, phase_front,
         in_loop = bool(step.get("loop_stage")) or _before_loop_end(steps, sid)
         if loop_failed and in_loop:
             break
-        result = _run_one(root, adapter, calibration, sid, step, changed,
+        result = _run_one(root, adapter, sid, step, changed,
                           parsed, repo_files, runner, log_path)
         results.append(result)
         if result["state"] == "skipped":
@@ -91,7 +91,7 @@ def run_gate(root, config, adapter, calibration, state, phase_front,
             if (phase_front.get("gate") or {}).get("fail_fast", True):
                 break
 
-    tests = _tests_signal(root, adapter, calibration, results, report_root)
+    tests = _tests_signal(root, adapter, results, report_root)
     if tests:
         # **`ran is None`(리포트를 못 찾았다)과 `ran == 0`(테스트가 0개다)은
         # 다른 사실이다.** 앞의 것은 경로 설정 오류일 수 있어 인프라로 다루고,
@@ -107,9 +107,6 @@ def run_gate(root, config, adapter, calibration, state, phase_front,
                      "entrypoints": len(parsed.get("entrypoints") or []) if parsed else 0,
                      "unmatched": (parsed or {}).get("unmatched") or [],
                      "scope": (parsed or {}).get("scope")},
-        "calibration": {"present": bool(calibration),
-                        "partial": bool((calibration or {}).get("partial")),
-                        "adapter_verified": bool(adapter.get("verified"))},
         "rules_inactive": attr.rules_inactive(adapter),
     }
     # **scoped 가 사실상 full 이면 그렇게 부르지 않는다.** 선택자를 넓히면
@@ -117,10 +114,6 @@ def run_gate(root, config, adapter, calibration, state, phase_front,
     # 도는 것은 M16 이 잰 절감이 사라진 것이고, 아무도 모른다.
     if parsed and (parsed.get("scope") or {}).get("degenerate"):
         gaps.append("scoped_degenerate")
-    if not calibration:
-        gaps.append("uncalibrated_run")
-    if not adapter.get("verified"):
-        gaps.append("adapter_unverified")
     if tests is not None:
         report["tests"] = tests
 
@@ -160,7 +153,7 @@ def _before_loop_end(steps, sid):
     return False
 
 
-def _run_one(root, adapter, calibration, sid, step, changed, parsed,
+def _run_one(root, adapter, sid, step, changed, parsed,
              repo_files, runner, log_path):
     hit = adapters.when_touched_hit(adapter, sid, changed)
     if hit is False:
@@ -175,8 +168,7 @@ def _run_one(root, adapter, calibration, sid, step, changed, parsed,
             return {"id": sid, "state": "skipped", "reason": "no_selector"}
 
     return adapters.run_stage(root, adapter, sid, select=select,
-                              log_path=log_path, calibration=calibration,
-                              runner=runner)
+                              log_path=log_path, runner=runner)
 
 
 def _selectors(root, adapter, parsed, repo_files):
@@ -199,7 +191,7 @@ def _parse_contract(root, config, state, replay):
     if text is None:
         return None
 
-    _config, adapter, _cal = adapters.load(root)
+    _config, adapter = adapters.load(root)
     parsed = contract_mod.parse(text, config)
     repo_files = None
     if replay:
@@ -218,7 +210,7 @@ def _parse_contract(root, config, state, replay):
     return parsed
 
 
-def _tests_signal(root, adapter, calibration, results, report_root):
+def _tests_signal(root, adapter, results, report_root):
     """**"테스트가 몇 개 돌았는가"를 별도 신호로 본다.**
 
     빈 테스트 스위트는 통과하고, 통과는 초록불로 보인다. 그래서 게이트가
@@ -229,13 +221,28 @@ def _tests_signal(root, adapter, calibration, results, report_root):
         return None                     # 안 돌았다. **0 을 만들지 않는다**
 
     got = adapters.parse_report(root, adapter, report_root)
-    sig = _tests_count(got, adapters.derived(calibration, "tests_ran_floor"))
+    sig = _tests_count(got, _tests_floor(root))
     if got.get("matched"):
         # 파일별 케이스 수 — 06 PR 본문의 검증 표가 읽는다 (ADR-H058 추기).
         # full 을 파싱하는 자리가 여기뿐이라 여기서 남긴다. 06 이 리포트를 다시
         # 읽으면 그 사이 scoped 가 덮어쓴 XML 을 full 의 실적으로 적는다.
         sig["by_file"] = got.get("by_file")
     return sig
+
+
+def _tests_floor(root):
+    """직전 완주 런의 `tests.ran` × 0.9. **없으면 None 이고 0 이 아니다.**
+
+    캘리브레이션 파일이 하한을 들고 있던 때는 파일럿 15런 동안 14 로 굳어
+    감지가 꺼져 있었다 — 값이 런과 같이 움직이게 완주 런에서 읽는다. `tests.ran`
+    이 없는 완주 런(docs 레인처럼 full 이 안 돈 런)은 건너뛴다. `_workspace/`
+    는 로컬 자료라 새 클론의 첫 런은 하한이 없다.
+    """
+    for s in reversed(harness.completed_runs(root)):
+        ran = (s.get("tests") or {}).get("ran")
+        if isinstance(ran, int) and ran > 0:
+            return ran * 9 // 10
+    return None
 
 
 def _tests_count(got, floor):
@@ -250,12 +257,12 @@ def _tests_count(got, floor):
     if floor is None:
         return {"ran": ran, "expected_min": None, "status": "ok",
                 "source": "report_glob",
-                "note": "미캘리브레이션 런 — 하한을 모른다"}
+                "note": "직전 완주 런이 없다 — 하한을 모른다"}
     if ran < floor:
         return {"ran": ran, "expected_min": floor, "status": "shrank",
-                "source": "calibration"}
+                "source": "previous_run"}
     return {"ran": ran, "expected_min": floor, "status": "ok",
-            "source": "calibration"}
+            "source": "previous_run"}
 
 
 # ------------------------------------------------------------------ 귀속

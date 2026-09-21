@@ -1,7 +1,5 @@
 {
   "id": "nextjs-ts",
-  "verified": false,
-  "_verified_note": "실제 프로젝트에서 01~04를 완주시킨 뒤에만 true 로 올린다 (ROADMAP 2단계). 지금은 doctor 가 정적으로 검사한 것까지만 참이다.",
 
   "requires": [
     {"kind": "file", "path": "package.json"},

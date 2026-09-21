@@ -7,11 +7,6 @@
 
 분업이 요점이다 — **표는 실행기가 조립하고 서술은 모델이 쓴다.** 특히 승격
 규칙 목록은 원장에서 자동으로 나오므로 **모델이 빠뜨릴 수 없다.**
-
-그리고 `## 캘리브레이션 상태` 가 필수 섹션인 이유가 이 리포에서 지금 그대로
-성립한다 — `calibration.json` 이 `partial: true` 이고 어댑터가
-`verified: false` 다. 보고서가 그것을 적지 않으면 런은 초록불로 끝나고 다음
-런이 같은 미검증 값을 물려받는다.
 """
 
 import re
@@ -23,7 +18,7 @@ sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))
 
 REQUIRED_SECTIONS = ("## 완료 등급", "## 승격된 규칙", "## 건너뛴 게이트",
-                     "## 비용과 시간", "## 캘리브레이션 상태")
+                     "## 비용과 시간")
 
 # 서술 필드의 하한 (ADR-H052 결정 5). `5568` 의 08 은 서술이 통째로 비었고
 # 그 런은 07 major 6건으로 최다였다 — 「왜 그랬는가는 이 런이 말하지 않았다」.
@@ -44,9 +39,6 @@ GAP_REASONS = {
                  "`not_applicable` 로 사유를 선언했다. 표시이고 등급은 "
                  "내리지 않는다 (ADR-H047 추기)"),
     "stage_not_touched": "그 스테이지가 볼 변경이 없었다",
-    "adapter_unverified": ("어댑터의 귀속 규칙이 실물 실패에서 판정을 낸 적이 "
-                           "없다 — 아직 안 겪어봤다는 표시이지 이번 런의 결함이 "
-                           "아니다. 등급은 내리지 않는다 (ADR-H069)"),
     "attribution_unparsed": ("스테이지가 실패했는데 귀속이 실패 항목을 하나도 "
                              "못 읽었다 — 어댑터의 파싱 규칙이 실물 출력에 "
                              "안 맞는다 (ADR-H069)"),
@@ -79,7 +71,6 @@ GAP_REASONS = {
                           "다르다. 전체 회귀로 낙하시키지 않았다"),
     "scoped_degenerate": ("scoped 선택자가 사실상 전체 회귀다 — 절감이 없는데 "
                           "\"scoped 통과\" 로 적히는 것을 막는다"),
-    "uncalibrated_run": "캘리브레이션 파일이 없다 — 타임아웃·테스트 수 하한을 모른다",
     "test_report_missing": ("테스트 리포트를 한 건도 찾지 못했다 — 리포터 "
                             "경로 설정 오류일 수 있어 인프라로 다룬다"),
     "tests_ran_zero": "테스트가 0개 돌았다 — 빈 스위트의 초록불은 통과가 아니다",
@@ -88,10 +79,6 @@ GAP_REASONS = {
     "run_record_missing": ("닫힌 런의 PR 갱신인데 런 기록 "
                            "`docs/harness/pipeline/runs/{run_id}.md` 가 diff 에 "
                            "없다 — 08 이 쓴 기록은 기능 PR 에 실린다 (ADR-H052)"),
-    "calibration_stale": ("캘리브레이션 측정 뒤 완주 런이 기준 이상 쌓였다 — "
-                          "게이트의 타임아웃·테스트 수 하한이 옛 실측이다. "
-                          "`python scripts/harness.py calibrate` 로 다시 잰다. "
-                          "표시이고 등급은 내리지 않는다 (ADR-H047)"),
     # 08 지시문 검토 (ADR-H056 추기). 앞 셋은 표시이고 등급을 내리지 않는다.
     "instruction_review_manual": ("08 지시문 검토를 스킬 없이 사람이 했다 — "
                                   "config 의 `instruction_review.skill` 이 null 이다"),
@@ -109,15 +96,11 @@ GAP_REASONS = {
 # `demote` 는 등급을 건드리지 않는다 — "관측 결손" 이 아니라 "사람이 할 일이
 # 밀렸다" 는 표시다 (ADR-H047 결정 2). 부르는 쪽(`cli.run_precheck`)이 이
 # 목록으로 가른다.
-# `adapter_unverified` 는 ADR-H069 에서 들어왔다. 이 gap 이 매 런 등급을 깎는
-# 압력 때문에 ADR-H047 결정 3 이 승격 기준을 "완주 런 3개" 로 낮췄다 — 완주는
-# 실패 경로의 근거가 아니다. 기준은 증거 기반으로 올리고 이 표시는 여기로 내린다.
 # `instruction_slot_over_budget` 은 ADR-H074 가 **걷어냈다** — 아무도 안 내는
 # 어휘를 남기면 그것이 곧 "어휘가 기계를 앞서는" M36 의 거울상이다. 숫자는
 # `_slots_cell` 이 계속 렌더한다.
-NON_DEMOTING_GAPS = ("calibration_stale", "instruction_review_manual",
-                     "instruction_slot_unmeasured",
-                     "instruction_changed", "adapter_unverified")
+NON_DEMOTING_GAPS = ("instruction_review_manual",
+                     "instruction_slot_unmeasured", "instruction_changed")
 
 
 def is_non_demoting(gap):
@@ -169,9 +152,7 @@ def pilot_log_section(state, timing, report_rel, number):
              "| 브랜치 | %s |" % ("`%s`" % pr["head"] if pr.get("head") else "미측정"),
              "| 대상 | 런 보고서 `%s` 의 계약 절을 본다 (계약은 06 에서 지워진다) |"
              % report_rel,
-             "| 어댑터 | `%s` (`verified: %s`) |"
-             % (adapter.get("id") or "미측정",
-                str(bool(adapter.get("verified"))).lower()),
+             "| 어댑터 | `%s` |" % (adapter.get("id") or "미측정"),
              "| 결과 | %s · gaps %d%s |"
              % (state.get("grade") or "미정", len(gaps),
                 (" (" + ", ".join(gaps) + ")") if gaps else ""),
@@ -468,21 +449,6 @@ def _models_cell(state):
         "\n".join("  - %s" % b for b in node.get("blind_spots") or []))
 
 
-def _cost_cell(cost):
-    """「비용(있으면)」. 값이 없으면 **`미계측`** 이라고 적는다 — 0 이 아니다.
-
-    `cmd_cost` 는 트랜스크립트의 `cost-state` 를 읽고, 08 을 돌리는 세션 자신은
-    아직 그 줄을 안 썼다 — 그래서 값이 있어도 **미완**이다 (ADR-H032 · H052).
-    파일럿 클론처럼 `cmd_cost` 가 없는 리포에서는 항상 `미계측` 이다.
-    """
-    if not cost or "cost_usd" not in cost:
-        return "미계측 — `cmd_cost` 가 값을 내지 못했다"
-    sessions = [c for c in (cost.get("sessions") or [])
-                if c.get("basis") == "touched"]
-    return "$%.2f (세션 %d · 읽지 못한 세션 %d · 08 세션은 미완이라 제외)" % (
-        cost["cost_usd"], len(sessions), cost.get("unread_sessions") or 0)
-
-
 def _counter_cell(node):
     """`used / max` 와, 지급이 있었으면 그 사실까지.
 
@@ -606,7 +572,7 @@ def _tbl(rows):
     return out
 
 
-def build(state, data, calibration, promotions, timing=None, cost=None):
+def build(state, data, promotions, timing=None):
     """보고서 마크다운. 반환: (text, missing_sections).
 
     **필수 섹션이 빠져도 파이프라인을 실패시키지 않는다** — 원장에 기록만
@@ -686,8 +652,6 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
         # **지시된 등급이지 실측이 아니다** (ADR-H044). 어느 모델이 돌았는지
         # 실행기는 보지 못한다 — blind spot 이 셀 안에 같이 적힌다.
         ("지시된 모델 등급", _models_cell(state)),
-        # 비용은 있으면 적고 없으면 `미계측` 이다. 0 으로 적지 않는다.
-        ("비용(있으면)", _cost_cell(cost)),
     ])
     lines += _timing_lines(timing)
 
@@ -744,42 +708,6 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
     lines += _declined_lines(state, data)
     lines.append("")
 
-    lines += ["## 캘리브레이션 상태", ""]
-    partial = calibration.get("partial")
-    verified = calibration.get("adapter_verified")
-    lines += _tbl([
-        ("측정 시각", calibration.get("measured_at")),
-        ("부분 측정(partial)", partial),
-        ("어댑터 verified", verified),
-    ])
-    notes = []
-    if partial:
-        notes.append("**`partial: true` 다** — 옛 값을 쓰는 스테이지가 있고, "
-                     "거기서 유도된 정책은 그만큼 오래된 것이다.")
-    if verified is False:
-        notes.append("**어댑터가 `verified: false` 다** — 실패 경로가 실물에서 "
-                     "돈 적이 없다. 이 런의 초록불은 그만큼만 말한다.")
-        ready = data.get("adapter_verify") or {}
-        missing = ready.get("rules_missing") or []
-        if missing:
-            # 완주 수만 보고 "명령 한 번만 치면 된다" 고 적으면 거짓말이다 —
-            # 그 상태로 치면 exit 3 이다 (ADR-H069).
-            notes.append("**귀속 규칙이 아직 판정을 낸 적 없다** — %s. "
-                         "이 규칙이 실물 실패에서 한 번 돌면 `verify-adapter` 가 "
-                         "근거와 함께 올린다." % ", ".join("`%s`" % m for m in missing))
-        elif ready.get("qualified", 0) >= ready.get("min_runs", 1) > 0:
-            notes.append("**기준 충족** — 전 페이즈 passed 완주 런 %d / 기준 %d 이고 "
-                         "귀속 규칙이 전부 실물에서 판정을 냈다. "
-                         "`python scripts/harness.py verify-adapter` 로 올린다 "
-                         "(ADR-H047 결정 3 · ADR-H069)." % (ready["qualified"],
-                                                           ready["min_runs"]))
-    if "calibration_stale" in gaps:
-        notes.append("**측정 뒤 완주 런이 기준 이상 쌓였다** (`calibration_stale`) — "
-                     "다음 런 전에 `python scripts/harness.py calibrate` 로 다시 "
-                     "잰다. 등급은 내리지 않았다 (ADR-H047).")
-    lines += ([""] + ["- %s" % n for n in notes] if notes
-              else ["", "- 캘리브레이션에 표시할 결손이 없다."])
-    lines.append("")
 
     lines += ["## 서술", ""]
     if narrative:

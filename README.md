@@ -40,7 +40,6 @@
 | **봉투**(envelope) | 실행기가 표준 출력으로 내보내는 JSON 객체 하나입니다. "지금 할 일" 과 "다음에 칠 명령" 이 들어 있습니다 |
 | **원장**(ledger) | 리뷰 지적을 append-only 로 쌓는 기록 파일입니다 |
 | **승격**(promote) | 반복해서 나온 지적을 린트 규칙 같은 자동 검사로 올리는 일입니다 |
-| **캘리브레이션**(calibration) | 각 스테이지의 실제 소요 시간을 한 번 재 두는 일입니다. 타임아웃 값이 여기서 나옵니다 |
 | **에스컬레이션**(escalation) | 자동으로 풀 수 없을 때 진행을 멈추고 사람에게 넘기는 일입니다 |
 | **`PASS_WITH_GAPS`** | "통과했지만 실행하지 못한 검사가 있다" 는 결과 등급입니다 |
 
@@ -51,8 +50,7 @@
    **규칙은 작업자가 실제로 읽어야 지켜집니다** ([ROADMAP](docs/harness/ROADMAP.md) §4).
 2. **순차 실행기 `scripts/execute.py` 는 들어 있지 않습니다.** 권한 승인을 건너뛴 채 모델을
    돌리는 방식이어서 제외했습니다 ([DECISIONS](docs/harness/DECISIONS.md) ADR-H005 · ADR-H037).
-3. **아직 검증되지 않은 부분이 있습니다.** 동봉된 어댑터의 `verified` 값과
-   `harness/calibration.json` 이 미검증 상태이고, 검증 현황은
+3. **아직 검증되지 않은 부분이 있습니다.** 검증 현황은
    [ROADMAP](docs/harness/ROADMAP.md) §6 의 표에 있습니다.
 
 ## 빠른 시작
@@ -61,8 +59,7 @@
 flowchart LR
     C["git clone"] --> D["CLAUDE.md · docs/ 채우기"]
     D --> I["harness.py init<br/>doctor 통과"]
-    I --> K["harness.py calibrate"]
-    K --> R["/feature 요청"]
+    I --> R["/feature 요청"]
 ```
 
 ### 1. 클론한 뒤 문서부터 채웁니다
@@ -122,16 +119,7 @@ python scripts/pipeline/cli.py doctor
 **exit 2 가 나오면 거기서 멈추고 FAIL 항목부터 고칩니다.** 경고는 통과시키되 전부
 출력합니다. 건너뛴 검사는 통과가 아니어서 마지막 보고서까지 따라갑니다.
 
-### 4. 캘리브레이션을 한 번 돌립니다
-
-각 스테이지를 한 번씩 실행해 소요 시간을 `harness/calibration.json` 에 기록합니다.
-타임아웃 값과 전체 테스트의 백그라운드 실행 여부가 여기서 나옵니다.
-
-```
-python scripts/harness.py calibrate
-```
-
-### 5. `/feature <요청>` 을 칩니다
+### 4. `/feature <요청>` 을 칩니다
 
 여기서부터는 파이프라인이 끌고 갑니다.
 
@@ -157,8 +145,7 @@ python scripts/harness.py calibrate
    진입점 테스트 검사에서 빠집니다 — E2E 스펙이 유닛 테스트의 부재를 가리지 않게 하려는 것입니다
 5. **`test_report.glob` 에는 E2E 리포트를 넣지 않습니다.** 테스트 수 신호는 전체 테스트(`full`)
    전용이고, 지난 런의 리포트가 이번에 안 돈 런의 실적이 됩니다
-6. **`python scripts/harness.py doctor` 와 `calibrate --stage e2e` 를 다시 돌립니다** — 타임아웃과
-   백그라운드 실행 여부가 실측에서 나옵니다
+6. **`python scripts/harness.py doctor` 를 다시 돌립니다**
 
 켜고 나면 이렇게 돕니다.
 
@@ -231,7 +218,6 @@ flowchart TD
 | `profiles/<어댑터>/config.json` | 미리 채워 둔 설정 프로필입니다. `harness.py init` 이 복사하면서 프로젝트 이름만 바꿔 넣습니다. 템플릿 `config.json` 과 키가 같아야 합니다 |
 | `phases/00~08.md` | 각 페이즈의 정의입니다. 문서 맨 위 JSON 에 요구(`requires`)·산출(`produces`)·재시도 상한(`loop`)이 적혀 있습니다 |
 | `templates/contract.md` | 계약 문서의 빈 틀입니다. 절 제목은 `config.json` 과 글자까지 같아야 하고, 다르면 `doctor` 가 미리 막습니다 |
-| `calibration.json` | `calibrate` 의 실측값과 거기서 나온 정책입니다. **"미측정" 과 "0초" 를 같은 칸에 쓰지 않습니다** |
 
 **어댑터는 스택 지식을 한 곳에 격리합니다.** 스테이지 이름 8개
 (`compile` · `lint` · `check` · `scoped` · `full` · `e2e` · `build` · `docs`)는 코어가
@@ -243,7 +229,7 @@ flowchart TD
 
 | 경로 | 무엇 |
 |---|---|
-| `harness.py` | 설정을 다루는 명령들입니다 — `init` · `doctor` · `calibrate` · `verify-adapter` |
+| `harness.py` | 설정을 다루는 명령들입니다 — `init` · `doctor` |
 | `pipeline/cli.py` | 8단계 파이프라인의 입구입니다. 명령을 해석하고, 페이즈 정의를 읽고, 진입 조건을 따지고, 결과를 JSON 으로 내보냅니다 |
 | `pipeline/state.py` | 런 폴더와 진행 상태, 이벤트 기록, 작업 트리 해시를 다룹니다. 상태 이름과 등급 이름이 이 파일 하나에서 나옵니다 |
 | `pipeline/adapters.py` | 어댑터를 읽고 스테이지를 실행합니다. 판정하거나 상태를 쓰지는 않습니다 |
@@ -262,7 +248,6 @@ flowchart TD
 | `pipeline/triage.py` | 00 입니다. 요청 원문의 경로 토큰과 글자 수만 읽어 레인을 예측합니다. 언어 키워드는 보지 않습니다 |
 | `pipeline/verdict.py` | 산출물이 조건을 맞췄는지 판정합니다. 요청이 동결됐는지, 요청 항목을 빠짐없이 덮었는지, 계획이 범위를 벗어나지 않았는지, 리뷰가 수렴했는지를 봅니다 |
 | `runtime.py` | 시각, 대화 기록 읽기, 출력 인코딩처럼 여러 곳이 함께 쓰는 도구입니다 |
-| `session_log.py` | 세션 종료 훅이 부르는 기록기입니다. **해석 없이 사실만 남깁니다.** 실패해도 세션을 막지 않고, 실패했다는 사실을 기록에 남깁니다. `--pending` 은 세션 시작 훅이 불러 미승격 세션 수를 한 줄 알립니다 — 0 이면 침묵합니다 |
 | `test_harness.py` · `test_pipeline.py` · `test_runtime.py` | 하네스 자신의 테스트입니다 |
 | `fixtures/gate/` | 스테이지 결과를 재현하는 데 쓰는 샘플 데이터입니다 |
 
@@ -271,12 +256,11 @@ flowchart TD
 | 경로 | 무엇 |
 |---|---|
 | `commands/feature.md` | `/feature` 명령입니다. `doctor` 로 열고, 사용자의 요청을 한 글자도 바꾸지 않고 동결한 다음, 종료 코드에 따라 다음 행동을 정합니다. 프로파일(레인)은 묻지 않고 00 이 정한 값과 봉투가 찍은 `model:` 을 그대로 씁니다 |
-| `commands/log.md` | `/log` 명령입니다. 세션 기록의 사실을 `docs/PIPELINE-LOG.md` 에 한 줄로 옮깁니다. 기록에 없는 것은 적지 않습니다 |
 | `agents/impl-writer.md` · `agents/test-writer.md` | 03 이 **병렬로** 부르는 구현 담당과 테스트 담당입니다. 각자 자기 경로만 건드립니다 |
 | `agents/ui-writer.md` | 03 이 계약 `## 화면` 에 항목이 있을 때만 같이 부르는 화면 담당입니다. `docs/UI_GUIDE.md` 를 따르고 서버 로직·테스트는 건드리지 않습니다 |
 | `agents/plan-reviewer.md` | 01·02 가 부르는 검토자입니다. 계획을 직접 고치지 않고 지적만 냅니다 — 02 에서는 외부 플랜 리뷰 도구가 없을 때의 폴백입니다. `docs` 레인에서는 부르지 않습니다 |
 | `skills/{general,data-layer,security,architecture,test-quality,docs}-reviewer/SKILL.md` | 05 의 리뷰어 6종입니다(일반 정합성·데이터·보안·구조·테스트 품질·문서). 일반 정합성 리뷰어는 소스 변경이 있으면 항상 켜지고 계약이 재사용하라는 심볼의 정의까지 열어 봅니다. 나머지는 변경된 파일이 각자의 담당 범위에 걸리면 켜집니다. 문서 리뷰어만 소스 변경이 0인 런에서 켜집니다 |
-| `settings.json` | 훅 3개입니다 — 세션 시작 시 미승격 세션 수 알림, 세션 종료 시 기록, 위험한 셸 명령 차단 |
+| `settings.json` | 훅 1개입니다 — 위험한 셸 명령 차단 |
 
 ### `docs/`
 
@@ -299,8 +283,6 @@ flowchart TD
 |---|---|
 | `init --adapter <이름> --name <프로젝트>` | `harness/profiles/<이름>/config.json` 을 복사해 `harness/config.json` 을 만듭니다. 이미 있으면 `--force` 없이는 덮어쓰지 않습니다 |
 | `doctor` | 설정과 저장소가 어긋난 곳을 찾아 사람이 읽는 보고서로 냅니다 |
-| `verify-adapter [--min-runs N]` | 게이트를 전부 통과한 완주 런이 기준 수 이상이면 어댑터의 `verified` 를 올립니다. 못 미치면 exit 3 이고 아무것도 바꾸지 않습니다 |
-| `calibrate [--stage <이름>] [--replace]` | 스테이지를 한 번씩 돌려 소요 시간을 기록합니다. 하나라도 실패하면 **파일을 쓰지 않습니다** — 코드가 깨진 상태의 실측값은 기준이 될 수 없습니다 |
 
 ### `python scripts/pipeline/cli.py` — 파이프라인을 돌립니다
 
@@ -313,22 +295,16 @@ flowchart TD
 | `next [--run-id <아이디>]` | 진입 조건을 확인하고 다음 할 일을 알려 줍니다. 세션이 끊겼을 때 이어서 하는 방법도 이 명령입니다 |
 | `record --phase <번호> [--file …] [--reviewer …] [--round n] [--failed]` | 산출물을 검사하고, 통과하면 다음 페이즈로 넘깁니다 |
 | `gate [--phase 04] [--stage <이름>] [--replay <폴더>]` | 스테이지를 실행하고 결과를 읽어 실패를 귀속시킵니다 |
-| `advance --phase <번호>` | 다음 페이즈로 명시적으로 넘깁니다. 게이트 뒤에 코드가 바뀌었으면 막습니다 |
-| `retry --phase <번호> --counter <이름> --reason <사유>` | 실패한 페이즈를 다시 진행 상태로 되돌립니다. **재시도는 반드시 이 명령을 거칩니다** |
-| `escalate [--reason <사유>]` | 진행을 멈추고 사람에게 넘깁니다. 선택지 세 개(그대로 진행 / 범위 축소 / 중단)를 함께 제시합니다 |
 | `resume --ack` | 멈춰 둔 상태를 푸는 **전용** 명령입니다 |
 | `status` | 지금 상태를 보여 줍니다. **언제나 exit 0 입니다** |
-| `abandon --reason <사유>` | 런을 명시적으로 닫습니다. 사유가 없으면 기록에서 "중단" 과 "고장" 이 구분되지 않습니다 |
 | `lint-phases [--dir <경로>]` | 페이즈 정의 파일의 정합을 봅니다. **CI 없이도 돌아가는 유일한 검증 장치입니다** |
 | `precheck [--scope pr] [--phase 05] [--ack-policy]` | 예산(파일 수는 테스트 제외), 브랜치, 기준 브랜치와의 차이, 환경을 미리 봅니다. `--ack-policy` 는 사람이 「이대로 간다」고 정한 것을 못박아 06 이 같은 것을 다시 묻지 않게 합니다 — 넘어간 사실은 gap 으로 남습니다 (ADR-H071) |
 | `contract-trace [--contract <경로>]` | 계약에 적은 것이 코드에 실제로 있는지 대조합니다 |
 | `approve --phase 06 [--auto] [--revoke]` | 승인을 기록으로 남깁니다. 그 시점의 작업 트리 해시와 등급을 함께 적습니다 |
-| `mask --file <입력> --out <출력>` | 외부로 나갈 텍스트의 비밀값을 마스킹합니다 |
 | `pr` | 06 의 여섯 과정을 싼 것부터 돌리고 처음 실패한 곳에서 멈춥니다 |
 | `promote --scan / --stage / --apply / --flush` | 기록을 다시 세고, 후보를 담고, 실제로 규칙을 쓰고, 남은 것을 정리합니다. `--apply` 는 규칙을 쓴 뒤 `lint` · `check` 자체 게이트를 돌려 실패하면 `rejected` 로 적고, 돌리지 못하면(127 · 124) 아무것도 쓰지 않고 exit 10, 어댑터에 명령이 없으면 gap `promotion_selfgate_unverified` 입니다 |
 | `review07 [--external <경로>]` | 07 에서 리뷰의 호출 여부와 강도를 정합니다 |
 | `report [--out <경로>]` | 08 보고서를 조립합니다 |
-| `cost` | 이번 런에 든 비용을 기록에서 모아 계산합니다 |
 
 ### 종료 코드
 

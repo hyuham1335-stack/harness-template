@@ -300,13 +300,7 @@
           }
         }
       }
-    },
-    "background_threshold_sec": {
-      "description": "전체 회귀를 백그라운드로 돌릴 기준. 상수가 아니라 calibration.full.sec 과 비교하는 임계값이다.",
-      "type": "integer",
-      "minimum": 0
-    },
-    "calibration_file": {"type": "string"}
+    }
   },
   "definitions": {
     "model_tier": {

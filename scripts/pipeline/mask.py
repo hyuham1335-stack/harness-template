@@ -66,7 +66,7 @@ def secret_values(root, config=None):
     """
     root = Path(root)
     if config is None:
-        config, _adapter, _cal = adapters.load(root)
+        config, _adapter = adapters.load(root)
     files = list((config.get("project") or {}).get("secret_files") or [])
     values, missing = set(), []
     for rel in files:
@@ -123,22 +123,3 @@ def mask_text(root, text, config=None):
                      if missing else
                      "비밀 파일의 값과 패턴 셋을 적용했다.")}
 
-
-def mask_file(root, src, out, config=None):
-    """파일 하나를 마스킹해 다른 파일로 쓴다. 실패하면 `ok: False`."""
-    src, out = Path(src), Path(out)
-    if not src.exists():
-        return {"ok": False, "error": "파일이 없다: %s" % src,
-                "text": None, "hits": 0, "secret_files_missing": [],
-                "by_source": {}}
-    try:
-        text = io.open(src, encoding="utf-8").read()
-    except (OSError, UnicodeDecodeError) as e:
-        return {"ok": False, "error": "읽지 못했다: %s" % e, "text": None,
-                "hits": 0, "secret_files_missing": [], "by_source": {}}
-    got = mask_text(root, text, config)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    # §E4 — 원장·산출물은 UTF-8 을 명시한다. 한글 식별자가 흔한 리포다.
-    io.open(out, "w", encoding="utf-8", newline="\n").write(got["text"])
-    got["out"] = str(out)
-    return got
