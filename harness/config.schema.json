@@ -23,23 +23,11 @@
           "enum": ["ko", "en"]
         },
         "instruction_file": {"type": "string"},
-        "instruction_slot_budget": {
-          "description": "instruction_file 에 산문 규칙을 몇 칸까지 둘 수 있는가. 기계로 막을 수 있는 규칙의 산문 승격을 막는 예산.",
-          "type": "integer",
-          "minimum": 0
-        },
         "rules_dir": {"type": "string"},
         "rules_exclude": {
-          "description": "rules_dir 직속이지만 규칙이 아닌 파일 — 하네스 자신이 쓰는 산출물이다. rules_read 기대 집합과 지시문 목적지 판정이 같이 뺀다. /log 한 번이 그 런의 모든 역할의 증명을 무효로 만들던 경로다 (미구현 백로그 23). 클론은 자기 파일을 여기 더한다.",
+          "description": "rules_dir 직속이지만 규칙이 아닌 파일 — 하네스 자신이 쓰는 산출물이다. rules_read 기대 집합이 뺀다. /log 한 번이 그 런의 모든 역할의 증명을 무효로 만들던 경로다 (미구현 백로그 23). 클론은 자기 파일을 여기 더한다.",
           "type": "array",
           "items": {"type": "string"}
-        },
-        "instruction_review": {
-          "description": "08 끝 지시문 검토 (ADR-H056). skill 은 메인이 부를 스킬 이름이고 불투명 문자열이다 — 존재를 검사하지 않는다. 스킬이 없는 환경은 null 로 두고 사람이 검토한다(비강등 gap instruction_review_manual). 끄는 스위치는 없다 — 열린 런의 08 은 늘 08_instruction_review.json 을 요구한다.",
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["skill"],
-          "properties": {"skill": {"type": ["string", "null"]}}
         },
         "secret_files": {"type": "array", "items": {"type": "string"}},
         "source_inject_max_chars": {
@@ -205,7 +193,7 @@
       }
     },
     "review": {
-      "description": "05 의 상한과 모드 전환점. **여기 값은 전부 미검증 상속값이다** — 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 첫 세 런의 원장이 이 값을 검사한다.",
+      "description": "05 의 상한과 모드 전환점. **여기 값은 전부 미검증 상속값이다** — 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 실측이 이 값을 검사한다.",
       "type": "object",
       "required": ["profile_caps"],
       "additionalProperties": false,
@@ -249,21 +237,7 @@
             "lines": {"type": "integer", "minimum": 1},
             "bytes": {"type": "integer", "minimum": 1}
           }
-        },
-        "baseline_runs": {
-          "description": "오탐이 잦은 검사(contract-trace 의 BASELINE_CHECKS)를 warn_only 로 두는 기간. 검사별로, 그 검사가 지적을 낸 런 수로 센다 (ADR-H058).",
-          "type": "integer", "minimum": 0
         }
-      }
-    },
-    "external_pr_review": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {"type": "boolean"},
-        "bot_logins": {"type": "array", "items": {"type": "string"}},
-        "poll_sec": {"type": "integer", "minimum": 1},
-        "timeout_sec": {"type": "integer", "minimum": 1}
       }
     },
     "cross_verify": {

@@ -12,18 +12,18 @@
 | `missing_screen`          | 계약의 화면이 소스에 있는가 (ui 역할) | critical |
 | `missing_error_symbol`    | 오류 어휘 상수가 실재하는가        | critical |
 | `missing_entrypoint`      | 진입점이 실재하는가                | critical |
-| `untested_contract_item`  | 그 유닛을 참조하는 테스트가 있는가 | major (첫 3런 warn_only) |
+| `untested_contract_item`  | 그 유닛을 참조하는 테스트가 있는가 | major (언제나 warn_only) |
 | `untested_entrypoint`     | 진입점마다 그 진입점의 테스트 파일이 있는가 | major (유예 없음, 03 이 먼저 거부) |
 | `untested_error_symbol`   | 오류 어휘 상수를 테스트가 한 번이라도 쓰는가 | major (유예 없음, 03 이 먼저 거부) |
 | `authz_untested`          | `[역할]` 태그 진입점의 테스트에 거부 단언이 있는가 | major (유예 없음, 03 이 먼저 거부) |
 | `missing_journey_spec`    | 계약 `## 여정` 의 스펙 파일에 그 슬러그가 선언돼 있는가 | critical (유예 없음, 03 이 먼저 거부) |
-| `out_of_contract`         | 계약에 없는 신규 public 심볼      | major (첫 3런 warn_only) |
+| `out_of_contract`         | 계약에 없는 신규 public 심볼      | major (언제나 warn_only) |
 
 `out_of_contract` 는 **타입 전용 export(`type`·`interface`)를 보지 않는다**
 (ADR-H072). 계약은 런타임 심볼을 보고, 내부 타입까지 계약에 열거하게 하지
 않는다. `enum` 은 런타임 객체를 내보내므로 면제가 아니다.
 
-"첫 3런" 은 **그 검사가 지적을 낸 런**으로 센다 (ADR-H058 · `ledger.in_baseline_for`).
+`untested_contract_item`·`out_of_contract` 는 오탐 이력(78/78 · 6/6)이 있어 **언제나 warn_only** 다 — 지적으로 올리지 않고 보고서에만 남긴다.
 
 테스트 셋(`untested_*`·`authz_untested`)은 **존재 검사이지 의미 검사가 아니다.**
 커버리지 도구가 없는 stdlib 실행기라 "그 이름·그 패턴이 테스트 본문에 있는가" 까지만
@@ -49,7 +49,6 @@ sys.path.insert(0, str(_HERE.parent))
 
 import harness  # noqa: E402
 import contract as contract_mod  # noqa: E402
-import ledger  # noqa: E402
 
 CHECKS = ("missing_impl", "missing_screen", "missing_error_symbol", "missing_entrypoint",
           "untested_contract_item", "untested_entrypoint", "untested_error_symbol",
@@ -71,12 +70,11 @@ _NO_RESOLVER = "어댑터에 `entrypoint_resolver` 가 없다"
 # 검사의 오탐은 구조적(재수출 import · 다른 거부 단언 모양)이라 매 런 똑같이 나고,
 # 런 수 유예는 그것을 고치지 못하고 거부만 미룬다. banana 실측(과거 계약 15개 ×
 # 현재 테스트 트리)에서 진입점 14 · 오류 상수 10 오탐 0, 자기 테스트를 빼면 14/14
-# 지적이었다. 위 둘은 78/78 · 6/6 오탐 이력이 있어 유예를 유지한다.
-BASELINE_CHECKS = ("untested_contract_item", "out_of_contract")
+# 지적이었다. 위 둘은 78/78 · 6/6 오탐 이력이 있어 **언제나 warn_only** 다 — 런 수
+# 유예는 원장과 함께 사라졌고, 둘 자체는 그 뒤에 지운다.
+WARN_ONLY_CHECKS = ("untested_contract_item", "out_of_contract")
 
-DEFAULT_BASELINE_RUNS = 3
-
-# 계약 대조에서 나온 지적이 원장에 들어갈 때의 category.
+# 계약 대조에서 나온 지적의 category.
 # 계약과 코드가 어긋난 것은 "계약 결함"과 다르다 — 여기서는 코드가 계약을
 # 아직 안 지킨 것이고, 계약 자체가 틀렸다는 판정은 리뷰어·사람의 몫이다.
 CATEGORY = {
@@ -117,8 +115,7 @@ _DEFAULT_PUBLIC = (r"^\s*export\s+(?:async\s+)?(?P<kw>function|const|class|type|
 TYPE_ONLY_KEYWORDS = ("type", "interface")
 
 
-def run(root, config, adapter, contract_path, no_contract=False, changed=None,
-        baseline_runs=None):
+def run(root, config, adapter, contract_path, no_contract=False, changed=None):
     """열 검사를 돌린다. 반환은 그대로 `05_trace.json` 이 된다."""
     root = Path(root)
     if no_contract or not contract_path:
@@ -135,10 +132,6 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
     files = repo_files(root)
 
     resolver = (adapter.get("entrypoint_resolver") or {}).get("kind") or "none"
-    baseline_runs = (baseline_runs if baseline_runs is not None
-                     else _baseline_runs(config))
-    in_baseline = {code: ledger.in_baseline_for(root, code, baseline_runs)
-                   for code in BASELINE_CHECKS}
 
     primary = config.get("primary_role") or "impl"
     test_role = _test_role(config)
@@ -178,7 +171,7 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
     checks_run.append("out_of_contract")
     findings += _out_of_contract(root, adapter, parsed, changed, primary)
 
-    _apply_baseline(root, findings, in_baseline, baseline_runs)
+    _apply_warn_only(findings)
 
     blocking = [f for f in findings
                 if f["severity"] == "critical" and f["resolution"] != "warn_only"]
@@ -192,9 +185,6 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
         # 진입점을 파일로 풀지 못해 테스트 존재를 묻지 않은 것. 지적이 아니다 —
         # 진입점 부재는 `missing_entrypoint` 의 몫이다.
         "entrypoints_unresolved": tc["unresolved"],
-        "baseline": {"in_baseline": in_baseline,
-                     "distinct_runs": ledger.distinct_runs(root),
-                     "baseline_runs": baseline_runs},
         "blocking": len(blocking),
         # 04 의 `contract.scope.repo_files` 와 같아야 한다 (M50).
         "repo_files": len(files),
@@ -213,9 +203,9 @@ def required_tests(root, config, adapter, contract_path):
     """테스트 존재 검사 셋만 — **03 제출이 부른다** (ADR-H058 결정 7·8).
 
     05 의 `run()` 과 **같은 `_test_checks`** 를 쓴다. 두 자리가 다른 목록을 보면
-    03 통과가 05 지적을 예고하지 못한다. 05 의 Major 는 원장에 `deferred` 로
-    쌓일 뿐 수리 루프를 돌리지 않으므로, 워커 맥락이 살아 있는 03 에서 요구해야
-    실제로 고쳐진다. 셋은 유예가 없어(`BASELINE_CHECKS` 밖) 지적이 곧 거부다.
+    03 통과가 05 지적을 예고하지 못한다. 05 의 Major 는 `deferred` 로
+    남을 뿐 수리 루프를 돌리지 않으므로, 워커 맥락이 살아 있는 03 에서 요구해야
+    실제로 고쳐진다. 셋은 유예가 없어(`WARN_ONLY_CHECKS` 밖) 지적이 곧 거부다.
 
     반환: {"findings": [...], "skipped": [...], "skip_reasons": {...}}
     """
@@ -265,14 +255,12 @@ def _test_checks(root, adapter, parsed, files, test_role):
     return out
 
 
-def _apply_baseline(root, findings, in_baseline, baseline_runs):
+def _apply_warn_only(findings):
     for f in findings:
-        if in_baseline.get(f["code"]):
+        if f["code"] in WARN_ONLY_CHECKS:
             f["resolution"] = "warn_only"
-            f["why_warn_only"] = (
-                "baseline 기간이다 — 이 검사가 지적을 낸 런이 %d 로 %d 에 못 "
-                "미친다. 오탐률을 보고 나서 승격한다 (미검증 상속값)."
-                % (ledger.trace_runs(root, f["code"]), baseline_runs))
+            f["why_warn_only"] = ("오탐 이력이 있는 검사다 (78/78 · 6/6) — 지적으로 올리지 "
+                                  "않고 보고서에만 남긴다. 런 수 유예는 원장과 함께 사라졌다.")
         else:
             f.setdefault("resolution", "deferred")
 
@@ -285,11 +273,6 @@ def repo_files(root):
     `unmatched: 4` 를, 05 는 `dropped: []` 를 적는다 (M50).
     """
     return harness.list_files_with_untracked(root)
-
-
-def _baseline_runs(config):
-    return ((config.get("review") or {}).get("baseline_runs")
-            or DEFAULT_BASELINE_RUNS)
 
 
 def _test_role(config):
@@ -310,10 +293,10 @@ def _screen_role(config):
 
 
 def _finding(code, severity, role, title, **kw):
-    """`rule_slug` 를 여기서 단다 — **승격 집계의 축**이다 (ADR-H034).
+    """`rule_slug` 를 여기서 단다 — 검사 코드를 category 옆에 남긴다 (ADR-H034).
 
     `code` 를 그대로 쓰지 않고 이름을 달리한 것은 이 리포에서 `code` 가 이미
-    **리뷰어 코드**(`cli.py` 라우팅)와 **taxonomy 카테고리 코드**(`ledger.py`)
+    **리뷰어 코드**(`cli.py` 라우팅)와 **카테고리 코드**(`CATEGORY`)
     두 뜻으로 쓰이기 때문이다. 세 번째 뜻을 얹지 않는다.
 
     `CATEGORY` 가 다대일이라(코드 8 → category 4) category 만으로는

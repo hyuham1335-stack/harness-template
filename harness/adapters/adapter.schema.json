@@ -432,18 +432,6 @@
             "type": "string"
           }
         },
-        "baseline_file": {
-          "type": "string"
-        },
-        "baseline_cmd": {
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "string"
-          }
-        },
         "select": {
           "description": "스코프 테스트 선택 문법.",
           "type": "object",

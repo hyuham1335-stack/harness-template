@@ -342,17 +342,6 @@ def _check_mark(v):
     return "x" if v else " "
 
 
-def _rule_changes(paths):
-    """08 지시문 검토의 `changes`. 파일이 없거나 깨졌으면 [] — 절을 만들지 않는다."""
-    try:
-        d = json.loads((paths.run_dir / "08_instruction_review.json")
-                       .read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    changes = d.get("changes") if isinstance(d, dict) else None
-    return [c for c in changes or [] if isinstance(c, dict) and c.get("file")]
-
-
 # ------------------------------------------------------------ 흐름 노트 (06)
 
 NOTES_FILE = "06_pr_notes.json"
@@ -587,14 +576,6 @@ def build_body(root, paths, state, config):
     lines += (["- %s" % m for m in minors] if minors else ["- 없다"]) + [""]
     lines += ["**건너뛴 비차단 게이트**", ""]
     lines += (["- %s" % g for g in skipped] if skipped else ["- 없다"]) + [""]
-    rule_changes = _rule_changes(paths)
-    if rule_changes:
-        # 지시문은 06 승인 지문 밖이라 05·07 리뷰어가 못 봤다 (ADR-H056 추기).
-        lines += ["**규칙 변경** (08 지시문 검토 — 리뷰어가 보지 않은 변경이다)", ""]
-        lines += ["- `%s` — %s%s" % (c.get("file"), c.get("summary"),
-                                     " (%s)" % ", ".join(c["rule_keys"])
-                                     if c.get("rule_keys") else "")
-                  for c in rule_changes] + [""]
     lines += ["_이슈 자동 종결 링크는 비워 둔다._", ""]
     lines += ["## 체크리스트", ""]
     lines += ["- [%s] %s" % (_check_mark(v), name) for name, v in checks]

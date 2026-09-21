@@ -151,32 +151,6 @@ def finding_key(f):
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def rule_key(f):
-    """`sha1(category | target_role | rule_slug)`. **승격 집계만 쓴다.**
-
-    `finding_key` 와 **나란히** 둔다. 두 질문이 원래 다르기 때문이다 —
-    "이 런에서 무엇을 고쳐야 하나"는 인스턴스(심볼 하나)가 단위고,
-    "무엇이 반복되는 유형인가"는 규칙이 단위다. 제목에 심볼 이름이 박히는
-    `contract-trace` 의 지적은 앞 질문에는 맞고 뒤 질문에는 틀린다.
-
-    **`rule_slug` 가 없으면 `finding_key` 를 그대로 돌려준다.** 폴백이
-    안전장치다 — 옛 원장에는 슬러그가 한 줄도 없어 과거 집계가 한 비트도
-    안 바뀌고, 소급 오염이 구조적으로 불가능하다. 그래서 여기서
-    `finding_key` 를 **다시 계산하지 않고 호출한다**: 두 곳에서 정의가
-    갈라지면 폴백이 폴백이 아니게 된다.
-
-    슬러그를 누가 줄 수 있는지는 여기서 정하지 않는다 — 신뢰 경계는
-    `ledger.append` 가 쥔다 (ADR-H034).
-    """
-    slug = f.get("rule_slug")
-    if not slug:
-        return finding_key(f)
-    raw = "|".join([str(f.get("category") or ""),
-                    str(f.get("target_role") or ""),
-                    str(slug)])
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
-
-
 # 리뷰어가 무엇으로 관측했는가. **둘뿐이다.**
 #
 # 셋째 값(`fallback_after_failure` 같은)을 만들고 싶어지는 자리인데 만들지

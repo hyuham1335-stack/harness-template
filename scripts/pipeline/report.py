@@ -5,11 +5,9 @@
 전문은 파일 경로로만 가리킨다. 이 제약이 보고서의 비용을 런 크기와 무관하게
 만든다.
 
-분업이 요점이다 — **표는 실행기가 조립하고 서술은 모델이 쓴다.** 특히 승격
-규칙 목록은 원장에서 자동으로 나오므로 **모델이 빠뜨릴 수 없다.**
+분업이 요점이다 — **표는 실행기가 조립하고 서술은 모델이 쓴다.**
 """
 
-import re
 import sys
 from pathlib import Path
 
@@ -17,18 +15,16 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))
 
-REQUIRED_SECTIONS = ("## 완료 등급", "## 승격된 규칙", "## 건너뛴 게이트",
-                     "## 비용과 시간")
+REQUIRED_SECTIONS = ("## 완료 등급", "## 건너뛴 게이트", "## 비용과 시간",
+                     "## 리뷰", "## 서술")
 
-# 서술 필드의 하한 (ADR-H052 결정 5). `5568` 의 08 은 서술이 통째로 비었고
+# 서술 4절의 하한 (ADR-H052 결정 5). `5568` 의 08 은 서술이 통째로 비었고
 # 그 런은 07 major 6건으로 최다였다 — 「왜 그랬는가는 이 런이 말하지 않았다」.
-# **등급은 건드리지 않는다.** 봉투가 되묻는다. 미검증 초기값이다.
+# **등급은 건드리지 않는다.** 봉투가 되묻는다. 「계약이 부족한 곳이 없었다」도
+# 왜 그렇게 보는지를 적게 한다 — 짧은 답을 받으면 그 절이 빈 채로 굳는다.
 NARRATIVE_MIN_CHARS = 80
-NARRATIVE_REQUIRED = (("narrative", "배운 점"), ("next_run",))
-
-PILOT_LOG_REL = "docs/harness/PILOT-LOG.md"
-PILOT_LOG_HEADING = "## 런 기록"
-_PILOT_RUN_RE = re.compile(r"^## 파이프라인 런 P(\d+) — ", re.M)
+NARRATIVE_REQUIRED = (("narrative", "문제"), ("narrative", "원인"),
+                      ("narrative", "해결"), ("contract_gaps",))
 
 # `gaps[]` 의 어휘. **명세가 열거형으로 주지 않았다** — 문서 전체에 흩어진
 # `PASS_WITH_GAPS` 유발 사유를 여기 모은 것이고, 그 사실을 적어 둔다.
@@ -46,7 +42,6 @@ GAP_REASONS = {
     "cross_verify:fallback": ("01 의 교차검증이 폴백으로 돈 회차가 있다 — "
                               "독립 관측 둘이라는 전제가 그만큼 약해졌다"),
     "review05": "05 의 리뷰어가 전부 또는 일부 실패했다",
-    "external": "외부 PR 리뷰를 받지 못했다",
     "infra_skipped": "인프라 프로브 실패로 건너뛴 검증이 있다",
     "precheck_policy_override": ("`precheck` 정책 실패(예산·브랜치·base)를 사람이 "
                                  "「그대로 간다」로 정했다 — 넘어간 것이지 통과한 "
@@ -54,12 +49,11 @@ GAP_REASONS = {
     "tests_not_ran": "테스트가 한 건도 돌지 않았다",
     "pr_closed": "PR 이 닫혔다 — 수리·코멘트를 하지 않았다",
     "pr_merged": "PR 이 이미 머지됐다 — 수리·코멘트를 하지 않았다",
+    "pr_review_skipped": ("07 의 `/code-review` 를 사유를 적고 건너뛰었다 — 05 가 "
+                          "놓친 것을 잴 표본이 이 런에는 없다"),
+    "pr_review_open": ("07 의 `/code-review` 가 05 가 낸 키를 가리키지 않는 "
+                       "Critical/Major 를 냈다 — 05 가 놓친 것이고, 수리는 사람이 정한다"),
     "local_only": "원격이 없어 로컬 커밋까지만 했다",
-    "promotion_baseline_unverified":
-        "어댑터에 `baseline_cmd` 가 없어 lint 승격이 무엇을 막는지 재지 못했다",
-    "promotion_selfgate_unverified":
-        ("어댑터에 `lint` 또는 `check` 명령이 없어 승격 자체 게이트를 돌리지 "
-         "못했다 — 규칙이 기존 코드를 깨는지 재지 못한 채 적용했다"),
     "triage_miss": ("00 의 레인 예측이 빗나가 앞 페이즈가 그 양보(콜론 뒤)를 "
                     "적용한 채 지나갔다 — 03·05 의 실물이 상향으로 재판정했다"),
     # 아래 다섯은 gate.py 가 처음부터 만들던 사유인데 어휘에 없었다 — 파일럿
@@ -74,33 +68,11 @@ GAP_REASONS = {
     "test_report_missing": ("테스트 리포트를 한 건도 찾지 못했다 — 리포터 "
                             "경로 설정 오류일 수 있어 인프라로 다룬다"),
     "tests_ran_zero": "테스트가 0개 돌았다 — 빈 스위트의 초록불은 통과가 아니다",
-    "promotion_overdue": ("승격 판정 시한(ADR-H033)이 지났는데 이 런이 후보를 "
-                          "skip 으로 닫았다 — 미룸이 등급을 치른다 (ADR-H051)"),
-    "run_record_missing": ("닫힌 런의 PR 갱신인데 런 기록 "
-                           "`docs/harness/pipeline/runs/{run_id}.md` 가 diff 에 "
-                           "없다 — 08 이 쓴 기록은 기능 PR 에 실린다 (ADR-H052)"),
-    # 08 지시문 검토 (ADR-H056 추기). 앞 셋은 표시이고 등급을 내리지 않는다.
-    "instruction_review_manual": ("08 지시문 검토를 스킬 없이 사람이 했다 — "
-                                  "config 의 `instruction_review.skill` 이 null 이다"),
-    "instruction_slot_unmeasured": ("지시문 파일에 본문은 있는데 최상위 불릿이 "
-                                    "0개다 — 규칙 수를 재지 못했다"),
-    "instruction_changed": ("08 지시문 검토가 바꾼 지시문 파일이 기능 PR 에 "
-                            "실렸다 — 06 승인 지문 밖이라 05·07 리뷰어가 보지 "
-                            "않았다. PR 본문 「규칙 변경」 절을 본다"),
-    "instruction_change_missing": ("08 지시문 검토가 바꿨다고 적은 파일이 닫힌 "
-                                   "런의 PR 갱신에 커밋돼 있지 않다 — 커밋하고 "
-                                   "`pr --run-id` 를 다시 돌린다"),
 }
 
-# 등급을 내리지 않는 gap. `gaps[]` 에는 남아 보고서·PR 본문이 이름으로 적되
-# `demote` 는 등급을 건드리지 않는다 — "관측 결손" 이 아니라 "사람이 할 일이
-# 밀렸다" 는 표시다 (ADR-H047 결정 2). 부르는 쪽(`cli.run_precheck`)이 이
-# 목록으로 가른다.
-# `instruction_slot_over_budget` 은 ADR-H074 가 **걷어냈다** — 아무도 안 내는
-# 어휘를 남기면 그것이 곧 "어휘가 기계를 앞서는" M36 의 거울상이다. 숫자는
-# `_slots_cell` 이 계속 렌더한다.
-NON_DEMOTING_GAPS = ("instruction_review_manual",
-                     "instruction_slot_unmeasured", "instruction_changed")
+# 등급을 내리지 않는 gap. 정확 일치 목록은 비었고 `stage_na:<id>` 접두만 남았다
+# (ADR-H047 추기). 어휘를 늘리려면 그 gap 을 내는 자리를 먼저 만든다 (M36).
+NON_DEMOTING_GAPS = ()
 
 
 def is_non_demoting(gap):
@@ -128,243 +100,6 @@ def short_narrative(data):
 
 def _sum_phase(timing, key):
     return sum((c.get(key) or 0) for c in (timing or {}).get("phases", {}).values())
-
-
-def pilot_log_section(state, timing, report_rel, number):
-    """PILOT-LOG 의 런 절. **파일 상단의 골격 그대로**이고, 상태에 있는 값만
-    채우고 나머지는 「미측정」이다 — 칸을 지우면 재본 적 없다는 사실도 같이
-    사라진다 (ADR-H052 결정 4).
-    """
-    run_id = state.get("run_id")
-    stamp = state.get("closed_at") or state.get("updated_at") or ""
-    day = stamp[:10] if stamp else "미측정"
-    adapter = state.get("adapter") or {}
-    pr = state.get("pr") or {}
-    gaps = state.get("gaps") or []
-    tests = state.get("tests") or {}
-    promos = [p for p in (state.get("promotions") or [])
-              if p.get("status") == "applied"]
-    lines = ["## 파이프라인 런 P%d — `%s` (%s)" % (number, state.get("slug") or "?",
-                                                   day), "",
-             "| 항목 | 값 |", "|------|-----|",
-             "| 일자 | %s |" % day,
-             "| 런 ID | `_workspace/runs/%s` |" % run_id,
-             "| 브랜치 | %s |" % ("`%s`" % pr["head"] if pr.get("head") else "미측정"),
-             "| 대상 | 런 보고서 `%s` 의 계약 절을 본다 (계약은 06 에서 지워진다) |"
-             % report_rel,
-             "| 어댑터 | `%s` |" % (adapter.get("id") or "미측정"),
-             "| 결과 | %s · gaps %d%s |"
-             % (state.get("grade") or "미정", len(gaps),
-                (" (" + ", ".join(gaps) + ")") if gaps else ""),
-             "| 머신 | 미측정 |", "",
-             "### 스테이지 실측", "",
-             "| 스테이지 | 소요 | 종료 코드 | 테스트 | 비고 |",
-             "|---|---:|---:|---:|---|"]
-    phases = (timing or {}).get("phases") or {}
-    if phases:
-        for name in sorted(phases):
-            c = phases[name]
-            waits = (c.get("escalation_wait_sec") or 0) + (c.get("human_wait_sec") or 0)
-            lines.append("| %s | %s | — | — | 페이즈 벽시계 · 순 작업 %s · 대기 %s |"
-                         % (name, _hms(c.get("wall_sec")), _hms(c.get("work_sec")),
-                            _hms(waits) if waits else "—"))
-    else:
-        lines.append("| — | 미측정 | 미측정 | 미측정 | 이벤트가 없어 소요를 유도하지 못했다 |")
-    lines.append("| 테스트 | — | — | %s | %s |"
-                 % (tests.get("ran") if tests.get("ran") is not None else "미측정",
-                    tests.get("status") or "미측정"))
-    lines += ["", "### 이 런이 확인하기로 했던 것 — 그리고 결과", "",
-              "미측정 — 런 전에 적은 예측이 상태에 없다. 런 보고서 `%s` 의 서술을 본다."
-              % report_rel, "",
-              "### 막힌 지점 · 수동 개입", ""]
-    esc = _sum_phase(timing, "escalations")
-    human = (timing or {}).get("human_wait_sec")
-    if timing:
-        lines.append("에스컬레이션 %d회 · 사람 판단 대기 %s · 형식 반려 %d회"
-                     % (esc, _hms(human) if human else "—",
-                        _sum_phase(timing, "format_rejects")))
-    else:
-        lines.append("미측정")
-    lines += ["", "### 이 런이 연 하네스 결함", "",
-              "| ID | 무엇 | 상태 |", "|---|---|---|",
-              "| — | 미측정 — 사람이 적는다 | |", "",
-              "### 이 런이 승격 판단에 주는 답", "",
-              ("승격 적용 %d건: %s" % (len(promos), ", ".join(
-                  "`%s`" % p.get("rule_id") for p in promos))
-               if promos else "승격된 규칙 없음 — ROADMAP §6 표는 움직이지 않았다."),
-              "", "### 다음 런에서 볼 것", "",
-              "런 보고서 `%s` 의 「다음 런에서 바꿀 것」." % report_rel, ""]
-    return "\n".join(lines)
-
-
-def append_pilot_log(root, state, timing, report_rel):
-    """`## 런 기록` 아래에 런 절을 붙인다. 같은 run_id 절은 **교체**한다(멱등).
-
-    파일이나 헤딩이 없으면 아무것도 하지 않고 False — 템플릿 자신은 파일럿
-    기록을 싣지 않는다 (ADR-H039). 클론의 PILOT-LOG 는 클론의 것이다.
-    """
-    path = Path(root) / PILOT_LOG_REL
-    if not path.is_file():
-        return False
-    text = path.read_text(encoding="utf-8")
-    if PILOT_LOG_HEADING not in text:
-        return False
-    head, tail = text.split(PILOT_LOG_HEADING, 1)
-    starts = [m.start() for m in _PILOT_RUN_RE.finditer(tail)]
-    blocks = [tail[a:b] for a, b in zip(starts, starts[1:] + [len(tail)])]
-    prefix = tail[:starts[0]] if starts else tail
-    marker = "_workspace/runs/%s`" % state.get("run_id")
-    replaced = False
-    out = []
-    for b in blocks:
-        if marker in b and not replaced:
-            m = _PILOT_RUN_RE.match(b)
-            number = int(m.group(1)) if m else len(out) + 1
-            out.append(pilot_log_section(state, timing, report_rel, number)
-                       .rstrip("\n") + "\n\n")
-            replaced = True
-        else:
-            out.append(b if b.endswith("\n") else b + "\n")
-    if not replaced:
-        out.append("\n" + pilot_log_section(state, timing, report_rel,
-                                            len(blocks) + 1))
-    new = head + PILOT_LOG_HEADING + prefix.rstrip("\n") + "\n" + "".join(out)
-    path.write_text(new.rstrip("\n") + "\n", encoding="utf-8")
-    return True
-
-
-def _ledger_axis_lines(data):
-    """원장의 카테고리 축 빈도. **승격하지 않는 관측이다** (M39 · ADR-H026).
-
-    승격 버킷의 축은 **규칙**(`rule_key`)이고 통제 어휘가 없는 지적은
-    `finding_key` 로 낙하한다 (ADR-H034). 그래서 카테고리가 아무리 잦아도
-    자유 서술이면 임계에 닿지 않는다. 그 사실을 보고서가 말하지 않으면
-    "승격 0건" 이 "지적이 없었다" 로 읽힌다.
-    """
-    roll = (data.get("ledger") or {}).get("by_category") or []
-    if not roll:
-        return []
-    top = roll[:5]
-    out = ["", "**원장의 카테고리 축** (승격 후보와는 다른 셈이다 — 승격은 "
-               "규칙 단위이고 이 표는 카테고리 단위다):", "",
-           "| category | 관측 | 런 | 서로 다른 규칙 | 승격 가능 |",
-           "|---|---|---|---|---|"]
-    out += ["| `%s` | %s | %s | %s | %s |"
-            % (b.get("category"), b.get("count"), b.get("distinct_runs"),
-               b.get("distinct_keys"),
-               "예" if b.get("promotable") else "아니오")
-            for b in top]
-    out += ["", "**서로 다른 규칙 수가 관측 수와 같으면 그 카테고리는 임계에 "
-                "닿지 않는다.** 자주 나는 것과 같은 것이 반복되는 것은 다른 "
-                "사실이고, 승격이 배우는 것은 후자다. 통제 어휘를 쓰는 "
-                "생산자만 이 칸이 관측 수보다 작아진다."]
-    return out
-
-
-def _prose_candidate_lines(data):
-    """원장 승격이 아닌 두 갈래 (ADR-H056). 없으면 아무것도 안 찍는다."""
-    led = data.get("ledger") or {}
-    prose = led.get("prose_candidates") or []
-    trace = led.get("trace_repeats") or []
-    out = []
-    if prose:
-        out += ["", "**지시문 검토 후보 %d건** (08 검토 입력 — 목적지가 prose 라 "
-                    "원장 승격하지 않는다, ADR-H056):" % len(prose), ""]
-        out += ["- `%s`%s — %s회 / %s런"
-                % (c.get("category"),
-                   " / `%s`" % c["rule_slug"] if c.get("rule_slug") else "",
-                   c.get("count"), c.get("distinct_runs"))
-                for c in prose]
-    if trace:
-        out += ["", "**검사 반복 검출 %d건** — `contract-trace` 가 이미 막는 "
-                    "규칙이라 후보가 아니다: %s"
-                % (len(trace), " · ".join(
-                    "`%s` %s회/%s런" % (c.get("rule_slug") or c.get("category"),
-                                        c.get("count"), c.get("distinct_runs"))
-                    for c in trace))]
-    return out
-
-
-def _instruction_review_cell(state):
-    rv = state.get("instruction_review")
-    if not rv:
-        return None
-    return "%s · 흡수 %d · 기각 %d · 바꾼 파일 %d" % (
-        "`%s`" % rv["skill"] if rv.get("skill") else "사람 검토",
-        len(rv.get("absorbed") or []), len(rv.get("declined") or []),
-        len({c.get("file") for c in rv.get("changes") or []}))
-
-
-def _slots_cell(state):
-    sl = state.get("instruction_slots")
-    if not sl:
-        return None
-    cell = "%s/%s (최상위 불릿 / `instruction_slot_budget`)" % (
-        sl.get("used"), sl.get("budget"))
-    # **합계만으로는 어느 문서가 비대해졌는지 말할 수 없다** (ADR-H074). 파일이
-    # 하나뿐이면 합계와 같은 말이라 적지 않는다.
-    per = sl.get("per_file") or {}
-    if len(per) > 1:
-        cell += " — " + " · ".join("`%s` %d" % (k, per[k]) for k in sorted(per))
-    return cell
-
-
-def _declined_lines(state, data):
-    """기각된 지시문 검토 후보. 이월이 길어지는 것이 보이게 누적을 같이 적는다."""
-    declined = (state.get("instruction_review") or {}).get("declined") or []
-    if not declined:
-        return []
-    seen = {c.get("rule_key"): c for c in
-            (data.get("ledger") or {}).get("prose_candidates") or []}
-    out = ["", "**지시문 검토에서 기각한 후보**:", ""]
-    for x in declined:
-        c = seen.get(x.get("rule_key")) or {}
-        out.append("- `%s`%s — %s" % (
-            c.get("category") or x.get("rule_key"),
-            " %s회 / %s런째 후보" % (c.get("count"), c.get("distinct_runs"))
-            if c else "", x.get("reason")))
-    return out
-
-
-def _reporter_lines(data):
-    """리뷰어별 해소 표 (ADR-H050). 리뷰어 품질의 첫 실측이고 승격과 무관하다."""
-    rows = (data.get("ledger") or {}).get("by_reporter") or []
-    if not rows:
-        return []
-    out = ["", "**리뷰어별 해소** (원장 누적 — `false_positive` 는 메인이 틀렸다고 "
-               "확인한 지적이고 승격 집계에서 빠진다):", "",
-           "| 리뷰어 | 관측 | repaired | deferred | false_positive | warn_only |",
-           "|---|---|---|---|---|---|"]
-    out += ["| `%s` | %s | %s | %s | %s | %s |"
-            % (b.get("reporter"), b.get("total"), b.get("repaired", 0),
-               b.get("deferred", 0), b.get("false_positive", 0),
-               b.get("warn_only", 0))
-            for b in rows[:8]]
-    out += ["", "`deferred` 가 크면 미룬 것이고 `false_positive` 가 크면 그 "
-                "리뷰어의 체크리스트를 고칠 때다 — 둘은 다른 처방이다."]
-    return out
-
-
-def _verdict_deadline_lines(data):
-    """승격 임계·축을 **언제** 판정하는지 (ADR-H033).
-
-    `## 승격된 규칙` 이 "없다" 로 끝나면 그 말이 몇 런까지 정상인지 아무도
-    모른다 — `THRESHOLDS` 의 옛 약속(*"첫 세 런의 원장이 이 값을 검사한다"*)
-    이 두 배 지나도록 아무도 판정하지 않은 이유가 그것이다. **게이트가
-    아니라 표시다**: 시한이 지나도 등급을 바꾸지 않는다.
-    """
-    dl = (data.get("ledger") or {}).get("verdict_deadline") or {}
-    if not dl:
-        return []
-    tail = ("**시한이 지났다 — 판정할 때다.**" if dl.get("due")
-            else "남은 런 %d." % dl.get("remaining"))
-    return ["", "**승격 판정 시한** — 원장이 본 런 %s / %s. %s"
-            % (dl.get("seen"), dl.get("at"), tail),
-            "",
-            "이 셈의 단위는 `distinct_runs` 다 — **지적을 0건 낸 런은 "
-            "세어지지 않는다.** 달력의 런 수와 다를 수 있다. 그때 무엇을 "
-            "보고 어떻게 가를지는 **ADR-H033** 에 미리 적혀 있고, 판정할 "
-            "때 고르는 것이 아니다."]
 
 
 def gap_reason(gap):
@@ -572,10 +307,10 @@ def _tbl(rows):
     return out
 
 
-def build(state, data, promotions, timing=None):
+def build(state, data, timing=None):
     """보고서 마크다운. 반환: (text, missing_sections).
 
-    **필수 섹션이 빠져도 파이프라인을 실패시키지 않는다** — 원장에 기록만
+    **필수 섹션이 빠져도 파이프라인을 실패시키지 않는다** — 기록만
     한다. 보고서가 런을 실패시키면, 보고서를 안 쓰는 것이 이득이 된다.
     """
     grade = state.get("grade") or "미정"
@@ -585,7 +320,6 @@ def build(state, data, promotions, timing=None):
     tests = state.get("tests") or {}
     r05 = state.get("review05") or {}
     r07 = state.get("review07") or {}
-    audit = state.get("audit") or {}
     cv = state.get("cross_verify") or {}
 
     lines = ["# 런 보고서 — %s" % state.get("run_id"), ""]
@@ -596,27 +330,6 @@ def build(state, data, promotions, timing=None):
         lines.append("건너뛴 비차단을 아래 `## 건너뛴 게이트` 에 나열한다.")
     else:
         lines.append("건너뛴 비차단이 없다.")
-    lines.append("")
-
-    lines += ["## 승격된 규칙", ""]
-    applied = [p for p in promotions or [] if p.get("status") == "applied"]
-    if applied:
-        lines += ["| 규칙 | category | 사유 |", "|---|---|---|"]
-        lines += ["| `%s` | %s | %s |" % (p.get("rule_id"), p.get("category"),
-                                          p.get("reason") or "-")
-                  for p in applied]
-    else:
-        lines.append("이 런에서 승격된 규칙이 없다.")
-    other = [p for p in promotions or [] if p.get("status") != "applied"]
-    if other:
-        lines += ["", "승격되지 않은 것 %d 건:" % len(other)]
-        lines += ["- `%s` — **%s** · %s" % (p.get("rule_id"), p.get("status"),
-                                            p.get("reason") or "사유 없음")
-                  for p in other]
-    lines += _prose_candidate_lines(data)
-    lines += _ledger_axis_lines(data)
-    lines += _reporter_lines(data)
-    lines += _verdict_deadline_lines(data)
     lines.append("")
 
     lines += ["## 건너뛴 게이트", ""]
@@ -661,27 +374,18 @@ def build(state, data, promotions, timing=None):
         ("05 리뷰어", "%s / %s" % (r05.get("reviewers_ok"),
                                    r05.get("reviewers_planned"))),
         # 레인이 정한 지시 범위다 (ADR-H059). `diff+refs` 로 05 벽시계가 늘면
-        # 이 행과 `escaped_05` 를 나란히 놓고 depth 값을 다시 정한다.
+        # 이 행과 「07 escaped」 를 나란히 놓고 depth 값을 다시 정한다.
         ("05 리뷰 범위", r05.get("depth")),
-        ("검토 제외로 드롭", r05.get("dropped_by_enforcement")),
         ("절단됨", r05.get("truncated")),
         ("맥락 부족 요청", len(r05.get("need_more_context") or []) or 0),
-        ("외부 리뷰", (r07.get("external") or {}).get("status")),
-        ("내장 리뷰", r07.get("code_review")),
-        # **이 지표를 그대로 읽으면 안 된다** (M48). 대조는 키 일치와 07 의
-        # 선언 둘이고, 07 이 같은 결함에 다른 이름을 붙이고 선언도 안 하면
-        # 여전히 새 것으로 세어진다. 접힌 수를 함께 적어 그 성격을 드러낸다.
-        ("escaped_05", "%s (05 와 접힘 %s · 키 일치 + 선언 대조)%s"
-         % (r07.get("escaped_05"), r07.get("deduped"),
-            # 생략 런의 0 은 "봤는데 없었다" 가 아니다. 정책의 표본은 감사
-            # 런과 수리 런에서만 나온다 (ADR-H043).
-            " — 내장 리뷰 생략, 표본 아님"
-            if r07.get("code_review") == "skipped" else "")
-         if r07.get("escaped_05") is not None else None),
-        # **생략과 불가는 다르다.** `clean_05` 는 05 의 gen 이 같은 관점을 이미
-        # 봤고 수리가 없었던 것이라 등급이 안 내려간다 (ADR-H043).
-        ("07 생략 사유", r07.get("skip_reason")),
-        ("감사 런", audit.get("is_audit_run")),
+        # 07 은 `/code-review` 1회의 계수다. escaped 는 **메인의 선언**이다 —
+        # 05 가 낸 키를 가리키지 않은 Critical/Major 만 센다 (dup_05=false).
+        ("07 /code-review", ("%s — %s" % (r07.get("code_review"), r07.get("skip_reason"))
+                             if r07.get("skip_reason") else r07.get("code_review"))),
+        ("07 escaped (dup_05=false 인 Major+)",
+         ("%d (findings %s · dup_05 %s)"
+          % (len(r07.get("escaped") or []), r07.get("findings"), r07.get("dup_05")))
+         if r07.get("findings") is not None else None),
         # **01 의 관측 품질이 이 표에 없었다.** 05·07 만 적어서, 교차검증이
         # 다섯 라운드 내내 폴백이어도 보고서는 아무 말도 하지 않았다 (P3).
         # **프로파일이 리뷰어 상한을 정한다.** 그 값이 어디서 나왔는지가
@@ -698,14 +402,14 @@ def build(state, data, promotions, timing=None):
         # 가 비어 있고 Critical 도 없었던 것(ADR-H060), `docs_profile` ·
         # `fix_profile` 은 레인의 양보다 — 셋 다 정책 스킵이라 등급이 안 내려간다.
         ("02 생략 사유", cv.get("skip_reason")),
-        # 08 지시문 검토와 슬롯 예산 (ADR-H056 추기).
-        ("지시문 검토", _instruction_review_cell(state)),
-        ("지시문 슬롯", _slots_cell(state)),
     ])
+    # 05 가 낸 키를 가리키지 않은 Critical/Major — 사람이 정할 목록이다.
+    for f in r07.get("escaped") or []:
+        lines.append("- **07 escaped** `%s` — %s (`%s`)"
+                     % (f.get("severity"), f.get("title"), f.get("path") or "경로 없음"))
     if cv.get("last_primary_error"):
         lines += ["", "- **교차검증 primary 가 실패한 적이 있다** — `%s`. "
                   "부재가 아니라 일시 실패다." % cv["last_primary_error"]]
-    lines += _declined_lines(state, data)
     lines.append("")
 
 
