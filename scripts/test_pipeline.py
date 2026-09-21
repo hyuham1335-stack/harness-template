@@ -2829,14 +2829,6 @@ class TestRecord03RulesRead:
             test=["src/lib/match.test.ts"], rules_read=rr))
         assert env["exit"] != 8, env["render"]
 
-    def test_제외_목록은_지시문_목적지_판정과_같은_출처다(self, repo):
-        """`_instruction_destination` 은 **존재가 아니라 경로로** 가른다 —
-        집합을 통째로 합치면 그 차이가 지워진다. 공유하는 것은 제외 목록뿐이다."""
-        config = harness._read_json(repo / harness.CONFIG_REL)
-        assert cli._instruction_destination(config, "docs/PRD.md")
-        assert not cli._instruction_destination(config, "docs/PIPELINE-LOG.md"), \
-            "하네스가 쓰는 파일은 지시문 검토가 고칠 곳이 아니다"
-
     def test_03_본문과_에이전트_정의가_같은_것을_말한다(self, repo):
         p03 = (ROOT / "harness" / "phases" / "03-implement.md").read_text(encoding="utf-8")
         assert "rules_read_sha" in p03 and "rules_read" in p03
@@ -9160,65 +9152,6 @@ class TestPr06BodyReadability:
         assert "(no_contract)" in body, body
 
 
-class TestRunRecordMissing:
-    """[[ADR-H052]] 결정 4 — 닫힌 런의 `pr` 재실행에 런 기록이 diff 에 없으면 gap.
-
-    08 이 쓴 `docs/harness/pipeline/runs/{run_id}.md` 는 기능 PR 에 실린다
-    (08-report.md 의 옛 금지를 뒤집었다). 검사 시점은 **`run_status: done` 인
-    런의 `pr` 재실행**이다 — 06 의 첫 push 때는 기록이 존재할 수 없고, 07
-    수리 뒤 재push(아직 done 아님)는 오탐이 된다.
-    """
-
-    def _pushed_done(self, repo, request_file, phases, tmp_path):
-        _branch(repo, "feat-x")
-        run_id, paths = _enter_06(repo, request_file, phases)
-        cli.run_approve(repo, "06", run_id=run_id)
-        _remote(repo, tmp_path)
-        assert cli.run_pr(repo, run_id=run_id)["exit"] == 0
-        _p, s = st.load(repo, run_id)
-        st.close_run(s)
-        st.save(_p, s)
-        return run_id, paths
-
-    def test_기록이_없으면_gap(self, repo, request_file, phases, tmp_path):
-        run_id, paths = self._pushed_done(repo, request_file, phases, tmp_path)
-        env = cli.run_pr(repo, run_id=run_id)
-        assert env["exit"] == 0, env["render"]
-        _p, s = st.load(repo, run_id)
-        assert "run_record_missing" in s["gaps"], s["gaps"]
-        assert s["grade"] == "PASS_WITH_GAPS"
-        assert "run_record_missing" in env["render"]
-
-    def test_기록이_커밋돼_있으면_gap_이_아니다(self, repo, request_file, phases,
-                                                tmp_path):
-        run_id, paths = self._pushed_done(repo, request_file, phases, tmp_path)
-        rec = repo / "docs" / "harness" / "pipeline" / "runs" / ("%s.md" % run_id)
-        rec.parent.mkdir(parents=True, exist_ok=True)
-        rec.write_text("# 런 보고서\n", encoding="utf-8")
-        _commit_all(repo, "chore: 런 기록")
-        env = cli.run_pr(repo, run_id=run_id)
-        assert env["exit"] == 0, env["render"]
-        _p, s = st.load(repo, run_id)
-        assert "run_record_missing" not in s.get("gaps", []), s.get("gaps")
-        assert env["next_command"] is None, "닫힌 런의 갱신은 06 record 로 이어지지 않는다"
-
-    def test_안_닫힌_런의_재push_에는_안_걸린다(self, repo, request_file, phases,
-                                               tmp_path):
-        _branch(repo, "feat-x")
-        run_id, paths = _enter_06(repo, request_file, phases)
-        cli.run_approve(repo, "06", run_id=run_id)
-        _remote(repo, tmp_path)
-        assert cli.run_pr(repo, run_id=run_id)["exit"] == 0
-        env = cli.run_pr(repo, run_id=run_id)
-        _p, s = st.load(repo, run_id)
-        assert "run_record_missing" not in s.get("gaps", []), s.get("gaps")
-
-    def test_08_의_금지가_뒤집혔다(self, repo):
-        text = (ROOT / "harness" / "phases" / "08-report.md").read_text(encoding="utf-8")
-        assert "보고서를 기능 PR 에 싣지 마라" not in text
-        assert "run_record_missing" in text
-
-
 class TestPr06Push:
 
     def test_성공하면_계약을_지우고_push_하고_요청서를_낸다(self, repo,
@@ -9670,21 +9603,7 @@ def _enter_08(repo, request_file, phases, grade="PASS"):
     s["review07"] = {"code_review": "done", "skip_reason": None,
                      "findings": 0, "dup_05": 0, "escaped": []}
     st.save(_p, s)
-    _instruction_review(repo, paths)
     return run_id, paths
-
-
-def _instruction_review(repo, paths, **kw):
-    """08 지시문 검토 결과 (ADR-H056). 기본은 「후보 없음 · 바꾼 것 없음」이다."""
-    cfg = harness._read_json(repo / "harness/config.json")
-    d = {"schema": 1, "reviewed": True,
-         "skill": ((cfg["project"].get("instruction_review") or {})
-                   .get("skill")),
-         "absorbed": [], "declined": [], "changes": [], "note": ""}
-    d.update(kw)
-    p = paths.run_dir / "08_instruction_review.json"
-    p.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
-    return p
 
 
 def _seed_timing_events(paths):
@@ -9716,13 +9635,14 @@ LONG_LESSON = ("AC 가 증상을 잠가야 한다 — 재시도 버튼이 두 �
 LONG_NEXT = ("다음 런에서는 계약의 유닛 절에 실패 경로를 먼저 적고, 리듀서의 "
              "초기화 순서를 잠그는 테스트를 03 이 먼저 쓰게 한다. 05 의 test "
              "리뷰어가 빠지지 않도록 라우팅을 확인한다.")
+LONG_GAPS = ("계약의 유닛 절에 재시도 버튼의 두 번째 클릭 경로가 없었다 — 상태 머신의 "
+             "전이만 적고 리듀서 초기화 순서는 적지 않아 테스트가 그 자리를 잠그지 못했다.")
 
 
 def _report_data(paths, **kw):
-    d = {"narrative": {"문제": "재시도가 안 됐다", "원인": "상태 머신",
-                       "해결": "리듀서 수정", "결과": "통과",
-                       "배운 점": LONG_LESSON},
-         "next_run": LONG_NEXT}
+    d = {"narrative": {"문제": LONG_LESSON, "원인": LONG_LESSON, "해결": LONG_LESSON,
+                       "결과": "통과", "배운 점": LONG_LESSON},
+         "contract_gaps": LONG_GAPS, "next_run": LONG_NEXT}
     d.update(kw)
     p = paths.run_dir / "08_report_data.json"
     p.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
@@ -9779,120 +9699,55 @@ class TestModelsReported:
 
 
 class TestReport08NarrativeMinChars:
-    """[[ADR-H052]] 결정 5 — 서술 필드(배운 점 · 다음 런) 80자 미만이면 되묻는다.
+    """서술 4절(문제·원인·해결·계약이 어디서 부족했는가)은 80자 미만이면 되묻는다.
 
     `5568`(FR-009) 의 08 은 서술이 통째로 비었고 그 런은 07 major 6건으로
-    최다였다 — 「왜 그랬는가는 이 런이 말하지 않았다」. **등급은 건드리지
-    않는다.** 보고서 파일은 쓰되 런을 닫지 않고 같은 명령을 다시 청한다.
-    이미 닫힌 런의 재작성은 되묻지 않는다 — 전이는 한 번뿐이다.
+    최다였다 — 「왜 그랬는가는 이 런이 말하지 않았다」 (ADR-H052 결정 5).
+    **등급은 건드리지 않는다.** 보고서 파일은 쓰되 런을 닫지 않고 같은 명령을
+    다시 청한다. 이미 닫힌 런의 재작성은 되묻지 않는다 — 전이는 한 번뿐이다.
     """
 
     def test_79자면_exit_8_이고_등급은_그대로다(self, repo, request_file, phases):
         run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths, narrative={"배운 점": "가" * 79})
+        _report_data(paths, narrative={"문제": "가" * 79, "원인": LONG_LESSON,
+                                       "해결": LONG_LESSON})
         env = cli.run_report(repo, run_id=run_id)
         assert env["exit"] == 8, env["render"]
         assert env["data"]["closed"] is False
-        assert "배운 점" in env["render"] and "80" in env["render"], env["render"]
+        assert "문제" in env["render"] and "80" in env["render"], env["render"]
         assert env["next_command"] and "report" in env["next_command"]
         _p, s = st.load(repo, run_id)
         assert s["grade"] == "PASS", "등급 X"
         assert s["run_status"] != st.DONE
         kinds = [e for e in st.read_events(paths) if e["kind"] == "check_fail"
                  and e["data"].get("short_narrative")]
-        assert kinds, "되물은 사실이 원장에 남는다"
+        assert kinds, "되물은 사실이 기록에 남는다"
 
-    def test_next_run_도_같은_규칙이다(self, repo, request_file, phases):
+    def test_contract_gaps_도_같은_규칙이다(self, repo, request_file, phases):
         run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths, next_run="짧다")
+        _report_data(paths, contract_gaps="짧다")
         env = cli.run_report(repo, run_id=run_id)
         assert env["exit"] == 8, env["render"]
-        assert "next_run" in env["render"] or "다음 런" in env["render"]
+        assert "contract_gaps" in env["render"]
 
-    def test_80자면_닫힌다(self, repo, request_file, phases):
+    def test_배운_점과_next_run_은_비어도_닫힌다(self, repo, request_file, phases):
+        """네 절 밖은 선택이다 — 있으면 렌더하고 없어도 되묻지 않는다."""
         run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths, narrative={"배운 점": "가" * 80}, next_run="나" * 80)
+        _report_data(paths, narrative={"문제": LONG_LESSON, "원인": LONG_LESSON,
+                                       "해결": LONG_LESSON}, next_run="")
         env = cli.run_report(repo, run_id=run_id)
         assert env["exit"] == 11, env["render"]
 
     def test_short_narrative_는_순수_함수다(self):
-        got = rep_mod.short_narrative({"narrative": {"배운 점": "x"},
-                                       "next_run": "y" * 80})
-        assert [k for k, _n in got] == ["narrative.배운 점"], got
-        assert rep_mod.short_narrative({"narrative": {"배운 점": "x" * 80},
-                                        "next_run": "y" * 80}) == []
+        full = {"narrative": {"문제": "x" * 80, "원인": "x" * 80, "해결": "x" * 80},
+                "contract_gaps": "y" * 80}
+        assert rep_mod.short_narrative(full) == []
+        got = rep_mod.short_narrative(dict(full, contract_gaps="y"))
+        assert [k for k, _n in got] == ["contract_gaps"], got
         assert rep_mod.NARRATIVE_MIN_CHARS == 80
-
-
-class TestPilotLogAppend:
-    """[[ADR-H052]] 결정 4 — 08 이 PILOT-LOG 의 `## 런 기록` 에 런 절을 붙인다.
-
-    PILOT-LOG 는 15런 뒤에도 비어 있었다. 골격은 파일 상단에 이미 있고, 상태에
-    있는 값만 채우고 나머지는 「미측정」이다. 같은 run_id 절은 교체한다 —
-    재작성이 멱등이어야 08 을 두 번 돌린 런이 두 절을 만들지 않는다.
-    """
-
-    HEAD = "# 파일럿 기록\n\n## 런 절의 형식\n\n(골격)\n\n---\n\n## 런 기록\n\n<!-- 첫 런이 여기에 자기 절을 연다. -->\n"
-
-    def _log(self, repo, text=None):
-        p = repo / "docs" / "harness" / "PILOT-LOG.md"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(self.HEAD if text is None else text, encoding="utf-8")
-        return p
-
-    def test_절이_상태값과_미측정으로_채워진다(self, repo, request_file, phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _p, s = st.load(repo, run_id)
-        sec = rep_mod.pilot_log_section(s, st.phase_durations(paths),
-                                        "docs/harness/pipeline/runs/%s.md" % run_id,
-                                        number=3)
-        assert sec.startswith("## 파이프라인 런 P3 — `x`"), sec[:60]
-        assert "_workspace/runs/%s" % run_id in sec
-        assert "미측정" in sec
-        assert "runs/%s.md" % run_id in sec
-
-    def test_런_기록_아래에_붙고_재작성은_교체다(self, repo, request_file, phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _p, s = st.load(repo, run_id)
-        log = self._log(repo)
-        assert rep_mod.append_pilot_log(repo, s, st.phase_durations(paths), "r.md")
-        text = log.read_text(encoding="utf-8")
-        assert text.count("## 파이프라인 런 P1") == 1, text
-        assert text.index("## 런 기록") < text.index("## 파이프라인 런 P1")
-        s["grade"] = "PASS_WITH_GAPS"
-        assert rep_mod.append_pilot_log(repo, s, st.phase_durations(paths), "r.md")
-        text = log.read_text(encoding="utf-8")
-        assert text.count("## 파이프라인 런 P1") == 1, "같은 run_id 는 교체다"
-        assert "PASS_WITH_GAPS" in text
-
-    def test_번호는_기존_절_수_더하기_1_이다(self, repo, request_file, phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _p, s = st.load(repo, run_id)
-        self._log(repo, self.HEAD + "\n## 파이프라인 런 P1 — `a` (2026-01-01)\n\n"
-                        "| 런 ID | `_workspace/runs/other` |\n")
-        rep_mod.append_pilot_log(repo, s, {}, "r.md")
-        text = (repo / "docs" / "harness" / "PILOT-LOG.md").read_text(encoding="utf-8")
-        assert "## 파이프라인 런 P2" in text, text
-
-    def test_헤딩이_없으면_건너뛰고_거짓을_돌려준다(self, repo, request_file, phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _p, s = st.load(repo, run_id)
-        self._log(repo, "# 다른 파일\n")
-        assert rep_mod.append_pilot_log(repo, s, {}, "r.md") is False
-        assert rep_mod.append_pilot_log(repo, s, {}, "r.md") is False
-        (repo / "docs" / "harness" / "PILOT-LOG.md").unlink()
-        assert rep_mod.append_pilot_log(repo, s, {}, "r.md") is False
-
-    def test_report_가_붙이고_봉투가_말한다(self, repo, request_file, phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        self._log(repo)
-        _report_data(paths)
-        env = cli.run_report(repo, run_id=run_id)
-        assert env["exit"] == 11, env["render"]
-        text = (repo / "docs" / "harness" / "PILOT-LOG.md").read_text(encoding="utf-8")
-        assert run_id in text
-        assert env["data"]["pilot_log"] == "docs/harness/PILOT-LOG.md", env["data"]
-        assert "PILOT-LOG" in env["render"]
+        assert rep_mod.NARRATIVE_REQUIRED == (
+            ("narrative", "문제"), ("narrative", "원인"), ("narrative", "해결"),
+            ("contract_gaps",))
 
 
 class TestReport08:
@@ -9906,6 +9761,17 @@ class TestReport08:
                / ("%s.md" % run_id)).read_text(encoding="utf-8")
         for sec in rep_mod.REQUIRED_SECTIONS:
             assert sec in out, sec
+
+    def test_07_passed_뒤_report_가_런을_닫는다(self, repo, request_file, phases):
+        """07 record(done · 0건) → 08 requires 충족 → report 가 exit 11 로 닫는다."""
+        run_id, paths = _enter_07(repo, request_file, phases)
+        env = cli.run_record(repo, "07", str(_r07(paths)), run_id=run_id)
+        assert env["exit"] in (0, 11), env["render"]
+        _report_data(paths)
+        env = cli.run_report(repo, run_id=run_id)
+        assert env["exit"] == 11, env["render"]
+        _p, s = st.load(repo, run_id)
+        assert s["run_status"] == st.DONE
 
     def test_페이즈별_호출과_07_escaped_가_보고서에_있다(self, repo, request_file,
                                                      phases):
@@ -10662,350 +10528,6 @@ def _trace_ledger(repo, runs, slug="out_of_contract", category="NAMING"):
             _finding(category=category, severity="critical",
                      source="contract-trace", rule_slug=slug,
                      title="%s 의 계약 밖 심볼" % rid)])
-
-
-def _rules_md(repo, text):
-    (repo / "CLAUDE.md").write_text(text, encoding="utf-8")
-
-
-def _set_project(repo, **kw):
-    p = repo / "harness" / "config.json"
-    cfg = harness._read_json(p)
-    cfg["project"].update(kw)
-    p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-class TestInstructionReview08:
-    """08 끝 지시문 검토 게이트 (ADR-H056 추기).
-
-    prose 후보는 07 판정자가 13/13 skip 했다. 08 에서 메인이 검토하고 결과를
-    파일로 내며, **자진신고를 기계가 대조한다** — 흡수했다면 지시문 파일이 실제로
-    바뀌었어야 하고, 후보는 흡수·기각 중 정확히 한쪽이어야 한다.
-    """
-
-    def _prose(self, repo):
-        _fill_ledger(repo, "인가 규칙 누락", "AUTHZ_MISSING_RULE", "critical",
-                     ["r1", "r2"])
-        return ldg.stage_promotions(repo)["prose_candidates"][0]["rule_key"]
-
-    def _run(self, repo, run_id, paths):
-        _report_data(paths)
-        return cli.run_report(repo, run_id=run_id)
-
-    def _record(self, repo, run_id):
-        return (repo / "docs" / "harness" / "pipeline" / "runs"
-                / ("%s.md" % run_id))
-
-    def _absorb(self, repo, paths, key, **change):
-        _rules_md(repo, "# 가드레일\n\n- 인가 규칙은 캐치올보다 앞에 둔다\n")
-        c = {"file": "CLAUDE.md", "summary": "인가 규칙 순서 한 줄",
-             "rule_keys": [key]}
-        c.update(change)
-        _instruction_review(repo, paths, absorbed=[key], changes=[c])
-
-    def test_파일이_없으면_exit_8_이고_런을_닫지_않는다(self, repo, request_file,
-                                                       phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        (paths.run_dir / "08_instruction_review.json").unlink()
-        env = self._run(repo, run_id, paths)
-        assert env["exit"] == 8, env["render"]
-        assert "08_instruction_review.json" in env["render"]
-        _p, s = st.load(repo, run_id)
-        assert s.get("run_status") != st.DONE
-        assert not self._record(repo, run_id).exists()
-        _instruction_review(repo, paths)
-        assert self._run(repo, run_id, paths)["exit"] == 11, "같은 명령으로 닫힌다"
-
-    def test_닫힌_런의_재작성은_파일을_요구하지_않는다(self, repo, request_file,
-                                                    phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        assert self._run(repo, run_id, paths)["exit"] == 11
-        (paths.run_dir / "08_instruction_review.json").unlink()
-        assert self._run(repo, run_id, paths)["exit"] == 0
-
-    def test_후보를_흡수도_기각도_안_하면_exit_8(self, repo, request_file,
-                                                 phases):
-        key = self._prose(repo)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        env = self._run(repo, run_id, paths)
-        assert env["exit"] == 8, env["render"]
-        assert key in env["render"]
-
-    def test_흡수와_기각_양쪽에_있으면_exit_8(self, repo, request_file, phases):
-        key = self._prose(repo)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        self._absorb(repo, paths, key)
-        d = json.loads((paths.run_dir / "08_instruction_review.json")
-                       .read_text(encoding="utf-8"))
-        _instruction_review(repo, paths, absorbed=d["absorbed"],
-                            changes=d["changes"],
-                            declined=[{"rule_key": key, "reason": "무관"}])
-        assert self._run(repo, run_id, paths)["exit"] == 8
-
-    def test_기각_사유가_비면_exit_8(self, repo, request_file, phases):
-        key = self._prose(repo)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _instruction_review(repo, paths,
-                            declined=[{"rule_key": key, "reason": "  "}])
-        assert self._run(repo, run_id, paths)["exit"] == 8
-
-    def test_후보가_아닌_키는_exit_8(self, repo, request_file, phases):
-        """lint 후보를 여기서 은퇴시키는 우회를 막는다 — 07 의 일이다."""
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _instruction_review(repo, paths,
-                            declined=[{"rule_key": "없는키", "reason": "무관"}])
-        assert self._run(repo, run_id, paths)["exit"] == 8
-
-    def test_흡수했는데_바꾼_파일이_없으면_exit_8(self, repo, request_file,
-                                                  phases):
-        key = self._prose(repo)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _instruction_review(repo, paths, absorbed=[key], changes=[])
-        assert self._run(repo, run_id, paths)["exit"] == 8
-
-    def test_지시문_목적지_밖_파일은_exit_8(self, repo, request_file, phases):
-        key = self._prose(repo)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        (repo / "src" / "lib" / "match.ts").write_text("// 바뀜\n",
-                                                        encoding="utf-8")
-        self._absorb(repo, paths, key, file="src/lib/match.ts")
-        env = self._run(repo, run_id, paths)
-        assert env["exit"] == 8 and "src/lib/match.ts" in env["render"]
-
-    def test_diff_에_없는_파일은_exit_8(self, repo, request_file, phases):
-        """파일 한 줄 안 바꾸고 후보를 은퇴시키는 경로를 막는다."""
-        key = self._prose(repo)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _instruction_review(repo, paths, absorbed=[key], changes=[
-            {"file": "CLAUDE.md", "summary": "바꿨다", "rule_keys": [key]}])
-        assert self._run(repo, run_id, paths)["exit"] == 8
-
-    def test_06_push_이전_변경은_증거가_아니다(self, repo, request_file, phases):
-        key = self._prose(repo)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _rules_md(repo, "# 가드레일\n\n- 옛 규칙\n")
-        _commit_all(repo, "docs: 기능 PR 의 규칙 변경")
-        _p, s = st.load(repo, run_id)
-        s["pr"]["head_sha"] = _git(repo, "rev-parse", "HEAD").stdout.strip()
-        st.save(_p, s)
-        _instruction_review(repo, paths, absorbed=[key], changes=[
-            {"file": "CLAUDE.md", "summary": "바꿨다", "rule_keys": [key]}])
-        assert self._run(repo, run_id, paths)["exit"] == 8
-
-    def test_대응하는_변경이_없는_흡수는_exit_8(self, repo, request_file, phases):
-        key = self._prose(repo)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        self._absorb(repo, paths, key, rule_keys=[])
-        assert self._run(repo, run_id, paths)["exit"] == 8
-
-    def test_흡수하면_원장에_은퇴가_남고_후보에서_사라진다(self, repo,
-                                                         request_file, phases):
-        key = self._prose(repo)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        self._absorb(repo, paths, key)
-        env = self._run(repo, run_id, paths)
-        assert env["exit"] == 11, env["render"]
-        rows = [r["retire"] for r in ldg.read_all(repo) if "retire" in r]
-        assert len(rows) == 1 and rows[0]["rule_key"] == key, rows
-        assert rows[0]["run_id"] == run_id
-        assert rows[0]["reason"].startswith("absorbed:CLAUDE.md"), rows
-        assert ldg.stage_promotions(repo)["prose_candidates"] == []
-        assert self._run(repo, run_id, paths)["exit"] == 0
-        assert sum(1 for r in ldg.read_all(repo) if "retire" in r) == 1, "멱등"
-
-    def test_skill_이_null_이면_사람_검토_gap_이고_등급은_그대로다(
-            self, repo, request_file, phases):
-        _set_project(repo, instruction_review={"skill": None})
-        run_id, paths = _enter_08(repo, request_file, phases)
-        env = self._run(repo, run_id, paths)
-        assert env["exit"] == 11, env["render"]
-        _p, s = st.load(repo, run_id)
-        assert "instruction_review_manual" in s["gaps"], s["gaps"]
-        assert s["grade"] == "PASS"
-
-    def test_config_와_다른_skill_은_exit_8(self, repo, request_file, phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _instruction_review(repo, paths, skill="other:skill")
-        assert self._run(repo, run_id, paths)["exit"] == 8
-
-    def test_보고서_리뷰_표가_검토와_기각_사유를_적는다(self, repo, request_file,
-                                                      phases):
-        key = self._prose(repo)
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _instruction_review(repo, paths, declined=[
-            {"rule_key": key, "reason": "이 런의 변경과 무관하다"}])
-        assert self._run(repo, run_id, paths)["exit"] == 11
-        out = self._record(repo, run_id).read_text(encoding="utf-8")
-        review = out.split("## 리뷰")[1].split("## 캘리브레이션 상태")[0]
-        assert "지시문 검토" in review and "지시문 슬롯" in review, review
-        assert "이 런의 변경과 무관하다" in review
-        assert "2회 / 2런" in review, review
-
-    def test_08_페이즈가_검토_파일을_요구한다(self):
-        text = (ROOT / "harness" / "phases" / "08-report.md").read_text(
-            encoding="utf-8")
-        assert "08_instruction_review.json" in text
-        cfg = harness._read_json(ROOT / "harness" / "config.json")
-        assert cfg["project"]["instruction_review"]["skill"]
-
-
-class TestInstructionSlots:
-    """`instruction_slot_budget` 의 소비자 (ADR-H056 · 계측은 ADR-H074 가 고쳤다).
-
-    `CRITICAL:` 라벨은 자기 선언이라 세지 않는다 — 최상위 불릿 수를 잰다.
-    **세는 집합은 `rules_read` 증명 대상 전체**이고 **초과는 관측이지 gap 이 아니다.**
-    """
-
-    def _slots(self, repo):
-        return cli._instruction_slots(repo, harness._read_json(
-            repo / "harness/config.json"))
-
-    def test_펜스_표_들여쓴_불릿은_세지_않는다(self, repo):
-        _rules_md(repo, "# t\n- a\n  - 하위\n```\n- 펜스 안\n```\n"
-                        "| - 표 |\n* b\n+ c\n")
-        assert self._slots(repo)["used"] == 3, self._slots(repo)
-
-    def test_번호_목록도_한_칸이다(self, repo):
-        """**변이 테스트** — 「작업 원칙」 4개가 번호 목록이라 통째로 빠져 있었다.
-
-        파일 자신이 "넷 다 기계가 안 잡는 산문" 이라 적은 가장 비싼 규칙이다.
-        """
-        _rules_md(repo, "# t\n- a\n")
-        before = self._slots(repo)["used"]
-        _rules_md(repo, "# t\n- a\n1. 첫째\n2. 둘째\n")
-        assert self._slots(repo)["used"] == before + 2, self._slots(repo)
-
-    def test_rules_dir_직속_md_도_센다(self, repo):
-        """**변이 테스트** — 규칙을 다른 파일로 옮기면 예산이 비는 착시를 막는다.
-
-        `docs/` 직속 `*.md` 는 워커가 **전원 매번 읽고 sha256 증명까지** 한다.
-        세는 집합이 증명하는 집합과 같아야 한다.
-        """
-        _rules_md(repo, "# t\n- a\n")
-        before = self._slots(repo)["used"]
-        (repo / "docs").mkdir(parents=True, exist_ok=True)
-        (repo / "docs" / "RULES.md").write_text(
-            "# 규칙\n- x\n- y\n- z\n", encoding="utf-8")
-        got = self._slots(repo)
-        assert got["used"] == before + 3, got
-        assert got["per_file"]["docs/RULES.md"] == 3, got
-
-    def test_rules_exclude_는_세지_않는다(self, repo):
-        """하네스 자신이 쓰는 파일은 규칙이 아니다 (백로그 23)."""
-        _rules_md(repo, "# t\n- a\n")
-        before = self._slots(repo)["used"]
-        (repo / "docs").mkdir(parents=True, exist_ok=True)
-        (repo / "docs" / "PIPELINE-LOG.md").write_text(
-            "# 로그\n- 한 줄\n- 두 줄\n", encoding="utf-8")
-        got = self._slots(repo)
-        assert got["used"] == before, got
-        assert "docs/PIPELINE-LOG.md" not in got["per_file"], got
-
-    def test_파일별_수를_남긴다(self, repo):
-        """어느 문서가 비대해졌는지는 합계로 말할 수 없다."""
-        _rules_md(repo, "# t\n- a\n- b\n")
-        got = self._slots(repo)
-        assert got["per_file"] == {"CLAUDE.md": 2}, got
-
-    def test_예산을_넘어도_gap_이_아니라_관측이다(self, repo, request_file,
-                                                  phases):
-        """**ADR-H074 가 뒤집은 테스트.**
-
-        전에는 `instruction_slot_over_budget` 을 단언했다. 클론 4/4런이 같은
-        `17/12` 였고 이 템플릿도 상수다 — **런 내용과 무관한 값**이라 매 런 울리는
-        경보가 됐고, 그런 표시는 gap 목록 전체를 둔감하게 만든다.
-        **숫자는 그대로 보고서에 남는다** — 사라진 것은 경보뿐이다.
-        """
-        _rules_md(repo, "# 규칙\n" + "".join("- 규칙 %d\n" % i
-                                             for i in range(13)))
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths)
-        env = cli.run_report(repo, run_id=run_id)
-        assert env["exit"] == 11, env["render"]
-        _p, s = st.load(repo, run_id)
-        assert "instruction_slot_over_budget" not in (s.get("gaps") or []), s["gaps"]
-        assert s["grade"] == "PASS"
-        out = (repo / "docs" / "harness" / "pipeline" / "runs"
-               / ("%s.md" % run_id)).read_text(encoding="utf-8")
-        assert "13/12" in out, out
-
-    def test_실물_CLAUDE_MD_의_작업_원칙이_세어진다(self):
-        """실물이 깨지면 이 테스트가 먼저 깨진다 — 번호 목록 넷이 빠졌던 자리다."""
-        cfg = harness._read_json(ROOT / "harness" / "config.json")
-        got = cli._instruction_slots(ROOT, cfg)
-        assert got["per_file"]["CLAUDE.md"] >= 17, got
-
-    def test_규칙이_산문뿐이면_재지_못했다고_적는다(self, repo, request_file,
-                                                   phases):
-        _rules_md(repo, "# 규칙\n\n모든 입력은 검증한다.\n")
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths)
-        cli.run_report(repo, run_id=run_id)
-        _p, s = st.load(repo, run_id)
-        assert "instruction_slot_unmeasured" in s["gaps"], s["gaps"]
-
-    def test_제목뿐인_파일은_0이고_gap_이_아니다(self, repo, request_file,
-                                                  phases):
-        run_id, paths = _enter_08(repo, request_file, phases)
-        _report_data(paths)
-        cli.run_report(repo, run_id=run_id)
-        _p, s = st.load(repo, run_id)
-        assert not [g for g in s.get("gaps") or []
-                    if g.startswith("instruction_slot")], s["gaps"]
-
-
-class TestInstructionChangedOnPr:
-    """지시문 변경이 기능 PR 에 실리는 것은 새 결정이다 (ADR-H056 추기).
-
-    지시문은 06 승인 지문 밖이라 05·07 리뷰어가 못 본다 — 닫힌 런의 PR 갱신이
-    그것을 gap 과 본문 절로 드러낸다. 커밋되지 않았으면 `run_record_missing`
-    과 같은 급의 강등이다.
-    """
-
-    def _closed_with_change(self, repo, request_file, phases, tmp_path):
-        run_id, paths = TestRunRecordMissing._pushed_done(
-            self, repo, request_file, phases, tmp_path)
-        rec = repo / "docs" / "harness" / "pipeline" / "runs" / ("%s.md" % run_id)
-        rec.parent.mkdir(parents=True, exist_ok=True)
-        rec.write_text("# 런 보고서\n", encoding="utf-8")
-        _commit_all(repo, "chore: 런 기록")
-        _rules_md(repo, "# 가드레일\n\n- 인가 규칙은 캐치올보다 앞에 둔다\n")
-        _instruction_review(repo, paths, changes=[
-            {"file": "CLAUDE.md", "summary": "인가 규칙 순서 한 줄",
-             "rule_keys": ["k1"]}])
-        return run_id, paths
-
-    def test_커밋된_규칙_변경은_비강등_gap_과_본문_절이다(self, repo, request_file,
-                                                        phases, tmp_path):
-        run_id, paths = self._closed_with_change(repo, request_file, phases,
-                                                 tmp_path)
-        _commit_all(repo, "docs: 규칙 흡수")
-        env = cli.run_pr(repo, run_id=run_id)
-        assert env["exit"] == 0, env["render"]
-        _p, s = st.load(repo, run_id)
-        assert "instruction_changed" in s["gaps"], s["gaps"]
-        assert "instruction_change_missing" not in s["gaps"]
-        assert s["grade"] == "PASS", s["gaps"]
-        body = (paths.run_dir / "06_pr_body.md").read_text(encoding="utf-8")
-        assert "규칙 변경" in body and "인가 규칙 순서 한 줄" in body, body
-
-    def test_커밋되지_않은_규칙_변경은_강등이다(self, repo, request_file, phases,
-                                                tmp_path):
-        run_id, paths = self._closed_with_change(repo, request_file, phases,
-                                                 tmp_path)
-        env = cli.run_pr(repo, run_id=run_id)
-        _p, s = st.load(repo, run_id)
-        assert "instruction_change_missing" in s["gaps"], s["gaps"]
-        assert s["grade"] == "PASS_WITH_GAPS"
-        assert "CLAUDE.md" in env["render"]
-
-    def test_규칙_변경이_없으면_본문_절도_없다(self, repo, request_file, phases,
-                                              tmp_path):
-        run_id, paths = TestRunRecordMissing._pushed_done(
-            self, repo, request_file, phases, tmp_path)
-        cli.run_pr(repo, run_id=run_id)
-        body = (paths.run_dir / "06_pr_body.md").read_text(encoding="utf-8")
-        assert "규칙 변경" not in body
 
 
 class TestInlineBudgetIsEnforced:

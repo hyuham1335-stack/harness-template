@@ -263,31 +263,21 @@ Critical/Major 가 새로 나오면 `record` 가 gap `pr_review_open` 으로 등
 ### 08-report 에서
 
 ```bash
-python scripts/pipeline/cli.py promote --flush --run-id <id>
 python scripts/pipeline/cli.py report --run-id <id>
 ```
 
 `08_report_data.json` 하나만 쓴다 (20KB 이하). **08 은 diff 도 코드도 읽지
 않는다.** 표는 실행기가 조립하니 너는 서술만 쓴다 — **재지 않은 것을 숫자로
-적지 마라.** `배운 점`·`next_run` 은 80자 이상이다 — 미달이면 exit 8 로 되묻는다.
-
-`report` 전에 **지시문 검토**를 한다 (ADR-H056). config 의
-`project.instruction_review.skill` 을 부르고 입력은 `promote --scan`·보고서의
-「지시문 검토 후보」와 이 런의 「배운 점」이다. 결과를 `08_instruction_review.json`
-으로 옮겨 적는다 — 형식과 규칙은 `08-report.md` 「제출 형식」. 없거나 어긋나면
-`report` 가 exit 8 로 되묻는다. 흡수한 지시문 변경은 런 기록과 같이 커밋한다.
+적지 마라.** `문제`·`원인`·`해결`·`contract_gaps` 는 80자 이상이다 — 미달이면
+exit 8 로 되묻는다. 형식은 `08-report.md` 「제출 형식」.
 
 `report` 가 exit 11 로 런을 닫으면 **런 기록을 기능 PR 에 싣는다** (ADR-H052):
 
 ```bash
-git add docs/harness/pipeline/runs/<id>.md docs/harness/PILOT-LOG.md docs/harness/pipeline/ledger/
+git add docs/harness/pipeline/runs/<id>.md
 git commit -m "chore: 파이프라인 실행 기록 반영 (<id> 런)"
 python scripts/pipeline/cli.py pr --run-id <id>      # 닫힌 런의 PR 갱신 — 06 record 로 이어지지 않는다
 ```
-
-기록이 diff 에 없으면 gap `run_record_missing` 으로 등급이 내려간다. 검토가
-바꾼 지시문 파일도 같다 — 커밋돼 있으면 `instruction_changed`(비강등) 와 PR
-본문 「규칙 변경」 절, 빠졌으면 `instruction_change_missing` 이다.
 
 ## 3. 종료 보고
 
