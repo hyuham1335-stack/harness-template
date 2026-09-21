@@ -898,6 +898,7 @@ def lint_phases(root, phases_dir=None):
         _lint_converge(name, front, add)
         _lint_skip_policy(name, front, add)
         _lint_conditions(name, front, add)
+        _lint_requires(name, front, loaded, add)
 
         # ── 플레이스홀더와 경로
         _lint_placeholders(name, front, ctx, add)
@@ -945,6 +946,46 @@ def lint_phases(root, phases_dir=None):
     _lint_cycle(loaded, add)
     _lint_reviewers(root, config, add)
     return out
+
+
+# `init` 이 쓰는 런 파일. 어느 페이즈의 produces 에도 본문에도 없지만 requires 가
+# 가리킬 수 있다 — 정본은 `state.RunPaths.request` 다.
+INIT_WRITTEN = ("00_original_request.md",)
+
+
+def _lint_requires(name, front, loaded, add):
+    """`requires` 가 가리키는 것이 실재하는가.
+
+    `state` 포인터 `phases.<id>.status` 의 `<id>` 는 로드된 페이즈여야 하고,
+    `file` 의 `${run.dir}/<이름>` 은 어느 페이즈의 `produces` 나 본문, 또는
+    실행기가 `init` 에서 쓰는 목록(`INIT_WRITTEN`)에 있어야 한다. 없으면
+    `check_requires` 가 전이를 **조용히 보류**한다 — 파일을 만드는 기계를 지웠는데
+    선언이 남은 `08_instruction_review.json` 이 그 모양이었다.
+    """
+    produced = {Path(p.get("path") or "").name
+                for item in loaded.values()
+                for p in (item["front"].get("produces") or [])
+                if isinstance(p, dict)}
+    bodies = "\n".join(item.get("body") or "" for item in loaded.values())
+    for req in front.get("requires") or []:
+        if not isinstance(req, dict):
+            continue
+        if req.get("kind") == "state":
+            m = re.match(r"^phases\.([^.]+)\.status$", str(req.get("pointer") or ""))
+            if m and m.group(1) not in loaded:
+                add(name, "requires_phase", "FAIL",
+                    "requires 가 없는 페이즈를 가리킨다: %r — 전이가 조용히 보류된다"
+                    % req.get("pointer"))
+        elif req.get("kind") == "file":
+            path = str(req.get("path") or "")
+            if not path.startswith("${run.dir}/"):
+                continue
+            fname = path[len("${run.dir}/"):]
+            if fname in produced or fname in INIT_WRITTEN or fname in bodies:
+                continue
+            add(name, "requires_file", "FAIL",
+                "requires 의 %r 를 만드는 자리가 없다 — 어느 페이즈의 produces 에도, "
+                "본문에도, 실행기의 init 목록에도 없다. 전이가 조용히 보류된다" % fname)
 
 
 def _lint_submit_checks(name, front, declared, add):

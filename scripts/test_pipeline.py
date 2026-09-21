@@ -1011,6 +1011,28 @@ class TestLintPhases:
     def test_shipped_phase_files_pass(self, repo, phases):
         assert _fails(_lint(repo)) == []
 
+    def test_requires_state_pointer_must_name_a_real_phase(self, repo, phases):
+        """`phases.<id>.status` 가 없는 페이즈를 가리키면 `check_requires` 가 전이를
+        **조용히 보류**한다 — 페이즈를 지울 때 lint 가 먼저 문다."""
+        _rewrite(phases / "08-report.md",
+                 lambda f: f["requires"].__setitem__(
+                     0, dict(f["requires"][0], pointer="phases.99-nope.status")))
+        assert _fails(_lint(repo), "requires_phase")
+
+    def test_requires_file_nobody_writes_fails(self, repo, phases):
+        """어느 페이즈의 produces 에도 본문에도 실행기 목록에도 없는 파일을 요구하면
+        FAIL — `08_instruction_review.json` 이 그렇게 고아가 된 적이 있다."""
+        _rewrite(phases / "07-pr-review.md",
+                 lambda f: f["requires"].append(
+                     {"kind": "file", "path": "${run.dir}/nobody_writes_me.json",
+                      "min_bytes": 1}))
+        assert _fails(_lint(repo), "requires_file")
+
+    def test_requires_file_written_by_init_passes(self, repo, phases):
+        """`00_original_request.md` 는 `init` 이 쓴다 — produces 에 없어도 통과다."""
+        assert _fails(_lint(repo), "requires_file") == []
+        assert _fails(_lint(repo), "requires_phase") == []
+
     def test_missing_frontmatter_fence(self, repo, phases):
         (phases / "01-plan.md").write_text("# 본문만 있다\n", encoding="utf-8")
         assert _fails(_lint(repo), "frontmatter")
