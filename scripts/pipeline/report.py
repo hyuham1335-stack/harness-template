@@ -468,21 +468,6 @@ def _models_cell(state):
         "\n".join("  - %s" % b for b in node.get("blind_spots") or []))
 
 
-def _cost_cell(cost):
-    """「비용(있으면)」. 값이 없으면 **`미계측`** 이라고 적는다 — 0 이 아니다.
-
-    `cmd_cost` 는 트랜스크립트의 `cost-state` 를 읽고, 08 을 돌리는 세션 자신은
-    아직 그 줄을 안 썼다 — 그래서 값이 있어도 **미완**이다 (ADR-H032 · H052).
-    파일럿 클론처럼 `cmd_cost` 가 없는 리포에서는 항상 `미계측` 이다.
-    """
-    if not cost or "cost_usd" not in cost:
-        return "미계측 — `cmd_cost` 가 값을 내지 못했다"
-    sessions = [c for c in (cost.get("sessions") or [])
-                if c.get("basis") == "touched"]
-    return "$%.2f (세션 %d · 읽지 못한 세션 %d · 08 세션은 미완이라 제외)" % (
-        cost["cost_usd"], len(sessions), cost.get("unread_sessions") or 0)
-
-
 def _counter_cell(node):
     """`used / max` 와, 지급이 있었으면 그 사실까지.
 
@@ -606,7 +591,7 @@ def _tbl(rows):
     return out
 
 
-def build(state, data, calibration, promotions, timing=None, cost=None):
+def build(state, data, calibration, promotions, timing=None):
     """보고서 마크다운. 반환: (text, missing_sections).
 
     **필수 섹션이 빠져도 파이프라인을 실패시키지 않는다** — 원장에 기록만
@@ -686,8 +671,6 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
         # **지시된 등급이지 실측이 아니다** (ADR-H044). 어느 모델이 돌았는지
         # 실행기는 보지 못한다 — blind spot 이 셀 안에 같이 적힌다.
         ("지시된 모델 등급", _models_cell(state)),
-        # 비용은 있으면 적고 없으면 `미계측` 이다. 0 으로 적지 않는다.
-        ("비용(있으면)", _cost_cell(cost)),
     ])
     lines += _timing_lines(timing)
 

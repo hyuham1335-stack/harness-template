@@ -4892,180 +4892,10 @@ def _approve_render(node, pid):
     ])
 
 
-# ------------------------------------------------------------------------ cost
-
-# 런 비용 귀속의 어휘. 원장 줄은 `run.run_id` 를 갖지만 그것만으로 합산하면
-# 안 된다 — `session_log._latest_run` 이 **가장 최근 런 디렉터리를 무조건**
-# 집으므로 런이 닫힌 뒤 시작한 세션도 그 id 를 단다 (M59).
-COST_BASIS = ("touched", "latest_only")
-
-# 이 기준이 틀리는 세 방향. `BUDGET_BLIND_SPOTS` 와 같은 자리다 —
-# **양방향으로 틀리므로 "하한" 이라고 부르지 않는다.**
-COST_BLIND_SPOTS = (
-    "원장에 이 run_id 를 안 단 세션은 애초에 목록에 없다 — 그 런을 실제로 "
-    "돌린 세션이라도 그렇다 (과소). unread 는 목록에 있는데 못 읽은 수뿐이다",
-    "touched 세션도 런 밖 작업을 섞을 수 있다 (과다)",
-    "cost-state 가 없는 세션은 합계에서 빠진다 (과소)",
-    "hasUnknownModelCost 면 그 세션은 비용 대신 플래그만 적는다 (과소)",
-)
-
-
-def cmd_cost(root, args):
-    return st.emit(run_cost(root, run_id=args.run_id))
-
-
-def run_cost(root, run_id=None, transcript_root=None):
-    """런 비용을 원장 + 트랜스크립트에서 **읽는 시점에** 집계한다. 0 / 3.
-
-    **보고서에 넣지 않는다.** 08 은 그 세션 안에서 돌고 그 세션의 비용이
-    보통 그 런에서 제일 큰데, `cost-state` 는 트랜스크립트의 마지막 줄로
-    써져 그 시점에 아직 없다. 찍는 순간 **구조적으로 미완인 숫자가 영구
-    기록에 굳는다.** 사람이 세션이 끝난 뒤 이 명령을 부른다.
-
-    귀속 기준(`COST_BASIS`)은 **세션 창과 런 구간이 겹치는가**다. 세션 창은
-    `[직전 원장 줄의 ts, 이 줄의 ts]`(앞이 없으면 열려 있다)이고 런 구간은
-    `[created_at, updated_at]` 이다. **한 시점으로 보면 안 된다** — P8 은
-    17:20 에 시작해 다음날 01:08 에 닫혔고 세션 둘이 걸쳐 있어서, `updated_at`
-    만 보면 앞 세션이 통째로 빠진다.
-
-    판정할 수 없으면 `basis` 키를 만들지 않는다 — `latest_only` 로 단정하면
-    못 잰 것이 "무관하다" 는 주장으로 바뀐다.
-    `commits_since.kind` 가 기준을 같은 줄에 적는 것과 같은 규율이다.
-    """
-    import runtime            # run_report 가 report 를 부르는 것과 같은 자리다
-
-    root = Path(root)
-    paths, s = st.load(root, run_id)
-    if s is None:
-        return st.envelope("cost", False, 3, None, {},
-                           "런이 없다. `--run-id` 를 확인한다.", None)
-    rid = s["run_id"]
-    # 런의 **구간**이다. 한 시점(`updated_at`)만 보면 여러 세션에 걸친 런의
-    # 앞 세션들이 전부 빠진다 — P8 은 17:20 에 시작해 다음날 01:08 에 닫혔고
-    # 세션 둘이 걸쳐 있다.
-    born = st._parse_stamp(s.get("created_at"))
-    updated = st._parse_stamp(s.get("updated_at"))
-
-    # 원장은 main 체크아웃 하나다. worktree 에서 불리면 `root/docs/…` 에는 없다.
-    common = harness._git(root, "rev-parse", "--path-format=absolute",
-                          "--git-common-dir")
-    ledger_root = (Path(common.stdout.strip()).parent
-                   if common is not None and common.returncode == 0
-                   and common.stdout.strip() else root)
-    ledger_path = ledger_root / "docs" / "pipeline-ledger.jsonl"
-    rows = []
-    if ledger_path.exists():
-        for line in ledger_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                rows.append(json.loads(line))
-            except ValueError:
-                continue
-
-    sessions = []
-    for idx, row in enumerate(rows):
-        # worktree 에서 돈 런은 `worktrees[].run` 칸에 있다.
-        run_ids = [(row.get("run") or {}).get("run_id")] + [
-            (wt.get("run") or {}).get("run_id")
-            for wt in row.get("worktrees") or [] if isinstance(wt, dict)]
-        if rid not in run_ids:
-            continue
-        start = st._parse_stamp(rows[idx - 1].get("ts")) if idx else None
-        end = st._parse_stamp(row.get("ts"))
-        # 두 구간이 겹치면 그 세션은 런이 살아 있는 동안 돌았다. 판정은
-        # `session_log` 가 쓰는 시점에 부르는 것과 **같은 함수**다 (M59).
-        touched = st.session_touched_run(born, updated, start, end)
-        basis = None if touched is None else (
-            "touched" if touched else "latest_only")
-        cell = {"session_id": row.get("session_id"), "ts": row.get("ts")}
-        if basis:
-            # 판정할 수 없으면 키를 만들지 않는다 — latest_only 로 단정하면
-            # 못 잰 것이 "무관하다" 는 주장으로 바뀐다.
-            cell["basis"] = basis
-        sessions.append(cell)
-
-    if not sessions:
-        return st.envelope("cost", False, 3, s, {"run_id": rid},
-                           "원장에 이 런의 세션이 없다.", None)
-
-    totals = {}
-    unread = 0
-    for cell in sessions:
-        if cell.get("basis") != "touched":
-            continue
-        got = runtime.read_cost_state(
-            cell["session_id"], transcript_root=transcript_root)
-        if not got:
-            unread += 1
-            continue
-        cell["cost_usd"] = got.get("session_cost_usd")
-        # 세션 누적 이름을 런 합계 이름으로 옮긴다. 둘은 다른 것이고,
-        # 읽는 쪽이 `session_` 을 그대로 보면 런 총액을 한 세션의 값으로 읽는다.
-        for src_key, dst_key in (("session_cost_usd", "cost_usd"),
-                                 ("session_input_tokens", "input_tokens"),
-                                 ("session_output_tokens", "output_tokens"),
-                                 ("session_thinking_tokens", "thinking_tokens"),
-                                 ("session_cache_read", "cache_read"),
-                                 ("session_cache_write", "cache_write")):
-            val = got.get(src_key)
-            if isinstance(val, (int, float)) and not isinstance(val, bool):
-                totals[dst_key] = round(totals.get(dst_key, 0) + val, 4)
-        if got.get("unknown_model_cost"):
-            cell["unknown_model_cost"] = True
-
-    data = {"run_id": rid, "basis": list(COST_BASIS),
-            "blind_spots": list(COST_BLIND_SPOTS),
-            "sessions": sessions, "unread_sessions": unread}
-    data.update(totals)
-
-    counted = [c for c in sessions if c.get("basis") == "touched"]
-    excluded = [c for c in sessions if c.get("basis") == "latest_only"]
-    lines = ["## 런 비용 — %s" % rid, ""]
-    lines.append("합산 대상 세션 **%d** · 읽지 못한 세션 **%d**"
-                 % (len(counted), unread))
-    if "cost_usd" in data:
-        lines.append("")
-        lines.append("**$%.2f**" % data["cost_usd"])
-    else:
-        lines.append("")
-        lines.append("**비용을 재지 못했다** — 읽은 세션이 없다. "
-                     "0 으로 적지 않는다.")
-    if excluded:
-        lines += ["", "합산에서 뺀 세션 (`latest_only` — 이 런을 만진 적이 "
-                      "없는데 원장이 최신 런 id 를 달았다):"]
-        lines += ["- `%s` (%s)" % (c.get("session_id"), c.get("ts"))
-                  for c in excluded]
-    lines += ["", "기준: **touched** — 세션 창 `[직전 원장 줄의 ts, 이 줄의 "
-                  "ts]` 과 런 구간 `[created_at, updated_at]` 이 겹치는 세션만 "
-                  "센다. 한 시점으로 보면 여러 세션에 걸친 런의 앞 세션이 빠진다."]
-    lines += ["- %s" % x for x in COST_BLIND_SPOTS]
-    return st.envelope("cost", True, 0, s, data, "\n".join(lines), None)
-
-
 # ---------------------------------------------------------------------- report
 
 def cmd_report(root, args):
     return st.emit(run_report(root, args.out, args.run_id))
-
-
-def _report_cost(root, s):
-    """08 의 「비용(있으면)」 입력. **`run_cost` 를 부르는 유일한 자리다.**
-
-    `run_cost` 가 값을 못 내면(exit ≠ 0 · `cost_usd` 없음 · 예외) None 이고
-    보고서는 `미계측` 을 적는다. 세션 원장·`cmd_cost` 를 걷어낸 클론은 이
-    함수 본문을 `return None` 으로 두면 된다 — 그것이 델타 병합의 전부다.
-    """
-    try:
-        env = run_cost(root, run_id=s.get("run_id"))
-    except (OSError, ValueError, KeyError, ImportError):
-        return None
-    if not env or env.get("exit") != 0:
-        return None
-    data = env.get("data") or {}
-    if "cost_usd" not in data:
-        return None
-    return data
 
 
 def run_report(root, out=None, run_id=None):
@@ -5185,11 +5015,10 @@ def run_report(root, out=None, run_id=None):
             "min_runs": harness.ADAPTER_VERIFY_MIN_RUNS,
             "rules_missing": sorted(_missing)}
     # 소요는 `events.jsonl` 의 유도값이고, 08 시점에 그 파일은 이미 완결이다
-    # — 미완 구간이 없다. 비용은 그 반대라 **있으면** 적고 아니면 `미계측` 이다
-    # (ADR-H032 · ADR-H052 결정 2).
+    # — 미완 구간이 없다.
     timing = st.phase_durations(paths)
     text, missing = rep.build(s, data, cal or {}, s.get("promotions") or [],
-                              timing, cost=_report_cost(root, s))
+                              timing)
 
     target = Path(out) if out else (
         root / "docs" / "harness" / "pipeline" / "runs"
@@ -6402,9 +6231,6 @@ def build_parser():
     sp.add_argument("--out", dest="out", default=None)
     sp.add_argument("--run-id", dest="run_id", default=None)
 
-    sp = sub.add_parser("cost", add_help=False)
-    sp.add_argument("--run-id", dest="run_id", default=None)
-
     sp = sub.add_parser("review07", add_help=False)
     sp.add_argument("--external", dest="external", default=None)
     sp.add_argument("--run-id", dest="run_id", default=None)
@@ -6467,7 +6293,6 @@ HANDLERS = {
     "promote": cmd_promote,
     "review07": cmd_review07,
     "report": cmd_report,
-    "cost": cmd_cost,
 }
 
 

@@ -423,7 +423,7 @@ class TemplateDocsAreNotDanglingTest(unittest.TestCase):
     """가리키는 문서가 실재하는지 묻는다 — 매달린 참조는 조용히 통과한다.
 
     추출은 `docs/` 직속 문서를 안 실었는데(ADR-H002 가 *"프로젝트가 채우는 자리"*
-    라 정했다) `CLAUDE.md` 의 문서 표와 `.claude/commands/log.md` 는 그것들을
+    라 정했다) `CLAUDE.md` 의 문서 표는 그것들을
     읽으라고 가리켰다. **가리키는 쪽과 가리켜지는 쪽이 어긋나도 아무것도 안
     깨진다** — 클론하는 사람이 없는 파일을 찾다 포기할 뿐이다.
 
@@ -432,8 +432,7 @@ class TemplateDocsAreNotDanglingTest(unittest.TestCase):
     """
 
     #: 참조를 캐낼 파일들. 산문이 아니라 **경로를 지시로 쓰는** 자리만 본다.
-    SOURCES = ("README.md", "CLAUDE.md", ".claude/commands/feature.md",
-               ".claude/commands/log.md")
+    SOURCES = ("README.md", "CLAUDE.md", ".claude/commands/feature.md")
 
     #: `docs/…` 형태의 마크다운 경로. 백틱 안팎을 모두 잡되 확장자로 좁힌다.
     PATTERN = re.compile(r"/?(docs/[A-Za-z0-9_\-./]+\.md)")
