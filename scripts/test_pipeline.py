@@ -5523,7 +5523,7 @@ class TestScopeSelectorWidth:
     def _select(self, repo, text):
         # `list_files` 는 추적 파일만 본다 — 새로 쓴 것을 인덱스에 올린다.
         _git(repo, "add", "-A")
-        config, adapter, _c = _load(repo)
+        config, adapter = _load(repo)
         return contract_mod.test_selectors(
             repo, config, adapter, contract_mod.parse(text, config))
 
@@ -5606,7 +5606,7 @@ class TestScopeSeesUntrackedFiles:
             "import { doFresh } from './fresh';\n", encoding="utf-8")
 
     def _select(self, repo):
-        config, adapter, _c = _load(repo)
+        config, adapter = _load(repo)
         return contract_mod.test_selectors(
             repo, config, adapter, contract_mod.parse(self.CONTRACT, config))
 
@@ -5639,7 +5639,7 @@ class TestScopeSeesUntrackedFiles:
         """같으니까 안 적는 것이 아니라, 갈라지면 보이게 적는다."""
         self._fresh(repo)
         got = self._select(repo)
-        config, adapter, _c = _load(repo)
+        config, adapter = _load(repo)
         contract_path = _write_contract(repo, self.CONTRACT)
         trace = tr.run(repo, config, adapter, contract_path, changed=[])
         assert got["repo_files"] == trace["repo_files"], (got, trace["repo_files"])
