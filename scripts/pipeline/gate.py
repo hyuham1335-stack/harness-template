@@ -5,11 +5,11 @@
 끝난 뒤 한 번이다. **루프 안에서 전체 회귀를 돌리지 않는 것이 이 설계의 가장 큰
 절감이다.**
 
-`--replay` 는 러너만 갈아끼운다. 귀속·시그니처·flip·등급·리포트 쓰기는 실행
-경로와 문자 그대로 같다 — 그래야 픽스처가 실물의 대역이 된다.
+`runner` 는 스테이지 실행만 갈아끼운다(테스트가 스텁을 준다). 등급·리포트·테스트
+수 신호는 실행 경로와 문자 그대로 같다. 실패를 역할에 귀속하지 않는다 — 작성자가
+하나이고, 실패 출력은 `cli._gate_fail` 이 그대로 되돌린다 (ADR-H075).
 """
 
-import json
 import sys
 from pathlib import Path
 
@@ -19,8 +19,8 @@ sys.path.insert(0, str(_HERE.parent))
 
 import harness  # noqa: E402
 import adapters  # noqa: E402
-import attribution as attr  # noqa: E402
 import contract as contract_mod  # noqa: E402
+import precheck as pc  # noqa: E402
 import report as rep  # noqa: E402
 import state as st  # noqa: E402
 
@@ -29,49 +29,18 @@ import state as st  # noqa: E402
 GRADE_PASS, GRADE_GAPS, GRADE_INCOMPLETE = st.GRADES
 
 
-def replay_runner(fixture_dir):
-    """픽스처의 manifest 로 러너를 대신한다. **서브프로세스를 부르지 않는다.**"""
-    fixture = Path(fixture_dir)
-    manifest = json.loads((fixture / "manifest.json").read_text(encoding="utf-8"))
-
-    def run(name, argv, cwd, timeout_sec):
-        spec = (manifest.get("stages") or {}).get(name)
-        if spec is None:
-            return 0, ""
-        text = ""
-        if spec.get("stdout"):
-            path = fixture / spec["stdout"]
-            if path.exists():
-                text = path.read_text(encoding="utf-8")
-        return spec.get("exit", 0), text
-
-    run.manifest = manifest
-    run.fixture = fixture
-    return run
-
-
 def run_gate(root, config, adapter, state, phase_front,
-             run_dir, only_stage=None, replay=None, log_path=None):
+             run_dir, only_stage=None, runner=None, log_path=None):
     """게이트 한 회차. 반환은 리포트 dict 이고 상태를 고치지 않는다."""
     root = Path(root)
-    runner = report_root = None
-    repo_files = changed = None
-    if replay:
-        runner = replay_runner(replay)
-        manifest = runner.manifest
-        report_root = Path(replay)
-        repo_files = manifest.get("repo_files")
-        changed = manifest.get("changed_paths") or []
-    else:
-        changed = attr._changed_paths(root) or []
+    changed = pc.changed_files(root, "worktree") or []
 
     steps = ((phase_front.get("gate") or {}).get("steps") or [])
     if only_stage:
         wanted = resolve_stage_selector(steps, only_stage)
         steps = [s for s in steps if s.get("id") in wanted]
 
-    parsed = _parse_contract(root, config, state, replay)
-    symbols = contract_mod.symbols(parsed) if parsed else set()
+    parsed = _parse_contract(root, config, state)
 
     results, gaps = [], []
     loop_failed = None
@@ -80,8 +49,7 @@ def run_gate(root, config, adapter, state, phase_front,
         in_loop = bool(step.get("loop_stage")) or _before_loop_end(steps, sid)
         if loop_failed and in_loop:
             break
-        result = _run_one(root, adapter, sid, step, changed,
-                          parsed, repo_files, runner, log_path)
+        result = _run_one(root, adapter, sid, step, changed, parsed, runner, log_path)
         results.append(result)
         if result["state"] == "skipped":
             gaps.append("stage_%s:%s" % (result["reason"], sid))
@@ -91,7 +59,7 @@ def run_gate(root, config, adapter, state, phase_front,
             if (phase_front.get("gate") or {}).get("fail_fast", True):
                 break
 
-    tests = _tests_signal(root, adapter, results, report_root)
+    tests = _tests_signal(root, adapter, results)
     if tests:
         # **`ran is None`(리포트를 못 찾았다)과 `ran == 0`(테스트가 0개다)은
         # 다른 사실이다.** 앞의 것은 경로 설정 오류일 수 있어 인프라로 다루고,
@@ -107,7 +75,6 @@ def run_gate(root, config, adapter, state, phase_front,
                      "entrypoints": len(parsed.get("entrypoints") or []) if parsed else 0,
                      "unmatched": (parsed or {}).get("unmatched") or [],
                      "scope": (parsed or {}).get("scope")},
-        "rules_inactive": attr.rules_inactive(adapter),
     }
     # **scoped 가 사실상 full 이면 그렇게 부르지 않는다.** 선택자를 넓히면
     # 이 자리가 새 조용한 통과가 된다 — "scoped 통과" 라고 적으면서 전체를
@@ -118,7 +85,6 @@ def run_gate(root, config, adapter, state, phase_front,
         report["tests"] = tests
 
     report["failed"] = loop_failed
-    report["symbols"] = sorted(symbols)
     demoting = [g for g in gaps if not rep.is_non_demoting(g)]
     report["grade"] = GRADE_PASS if (not demoting and loop_failed is None) else (
         GRADE_GAPS if loop_failed is None else None)
@@ -153,15 +119,14 @@ def _before_loop_end(steps, sid):
     return False
 
 
-def _run_one(root, adapter, sid, step, changed, parsed,
-             repo_files, runner, log_path):
+def _run_one(root, adapter, sid, step, changed, parsed, runner, log_path):
     hit = adapters.when_touched_hit(adapter, sid, changed)
     if hit is False:
         return {"id": sid, "state": "skipped", "reason": "not_touched"}
 
     select = None
     if step.get("tests_from") == "contract":
-        select = _selectors(root, adapter, parsed, repo_files)
+        select = _selectors(parsed)
         if not select:
             # 전체 회귀로 낙하시키지 않는다. 낙하시키면 경로 필터의 절감이
             # 조용히 사라지고, 계약 파싱이 실패한 사실이 초록불에 묻힌다.
@@ -171,34 +136,22 @@ def _run_one(root, adapter, sid, step, changed, parsed,
                               log_path=log_path, runner=runner)
 
 
-def _selectors(root, adapter, parsed, repo_files):
+def _selectors(parsed):
     if not parsed:
         return None
     return parsed.get("selectors") or None
 
 
-def _parse_contract(root, config, state, replay):
+def _parse_contract(root, config, state):
     """계약을 읽고 선택자를 미리 조립한다. 없으면 None."""
-    text = None
-    if replay:
-        p = Path(replay) / "contract.md"
-        if p.exists():
-            text = p.read_text(encoding="utf-8")
-    else:
-        rel = ((state or {}).get("contract") or {}).get("path")
-        if rel and (Path(root) / rel).exists():
-            text = (Path(root) / rel).read_text(encoding="utf-8")
-    if text is None:
+    rel = ((state or {}).get("contract") or {}).get("path")
+    if not rel or not (Path(root) / rel).exists():
         return None
+    text = (Path(root) / rel).read_text(encoding="utf-8")
 
     _config, adapter = adapters.load(root)
     parsed = contract_mod.parse(text, config)
-    repo_files = None
-    if replay:
-        manifest = json.loads(
-            (Path(replay) / "manifest.json").read_text(encoding="utf-8"))
-        repo_files = manifest.get("repo_files")
-    sel = contract_mod.test_selectors(root, config, adapter, parsed, repo_files)
+    sel = contract_mod.test_selectors(root, config, adapter, parsed)
     parsed["selectors"] = sel["paths"]
     parsed["unmatched"] = sel["unmatched"]
     parsed["entrypoint_resolver"] = sel["entrypoint_resolver"]
@@ -210,17 +163,17 @@ def _parse_contract(root, config, state, replay):
     return parsed
 
 
-def _tests_signal(root, adapter, results, report_root):
+def _tests_signal(root, adapter, results):
     """**"테스트가 몇 개 돌았는가"를 별도 신호로 본다.**
 
     빈 테스트 스위트는 통과하고, 통과는 초록불로 보인다. 그래서 게이트가
-    초록불인 것과 테스트가 돈 것을 갈라 놓는다 (team-spec P1).
+    초록불인 것과 테스트가 돈 것을 갈라 놓는다 (04-gate.md 「테스트 0개」).
     """
     ran_full = any(r["id"] == "full" and r["state"] == "ran" for r in results)
     if not ran_full:
         return None                     # 안 돌았다. **0 을 만들지 않는다**
 
-    got = adapters.parse_report(root, adapter, report_root)
+    got = adapters.parse_report(root, adapter)
     sig = _tests_count(got, _tests_floor(root))
     if got.get("matched"):
         # 파일별 케이스 수 — 06 PR 본문의 검증 표가 읽는다 (ADR-H058 추기).
@@ -263,60 +216,3 @@ def _tests_count(got, floor):
                 "source": "previous_run"}
     return {"ran": ran, "expected_min": floor, "status": "ok",
             "source": "previous_run"}
-
-
-# ------------------------------------------------------------------ 귀속
-
-def attribute(root, config, adapter, report, state, replay=None, log_text="",
-              stuck_after=2):
-    """실패를 역할에 귀속한다. 반환은 dispatch dict 또는 None(실패 없음).
-
-    `stuck_after` 는 04 프론트매터의 `loop.stuck_after_identical` 이다. 호출부가
-    그 값을 넘기지 않으면 명세의 기본값 2 를 쓴다 — 예전에는 넘길 자리조차 없어
-    선언이 코드에 닿지 않았다 (M33).
-    """
-    failed = report.get("failed")
-    if failed is None:
-        return None
-
-    infra = attr.classify_infra(adapter, failed.get("exit", 1),
-                                log_text or failed.get("output") or "")
-    if infra:
-        return {"owner": "infra", "infra": infra, "stuck": False,
-                "by_owner": {}, "failures": [], "deferred": [], "parallel": False}
-
-    symbols = set(report.get("symbols") or [])
-    repo_files = None
-    if replay:
-        manifest = json.loads(
-            (Path(replay) / "manifest.json").read_text(encoding="utf-8"))
-        repo_files = manifest.get("repo_files")
-    else:
-        # 03 이 방금 만든 파일도 프레임으로 센다 — 추적분만 보면 이 런이
-        # 새로 쓴 코드가 귀속에서 통째로 빠진다 (M50).
-        repo_files = harness.list_files_with_untracked(root)
-
-    text = log_text or failed.get("output") or ""
-    failures = attr.attribute_compile(adapter, config, symbols, text)
-    if not failures:
-        report_root = Path(replay) if replay else None
-        got = adapters.parse_report(root, adapter, report_root)
-        failures = attr.attribute_tests(adapter, config, symbols,
-                                        got.get("failed_units") or [],
-                                        repo_files=repo_files)
-    if not failures:
-        failures = [{"id": "S-1", "kind": "stage", "unit": failed["id"],
-                     "file": None, "ftype": "stage", "message": text[:400],
-                     "frames": [], "owner": "ambiguous",
-                     "owner_reason": "스테이지가 실패했지만 실패 항목을 못 읽었다",
-                     "sig": attr.signature("ambiguous", failed["id"], "stage", text)}]
-
-    flip = (state or {}).setdefault("flip", {})
-    # **쌍이다.** `sig_chain` 은 `owner|sig` 를 쌓는다 — 시그니처만 세면 flip 이
-    # 값을 낼 바로 그 라운드에 정체 감지가 먼저 멈춘다 (M33).
-    prev = (state or {}).get("sig_chain") or []
-    # 사다리는 03 이 실제로 부른 역할로만 만든다 (ADR-H057).
-    roles = (((state or {}).get("phases") or {}).get("03-implement") or {}).get(
-        "dispatched_roles")
-    return attr.dispatch(failures, config, prev, flip, stuck_after=stuck_after,
-                         roles=roles, adapter=adapter)

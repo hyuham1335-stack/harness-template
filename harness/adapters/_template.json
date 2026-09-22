@@ -28,9 +28,6 @@
   "_entrypoint_resolver": "CLI·라이브러리처럼 진입점 개념이 없으면 kind: none. 그 검사만 스킵되고 보고서에 '진입점 미검증'으로 남는다.",
   "entrypoint_resolver": {"kind": "none"},
 
-  "_migration": "마이그레이션 개념이 없으면 null.",
-  "migration": null,
-
   "infra_preflight": [],
   "infra_failure_patterns": []
 }

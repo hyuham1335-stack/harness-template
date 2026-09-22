@@ -149,26 +149,11 @@
       }
     },
     "attribution": {
-      "description": "04-gate 의 실패 귀속 입력. 이 계층에는 아직 소비자가 없다 — 2단계에서 실측 픽스처로 검증한 뒤에만 동작한다고 말할 수 있다.",
+      "description": "테스트 파일 어휘 — 이름은 역사적이다(귀속 기계는 지웠다, ADR-H075). test_file_globs 는 스코프 선택·예산·계약 대조가, e2e_file_globs·import_aliases 는 계약 대조의 테스트 존재 검사가 읽는다.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "compile_error_regex": {
-          "type": "string"
-        },
-        "app_frame_prefixes": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
         "test_file_globs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "symbol_not_found_patterns": {
           "type": "array",
           "items": {
             "type": "string"
@@ -265,32 +250,6 @@
         },
         "_convention_globs_note": {
           "type": "string"
-        }
-      }
-    },
-    "migration": {
-      "description": "마이그레이션 개념이 없는 스택에서는 null. null 은 '검사 없음'으로 기록되지 검사 통과가 아니다.",
-      "type": [
-        "object",
-        "null"
-      ],
-      "required": [
-        "dir",
-        "version_pattern"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "dir": {
-          "type": "string"
-        },
-        "version_pattern": {
-          "type": "string"
-        },
-        "destructive_patterns": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
         }
       }
     },

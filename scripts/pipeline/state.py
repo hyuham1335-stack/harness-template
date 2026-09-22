@@ -87,7 +87,7 @@ EVENT_KINDS = (
     # 05 의 라우팅 결함 진단이 불가능해진다.
     "reviewer_failed",
     "stage_start", "stage_done", "stage_skipped",
-    "attribution", "dispatch", "counter_inc",
+    "dispatch", "counter_inc",
     "escalated", "resumed", "horizon",
     # `horizon` 은 "다음 페이즈가 아직 없다", `run_closed` 는 "런이 끝났다" 다.
     # 하나로 뭉치면 미완성 실행기와 완주한 런을 원장에서 구분할 수 없다.

@@ -10,7 +10,7 @@ test_harness.py 가 unittest 인 것은 더 오래된 층이라 그렇고, 새 �
     D  페이즈 파서       — requires 4종 · 플레이스홀더
     E  01 판정           — quote · 커버리지 · 드리프트 · 단조성
     F  03 제출          — claims 헬퍼
-    G  게이트 · 귀속     — replay 픽스처
+    G  게이트            — 러너 스텁
     H  adapters          — 스테이지 상태 · 타임아웃 · 선택자
     I  3단계 게이트 잠금 — 고유명사 0건 · 스택/언어 교체 무변경
 """
@@ -34,7 +34,6 @@ import harness  # noqa: E402
 import state as st  # noqa: E402
 import cli  # noqa: E402
 import adapters  # noqa: E402
-import attribution as attr  # noqa: E402
 import contract as contract_mod  # noqa: E402
 import verdict as verdict_mod  # noqa: E402
 
@@ -1164,8 +1163,8 @@ class TestLintPhases:
         assert _fails(_lint(repo), "counter")
 
     def test_duplicate_produces_key(self, repo, phases):
-        _rewrite(phases / "04-gate.md",
-                 lambda f: f["produces"][1].__setitem__("key", "gate_report"))
+        _rewrite(phases / "03-implement.md",
+                 lambda f: f["produces"][1].__setitem__("key", "contract"))
         assert _fails(_lint(repo), "produces_key")
 
     def test_cli_lint_phases_exits_two_on_failure(self, repo, phases):
@@ -2252,7 +2251,7 @@ def _write_report(root, tests=1, failures=0, cases=None):
 
 
 # ---------------------------------------------------------------------------
-# G. 게이트 · 귀속 — replay 픽스처
+# G. 게이트 — 러너 스텁
 # ---------------------------------------------------------------------------
 
 CONTRACT_MD = """# 계약: 제목 유사도
@@ -2279,33 +2278,6 @@ CONTRACT_MD = """# 계약: 제목 유사도
 - `MATCH_EMPTY` (400)
 """
 
-FIXTURES = ROOT / "scripts" / "fixtures" / "gate"
-
-
-def make_fixture(base, case, stages, *, tests=None, failures=0, cases="",
-                 with_report=True, with_contract=True, changed=None,
-                 stdouts=None):
-    """replay 픽스처 하나. 어댑터 glob 과 같은 구조로 리포트를 놓는다."""
-    d = Path(base) / case
-    (d / "reports" / "junit").mkdir(parents=True, exist_ok=True)
-    manifest = {"schema": 1, "case": case, "adapter": "nextjs-ts",
-                "stages": stages,
-                "changed_paths": changed or ["src/lib/match.ts",
-                                             "src/lib/match.test.ts"],
-                "repo_files": ["src/lib/match.ts", "src/lib/match.test.ts",
-                               "package.json"]}
-    for name, text in (stdouts or {}).items():
-        (d / ("%s.stdout.txt" % name)).write_text(text, encoding="utf-8")
-        manifest["stages"].setdefault(name, {})["stdout"] = "%s.stdout.txt" % name
-    (d / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    if with_contract:
-        (d / "contract.md").write_text(CONTRACT_MD, encoding="utf-8")
-    if with_report:
-        _write_report_at(d / "reports" / "junit", tests if tests is not None else 1300,
-                         failures, cases)
-    return d
-
 
 def _write_report_at(d, tests, failures, cases=""):
     d.mkdir(parents=True, exist_ok=True)
@@ -2320,16 +2292,6 @@ def _write_report_at(d, tests, failures, cases=""):
 
 ALL_PASS = {"compile": {"exit": 0}, "lint": {"exit": 0}, "check": {"exit": 0},
             "scoped": {"exit": 0}, "full": {"exit": 0}, "build": {"exit": 0}}
-
-
-@pytest.fixture
-def fxdir(tmp_path_factory):
-    """픽스처는 리포 **밖**에 만든다.
-
-    리포 안에 두면 그 파일들이 변경 집합에 들어가 clean_ownership 이 orphan 으로
-    잡는다 — 픽스처가 검사 대상이 되어 버린다.
-    """
-    return tmp_path_factory.mktemp("gatefx")
 
 
 @pytest.fixture
@@ -2348,8 +2310,27 @@ def gated(repo, phases, request_file):
     return repo, paths, s
 
 
-def _gate(repo, fixture, **kw):
-    return cli.run_gate_cmd(repo, phase="04", replay=str(fixture), **kw)
+def _stub_runner(stages, stdouts=None):
+    """스테이지 이름 → (exit, 출력). **서브프로세스를 부르지 않는다.**"""
+    def run(name, argv, cwd, timeout_sec):
+        spec = (stages or {}).get(name)
+        if spec is None:
+            return 0, ""
+        return spec.get("exit", 0), (stdouts or {}).get(name, "")
+    return run
+
+
+def _report(repo, tests=1300, failures=0, cases=""):
+    """어댑터 `test_report.glob` 자리에 리포트를 놓는다 — `full` 이 이것을 센다."""
+    _write_report_at(Path(repo) / "reports" / "junit", tests, failures, cases)
+
+
+def _gate(repo, stages, stdouts=None, **kw):
+    return cli.run_gate_cmd(repo, phase="04", runner=_stub_runner(stages, stdouts), **kw)
+
+
+def _report_of(paths):
+    return json.loads((paths.run_dir / "04_gate_report.json").read_text(encoding="utf-8"))
 
 
 def _finished_run(repo, run_id, closed_at, ran):
@@ -2360,66 +2341,6 @@ def _finished_run(repo, run_id, closed_at, ran):
     if ran is not None:
         s["tests"] = {"ran": ran}
     (d / "state.json").write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8")
-
-
-class TestRulesFired:
-    """어떤 어댑터 규칙이 **판정을 냈는가** — 불린 것과 결정한 것은 다르다.
-
-    banana 19런의 실패 기록 21건은 전부 프레임이 테스트 파일이라
-    `first_app_frame` 이 늘 `None` 이었다. 규칙은 불렸지만 아무것도 결정하지
-    않았고, 그런데도 `verified` 가 올라갔다 ([[ADR-H069]]).
-    """
-
-    def test_컴파일_기록은_정규식이_매칭됐다는_증거다(self, repo, config):
-        _c, adapter = adapters.load(repo)
-        log = "src/lib/match.ts(9,3): error TS2322: Type 'string' is not assignable."
-        got = attr.attribute_compile(adapter, config, set(), log)
-        assert attr.rules_fired(adapter, got) == {"compile_error_regex"}
-
-    def test_심볼_강제는_따로_센다(self, repo, config):
-        _c, adapter = adapters.load(repo)
-        log = ("src/lib/match.test.ts(3,10): error TS2305: "
-               "Module './match' has no exported member 'matchTitle'.")
-        got = attr.attribute_compile(adapter, config, {"matchTitle"}, log)
-        assert attr.rules_fired(adapter, got) == {"compile_error_regex",
-                                                  "symbol_not_found_patterns"}
-
-    def test_앱_프레임이_잡혀야_접두와_glob_이_결정한_것이다(self, repo, config):
-        """단언이 아닌 예외 + 앱 프레임 — `first_app_frame` 이 값을 내는 유일한 경로."""
-        _c, adapter = adapters.load(repo)
-        units = [{"unit": "u", "file": "src/lib/match.test.ts", "ftype": "TypeError",
-                  "message": "boom", "detail": "at src/lib/match.ts:4"}]
-        got = attr.attribute_tests(adapter, config, set(), units,
-                                   repo_files=["src/lib/match.ts",
-                                               "src/lib/match.test.ts"])
-        assert attr.rules_fired(adapter, got) == {"app_frame_prefixes",
-                                                  "test_file_globs"}
-
-    def test_테스트_프레임만_있으면_아무것도_결정하지_않았다(self, repo, config):
-        """banana 21건이 전부 이 모양이었다 — 관측 0 이어야 한다."""
-        _c, adapter = adapters.load(repo)
-        units = [{"unit": "u", "file": "src/lib/match.test.ts",
-                  "ftype": "AssertionError", "message": "expected 1 to be 0",
-                  "detail": "at src/lib/match.test.ts:9"}]
-        got = attr.attribute_tests(adapter, config, set(), units,
-                                   repo_files=["src/lib/match.test.ts"])
-        assert attr.rules_fired(adapter, got) == set()
-
-    def test_못_읽은_대체_기록은_규칙이_아니다(self, repo):
-        _c, adapter = adapters.load(repo)
-        assert attr.rules_fired(adapter, [{"kind": "stage", "frames": []}]) == set()
-
-    def test_실패가_없으면_증거도_없다(self, repo):
-        _c, adapter = adapters.load(repo)
-        assert attr.rules_fired(adapter, []) == set()
-
-    def test_어댑터가_선언하지_않은_규칙은_관측되지_않는다(self, repo):
-        """선언이 없으면 그 규칙은 돌 수가 없다 — 관측에도 나오면 안 된다."""
-        _c, adapter = adapters.load(repo)
-        adapter["attribution"] = dict(adapter["attribution"])
-        adapter["attribution"]["symbol_not_found_patterns"] = []
-        got = attr.rules_fired(adapter, [{"kind": "compile", "in_contract": True}])
-        assert got == {"compile_error_regex"}
 
 
 class TestGateLoopStage:
@@ -2452,41 +2373,36 @@ class TestGateLoopStage:
         assert ids.index("compile") < ids.index("scoped")
         assert steps[ids.index("compile")].get("loop_stage") is True
 
-    def test_stage_loop_은_compile_실패를_잡는다(self, gated, fxdir):
+    def test_stage_loop_은_compile_실패를_잡는다(self, gated):
         repo, paths, s = self._at_05(gated)
-        fx = make_fixture(fxdir, "compile-fails",
-                          dict(ALL_PASS, compile={"exit": 1}))
         env = cli.run_gate_cmd(repo, phase="05", only_stage="loop",
-                               replay=str(fx))
+                               runner=_stub_runner(dict(ALL_PASS, compile={"exit": 1})))
         assert env["exit"] == 4, env["render"]
         ran = {x["id"]: x for x in env["data"]["stages"]}
         assert ran["compile"]["exit"] == 1
         assert "scoped" not in ran, "fail_fast — compile 이 깨지면 scoped 를 안 돈다"
         assert "compile" in env["render"]
 
-    def test_stage_loop_전부_통과면_0_이고_둘_다_돈다(self, gated, fxdir):
+    def test_stage_loop_전부_통과면_0_이고_둘_다_돈다(self, gated):
         repo, paths, s = self._at_05(gated)
-        fx = make_fixture(fxdir, "loop-pass", dict(ALL_PASS))
         env = cli.run_gate_cmd(repo, phase="05", only_stage="loop",
-                               replay=str(fx))
+                               runner=_stub_runner(dict(ALL_PASS)))
         assert env["exit"] == 0, env["render"]
         assert [x["id"] for x in env["data"]["stages"]] == ["compile", "scoped"]
 
-    def test_04_의_loop_은_루프_구간_넷이다(self, gated, fxdir):
+    def test_04_의_loop_은_루프_구간_넷이다(self, gated):
         """`loop` 의 뜻은 페이즈 선언에서 나온다 — 04 는 compile·lint·check·scoped."""
         repo, paths, s = gated
-        fx = make_fixture(fxdir, "loop-04", dict(ALL_PASS))
         env = cli.run_gate_cmd(repo, phase="04", only_stage="loop",
-                               replay=str(fx))
+                               runner=_stub_runner(dict(ALL_PASS)))
         assert env["exit"] == 0, env["render"]
         assert [x["id"] for x in env["data"]["stages"]] == [
             "compile", "lint", "check", "scoped"]
 
-    def test_단일_stage_는_종전대로_그_하나만_돈다(self, gated, fxdir):
+    def test_단일_stage_는_종전대로_그_하나만_돈다(self, gated):
         repo, paths, s = gated
-        fx = make_fixture(fxdir, "single", dict(ALL_PASS))
         env = cli.run_gate_cmd(repo, phase="04", only_stage="scoped",
-                               replay=str(fx))
+                               runner=_stub_runner(dict(ALL_PASS)))
         assert env["exit"] == 0
         assert [x["id"] for x in env["data"]["stages"]] == ["scoped"]
         assert env["data"]["stage"]["id"] == "scoped", "옛 키는 유지한다"
@@ -2500,309 +2416,201 @@ class TestGateLoopStage:
             assert "--stage loop" in text, rel
 
 
-class TestGateReplay:
+class TestGate:
+    """04 는 영수증이다 — 러너 스텁으로 스테이지만 갈아끼우고 나머지는 실물 경로다.
 
-    def test_replay_never_runs_a_stage_for_real(self, gated, fxdir, monkeypatch):
-        """픽스처가 실물 러너를 부르면 replay 의 값이 사라진다.
+    실패를 귀속하지 않는다 (덜어내기 Wave 4 · ADR-H075). 실패 스테이지의 출력이
+    그대로 작성자에게 가고, 인프라 매칭만 카운터를 안 태운다.
+    """
 
-        git 은 부른다(변경 집합·지문) — 막는 것은 **스테이지 실행**이다.
-        """
+    def test_the_stub_never_runs_a_stage_for_real(self, gated, monkeypatch):
+        """git 은 부른다(변경 집합·지문) — 막는 것은 **스테이지 실행**이다."""
         repo, paths, s = gated
-        fx = make_fixture(fxdir, "all-pass", dict(ALL_PASS))
+        _report(repo)
         monkeypatch.setattr(adapters, "_default_runner",
                             lambda *a, **k: pytest.fail("실물 러너를 불렀다"))
-        env = _gate(repo, fx)
+        env = _gate(repo, dict(ALL_PASS))
         assert env["exit"] in (0, 11), env["render"]
 
-    def test_all_pass_grades_pass_with_gaps_for_absent_stages(self, gated, fxdir):
-        """cmd:null 스테이지는 스킵으로 기록되고 등급에 반영된다.
-
-        docs 는 어댑터가 `not_applicable` 로 선언해 `stage_na` 다 — 부재가 아니다.
-        """
+    def test_all_pass_grades_pass_with_gaps_for_absent_stages(self, gated):
+        """cmd:null 스테이지는 스킵으로 기록되고 등급에 반영된다. docs 는 `stage_na` 다."""
         repo, paths, s = gated
-        fx = make_fixture(fxdir, "all-pass", dict(ALL_PASS))
-        env = _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
+        _report(repo)
+        _gate(repo, dict(ALL_PASS))
+        report = _report_of(paths)
         assert "stage_absent:e2e" in report["gaps"]
         assert "stage_na:docs" in report["gaps"]
         assert report["grade"] == "PASS_WITH_GAPS"
 
-    def test_greenfield_zero_tests_is_not_a_green_light(self, gated, fxdir):
-        """3단계 게이트 4번 — 빈 스위트는 통과하고, 통과는 초록불로 보인다."""
+    def test_greenfield_zero_tests_is_not_a_green_light(self, gated):
+        """빈 스위트는 통과하고, 통과는 초록불로 보인다."""
         repo, paths, s = gated
-        fx = make_fixture(fxdir, "greenfield-zero-tests", dict(ALL_PASS), tests=0)
-        env = _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
+        _report(repo, tests=0)
+        env = _gate(repo, dict(ALL_PASS))
+        report = _report_of(paths)
         assert report["tests"]["ran"] == 0
         assert report["tests"]["status"] == "none"
         assert "tests_ran_zero" in report["gaps"]
         assert report["grade"] == "PASS_WITH_GAPS", "PASS 가 아니다"
         assert env["exit"] in (0, 11), "비차단이다 — 진행은 한다"
 
-    def test_missing_report_is_infra_and_spends_no_counter(self, gated, fxdir):
-        """리포트 경로 설정 오류일 수 있다. 구현 역할의 실패로 세지 않는다."""
+    def test_missing_report_is_infra_and_spends_no_counter(self, gated):
+        """리포트 경로 설정 오류일 수 있다. 작성자의 실패로 세지 않는다."""
         repo, paths, s = gated
-        fx = make_fixture(fxdir, "no-report", dict(ALL_PASS), with_report=False)
-        env = _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
+        _gate(repo, dict(ALL_PASS))
+        report = _report_of(paths)
         assert report["tests"]["status"] == "none"
         assert "test_report_missing" in report["gaps"]
         _, after = st.load(repo, paths.run_id)
         assert not (after.get("counters") or {}).get("repair")
 
-    def test_shrank_tests_block(self, gated, fxdir):
+    def test_shrank_tests_return_to_the_writer(self, gated):
         """직전 완주 런의 테스트 수 × 0.9 가 하한이다 — 삭제·스킵을 잡는다."""
         repo, paths, s = gated
         _finished_run(repo, "prev", "2026-01-01T00:00:00+0900", ran=1300)
-        fx = make_fixture(fxdir, "tests-shrank", dict(ALL_PASS), tests=100)
-        env = _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
+        _report(repo, tests=100)
+        env = _gate(repo, dict(ALL_PASS))
+        report = _report_of(paths)
         assert report["tests"]["status"] == "shrank"
         assert report["tests"]["expected_min"] == 1170
         assert report["tests"]["source"] == "previous_run"
-        assert env["exit"] in (4, 5, 10)
+        assert env["exit"] == 4, env["render"]
+        assert "하한" in env["data"]["repair_dispatch"]["reason"]
 
-    def test_no_finished_run_means_no_floor(self, gated, fxdir):
+    def test_no_finished_run_means_no_floor(self, gated):
         """새 클론의 첫 런은 하한이 없다 — 0 이 아니라 None 이고 `ok` 다."""
         repo, paths, s = gated
-        fx = make_fixture(fxdir, "no-floor", dict(ALL_PASS), tests=100)
-        env = _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
+        _report(repo, tests=100)
+        env = _gate(repo, dict(ALL_PASS))
+        report = _report_of(paths)
         assert report["tests"]["expected_min"] is None
         assert report["tests"]["status"] == "ok"
         assert env["exit"] == 0, env["render"]
 
-    def test_floor_skips_finished_runs_without_a_test_count(self, gated, fxdir):
+    def test_floor_skips_finished_runs_without_a_test_count(self, gated):
         """docs 레인처럼 full 이 안 돈 완주 런이 감지를 끄지 않는다."""
         repo, paths, s = gated
         _finished_run(repo, "older", "2026-01-01T00:00:00+0900", ran=1300)
         _finished_run(repo, "newer", "2026-01-02T00:00:00+0900", ran=None)
-        fx = make_fixture(fxdir, "skip-docs-run", dict(ALL_PASS), tests=100)
-        _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
-        assert report["tests"]["expected_min"] == 1170
+        _report(repo, tests=100)
+        _gate(repo, dict(ALL_PASS))
+        assert _report_of(paths)["tests"]["expected_min"] == 1170
 
-    def test_infra_pattern_escalates_without_spending_the_counter(self, gated, fxdir):
+    def test_infra_pattern_escalates_without_spending_the_counter(self, gated):
         repo, paths, s = gated
-        stages = dict(ALL_PASS, scoped={"exit": 1})
-        fx = make_fixture(fxdir, "infra", stages,
-                          stdouts={"scoped": "Error: connect ECONNREFUSED 127.0.0.1:5432\n"})
-        env = _gate(repo, fx)
+        _report(repo)
+        env = _gate(repo, dict(ALL_PASS, scoped={"exit": 1}),
+                    stdouts={"scoped": "Error: connect ECONNREFUSED 127.0.0.1:5432\n"})
         assert env["exit"] == 10
         _, after = st.load(repo, paths.run_id)
         assert not (after.get("counters") or {}).get("repair"), "카운터를 소모하지 않는다"
         assert after["escalated"] is True
+        assert after["escalation"]["options"] == [], "메뉴가 없다 — 자유 서술로 사람에게"
 
-    def test_compile_symbol_error_goes_to_the_primary_role(self, gated, fxdir):
+    def test_a_failed_stage_returns_its_output_to_the_writer(self, gated):
+        """귀속이 없다 — 실패 출력 브리프가 곧 수리 지시이고 작성자 하나에게 간다."""
         repo, paths, s = gated
-        stages = dict(ALL_PASS, compile={"exit": 2})
+        _report(repo)
         log = ("src/lib/match.test.ts(3,10): error TS2305: "
                "Module './match' has no exported member 'matchTitle'.\n")
-        fx = make_fixture(fxdir, "compile-symbol", stages, stdouts={"compile": log})
-        env = _gate(repo, fx)
-        assert env["exit"] == 4
-        assert env["data"]["repair_dispatch"]["owner"] == "impl"
+        env = _gate(repo, dict(ALL_PASS, compile={"exit": 2}), stdouts={"compile": log})
+        assert env["exit"] == 4, env["render"]
+        brief = env["data"]["repair_dispatch"]
+        assert brief["owner"] == "impl"
+        assert brief["stage"] == "compile" and brief["exit"] == 2
+        assert "TS2305" in brief["output"] and "TS2305" in env["render"]
+        assert brief["log"] and brief["log"].endswith(".log")
+        _, after = st.load(repo, paths.run_id)
+        assert after["counters"]["repair"]["used"] == 1
+        assert "04:r1:impl" in after["budget"]["model_calls"]["counted"]
+        assert [e["kind"] for e in st.read_events(paths)].count("dispatch") == 1
 
-
-    def test_귀속_규칙_관측이_런에_남는다(self, gated, fxdir):
-        """승격 판정의 증거는 **판정이 일어난 순간**에 적힌다 ([[ADR-H069]]).
-
-        완주 런을 나중에 긁는 대신 여기서 적으면 `--replay` 가 공짜로 따라온다
-        — 러너만 갈아끼우고 귀속은 그대로 돌기 때문이다.
-        """
+    def test_the_third_failure_exhausts_the_budget_and_escalates(self, gated):
+        """상한 3 — 세 번째 실패가 exit 5 이고 에스컬레이션에 메뉴가 없다."""
         repo, paths, s = gated
+        _report(repo)
         stages = dict(ALL_PASS, compile={"exit": 2})
-        log = ("src/lib/match.test.ts(3,10): error TS2305: "
-               "Module './match' has no exported member 'matchTitle'.")
-        fx = make_fixture(fxdir, "rules-observed", stages, stdouts={"compile": log})
-        _gate(repo, fx)
+        log = "src/lib/match.ts(9,3): error TS2322: Type mismatch.\n"
+        exits = [_gate(repo, stages, stdouts={"compile": log})["exit"] for _ in range(3)]
+        assert exits == [4, 4, 5], exits
         _, after = st.load(repo, paths.run_id)
-        got = (after["phases"]["04-gate"] or {}).get("attribution_rules")
-        assert got == ["compile_error_regex", "symbol_not_found_patterns"], got
+        assert after["escalated"] is True
+        assert after["counters"]["repair"]["used"] == 3
+        assert after["escalation"]["options"] == []
 
-    def test_규칙_관측은_회차를_거듭해도_중복되지_않는다(self, gated, fxdir):
-        repo, paths, s = gated
-        stages = dict(ALL_PASS, compile={"exit": 2})
-        log = "src/lib/match.ts(9,3): error TS2322: Type 'string' is not assignable."
-        fx = make_fixture(fxdir, "rules-twice", stages, stdouts={"compile": log})
-        _gate(repo, fx)
-        _gate(repo, fx)
-        _, after = st.load(repo, paths.run_id)
-        assert after["phases"]["04-gate"]["attribution_rules"] == ["compile_error_regex"]
-
-    def test_통과한_회차는_관측을_남기지_않는다(self, gated, fxdir):
-        """실패가 없었던 것과 규칙이 돌았다는 것은 다른 사실이다."""
-        repo, paths, s = gated
-        _gate(repo, make_fixture(fxdir, "rules-pass", dict(ALL_PASS)))
-        _, after = st.load(repo, paths.run_id)
-        assert (after["phases"]["04-gate"] or {}).get("attribution_rules") == []
-
-    def test_실패_항목을_못_읽으면_gap_이_붙는다(self, gated, fxdir):
-        """파싱이 깨져도 게이트는 멈추지 않는다 — 표시가 없으면 조용히 산다.
-
-        2026-09-03 에 `compile_error_regex` 가 실물 출력에 0건 매칭이던 버그가
-        오래 살아남은 구조가 이것이다 ([[ADR-H069]]).
-        """
-        repo, paths, s = gated
-        stages = dict(ALL_PASS, lint={"exit": 1})
-        fx = make_fixture(fxdir, "unparsed", stages,
-                          stdouts={"lint": "무엇인지 알 수 없는 출력"})
-        _gate(repo, fx)
-        _, after = st.load(repo, paths.run_id)
-        assert "attribution_unparsed" in (after.get("gaps") or []), after.get("gaps")
-        assert after["grade"] == "PASS_WITH_GAPS"
-
-    def test_scoped_selector_is_a_path_not_a_test_name(self, gated, fxdir):
+    def test_scoped_selector_is_a_path_not_a_test_name(self, gated):
         """M16 — 이름 필터는 파일 수집을 줄이지 못한다."""
         repo, paths, s = gated
-        fx = make_fixture(fxdir, "selector", dict(ALL_PASS))
-        _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
-        scoped = next(x for x in report["stages"] if x["id"] == "scoped")
+        _report(repo)
+        _gate(repo, dict(ALL_PASS))
+        scoped = next(x for x in _report_of(paths)["stages"] if x["id"] == "scoped")
         assert scoped["selector"] == ["src/lib/match.test.ts"]
         assert scoped["selector_kind"] == "path"
-        assert "matchTitle" not in json.dumps(scoped["selector"]), \
-            "테스트 이름이 아니라 파일 경로다"
 
-    def test_no_selector_skips_scoped_and_does_not_fall_back_to_full(self, gated, fxdir):
+    def test_no_selector_skips_scoped_and_does_not_fall_back_to_full(self, gated):
         repo, paths, s = gated
         (repo / "_workspace" / "contract_sim.md").write_text(
             CONTRACT_MD.replace("`lib/match.ts · matchTitle(a: string, b: string): number`",
                                 "`없는파일.ts · nothing()`"), encoding="utf-8")
-        fx = make_fixture(fxdir, "no-selector", dict(ALL_PASS),
-                          with_contract=False)
-        (fx / "contract.md").write_text(
-            CONTRACT_MD.replace("`lib/match.ts · matchTitle(a: string, b: string): number`",
-                                "`없는파일.ts · nothing()`"), encoding="utf-8")
-        _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
+        _report(repo)
+        _gate(repo, dict(ALL_PASS))
+        report = _report_of(paths)
         scoped = next(x for x in report["stages"] if x["id"] == "scoped")
         assert scoped == {"id": "scoped", "state": "skipped", "reason": "no_selector"}
         assert "stage_no_selector:scoped" in report["gaps"]
 
-    def test_when_touched_miss_is_recorded_as_skipped(self, gated, fxdir):
+    def test_when_touched_miss_is_recorded_as_skipped(self, gated):
+        """조건부 스테이지는 워킹트리의 변경 집합으로 판정한다."""
         repo, paths, s = gated
-        fx = make_fixture(fxdir, "untouched", dict(ALL_PASS),
-                          changed=["docs/TRD.md"])
-        _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
-        build = next(x for x in report["stages"] if x["id"] == "build")
+        _report(repo)
+        _gate(repo, dict(ALL_PASS))
+        build = next(x for x in _report_of(paths)["stages"] if x["id"] == "build")
         assert build["reason"] == "not_touched"
 
-    def test_same_signature_twice_escalates_even_with_budget_left(self, gated, fxdir):
+    def test_when_touched_hit_runs_the_stage(self, gated):
         repo, paths, s = gated
-        stages = dict(ALL_PASS, compile={"exit": 2})
-        log = "src/lib/match.ts(9,3): error TS2322: Type mismatch.\n"
-        fx = make_fixture(fxdir, "same-sig", stages, stdouts={"compile": log})
-        first = _gate(repo, fx)
-        assert first["exit"] == 4
-        second = _gate(repo, fx)
-        assert second["exit"] == 10, "동일 시그니처 2회면 예산이 남아도 멈춘다"
+        (repo / "src" / "app").mkdir(parents=True, exist_ok=True)
+        (repo / "src" / "app" / "page.tsx").write_text("export default () => null\n",
+                                                        encoding="utf-8")
+        _report(repo)
+        _gate(repo, dict(ALL_PASS))
+        build = next(x for x in _report_of(paths)["stages"] if x["id"] == "build")
+        assert build["state"] == "ran" and build["exit"] == 0
 
-    def test_the_sig_chain_carries_the_owner(self, gated, fxdir):
-        """M33 — 원장에 쌓이는 것이 시그니처가 아니라 `owner|sig` 쌍이다."""
+    def test_single_stage_run_spends_no_counter_and_keeps_the_report(self, gated):
         repo, paths, s = gated
-        stages = dict(ALL_PASS, compile={"exit": 2})
-        log = "src/lib/match.ts(9,3): error TS2322: Type mismatch.\n"
-        fx = make_fixture(fxdir, "chain-owner", stages, stdouts={"compile": log})
-        _gate(repo, fx)
-        _, after = st.load(repo, paths.run_id)
-        chain = after.get("sig_chain") or []
-        assert chain and all(c.startswith("impl|") for c in chain), chain
-
-    def test_single_stage_run_spends_no_counter_and_keeps_the_report(self, gated, fxdir):
-        repo, paths, s = gated
-        fx = make_fixture(fxdir, "single", dict(ALL_PASS))
-        env = cli.run_gate_cmd(repo, phase="04", only_stage="compile",
-                               replay=str(fx))
+        env = _gate(repo, dict(ALL_PASS), only_stage="compile")
         assert env["exit"] == 0
         assert not (paths.run_dir / "04_gate_report.json").exists()
         _, after = st.load(repo, paths.run_id)
         assert not (after.get("counters") or {}).get("repair")
 
-    def test_단일_스테이지_full_재실행이_테스트_수를_상태에_남긴다(self, gated,
-                                                                   fxdir):
-        """M55 — 수리 뒤 재게이트는 정본이 선언한 정상 경로다.
-
-        `team-spec.md` §3.5: *"수리 후: `gate --stage scoped` → 전체 회귀 1회
-        → 승인 알림."* 그 전체 회귀의 값이 상태에 안 실리면 08 보고서·PR
-        체크리스트·세션 원장 셋이 전부 **마지막 코드 상태가 아닌 수**를
-        증언한다. P7 이 `1423` 을 적었고 마지막 `full` 은 `1424` 를 돌았다.
-
-        **그 회차의 영수증과 카운터는 그대로다** — `only_stage` 는 런을
-        판정하지 않는 경로이고, 그 성질은 바로 위 테스트가 잠근다.
-        """
+    def test_단일_스테이지_full_재실행이_테스트_수를_상태에_남긴다(self, gated):
+        """M55 — 수리 뒤 재게이트의 전체 회귀 값이 상태에 실려야 08·PR 본문이
+        마지막 코드 상태의 수를 말한다. 그 회차의 영수증과 카운터는 그대로다."""
         repo, paths, s = gated
-        _gate(repo, make_fixture(fxdir, "regate-first", dict(ALL_PASS),
-                                 tests=1300))
+        _report(repo, tests=1300)
+        _gate(repo, dict(ALL_PASS))
         _, mid = st.load(repo, paths.run_id)
         assert (mid.get("tests") or {}).get("ran") == 1300, mid.get("tests")
-
-        fx = make_fixture(fxdir, "regate-full", dict(ALL_PASS), tests=1305)
-        env = cli.run_gate_cmd(repo, phase="04", only_stage="full",
-                               replay=str(fx))
+        _report(repo, tests=1305)
+        env = _gate(repo, dict(ALL_PASS), only_stage="full")
         assert env["exit"] == 0, env["render"]
         _, after = st.load(repo, paths.run_id)
         assert (after.get("tests") or {}).get("ran") == 1305, after.get("tests")
-
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
-        assert report["tests"]["ran"] == 1300, "그 회차의 영수증은 안 덮는다"
+        assert _report_of(paths)["tests"]["ran"] == 1300, "그 회차의 영수증은 안 덮는다"
         assert not (after.get("counters") or {}).get("repair")
 
-    def test_단일_스테이지_scoped_는_테스트_수를_건드리지_않는다(self, gated,
-                                                                 fxdir):
-        """`scoped` 는 전체 회귀가 아니다.
-
-        그 수를 「몇 개 돌았나」로 적으면 다음 런의 하한 대조가 무의미해진다.
-        `_tests_signal` 이 `full` 미실행에 `None` 을 내는 것이 그 규율이고,
-        여기서 그것이 상태까지 지켜지는지 본다.
-        """
+    def test_단일_스테이지_scoped_는_테스트_수를_건드리지_않는다(self, gated):
+        """`scoped` 는 전체 회귀가 아니다 — 그 수를 「몇 개 돌았나」로 적지 않는다."""
         repo, paths, s = gated
-        _gate(repo, make_fixture(fxdir, "scoped-first", dict(ALL_PASS),
-                                 tests=1300))
-        fx = make_fixture(fxdir, "scoped-only", dict(ALL_PASS), tests=9999)
-        env = cli.run_gate_cmd(repo, phase="04", only_stage="scoped",
-                               replay=str(fx))
+        _report(repo, tests=1300)
+        _gate(repo, dict(ALL_PASS))
+        _report(repo, tests=9999)
+        env = _gate(repo, dict(ALL_PASS), only_stage="scoped")
         assert env["exit"] == 0, env["render"]
         _, after = st.load(repo, paths.run_id)
         assert (after.get("tests") or {}).get("ran") == 1300, after.get("tests")
-
-    def test_inactive_rules_are_named(self, gated, fxdir):
-        """없는 것과 조용히 안 도는 것을 구분한다."""
-        repo, paths, s = gated
-        fx = make_fixture(fxdir, "inactive", dict(ALL_PASS))
-        _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
-        assert any("migration" in r for r in report["rules_inactive"])
-
-
-class TestCommittedFixtures:
-    """디스크에 커밋된 픽스처 — 3단계 게이트가 이것으로 재현된다."""
-
-    def test_greenfield_fixture_exists_and_is_tracked(self):
-        fx = FIXTURES / "greenfield-zero-tests"
-        assert (fx / "manifest.json").exists()
-        assert (fx / "reports" / "junit" / "report.xml").exists(), \
-            ".gitignore 의 reports/ 앵커가 이 파일을 삼키면 안 된다"
-
-    def test_greenfield_fixture_reproduces_pass_with_gaps(self, gated):
-        repo, paths, s = gated
-        env = _gate(repo, FIXTURES / "greenfield-zero-tests")
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
-        assert report["grade"] == "PASS_WITH_GAPS"
-        assert "tests_ran_zero" in report["gaps"]
 
 
 class TestFlowCommands:
@@ -2877,8 +2685,8 @@ class TestPromotionGate:
             assert list(ROOT.glob(pattern)), "이 glob 이 아무 파일도 안 잡는다: %s" % pattern
 
     def test_gate_2_swapping_the_adapter_leaves_the_core_untouched(self, repo, phases,
-                                                                   fxdir, request_file):
-        """어댑터만 바꿔 lint-phases 와 gate --replay 가 통과하는가."""
+                                                                   request_file):
+        """어댑터만 바꿔 lint-phases 가 통과하는가."""
         second = repo / "harness" / "adapters" / "other.json"
         base = harness._read_json(repo / "harness" / "adapters" / "nextjs-ts.json")
         base["id"] = "other"
@@ -4256,7 +4064,6 @@ class TestStageNotApplicable:
     def test_비강등_판정은_하나의_함수다(self):
         assert rep_mod.is_non_demoting("stage_na:docs")
         assert not rep_mod.is_non_demoting("stage_absent:e2e")
-        assert not rep_mod.is_non_demoting("attribution_unparsed"),             "파싱이 깨진 것은 표시가 아니라 결함이다"
         assert rep_mod.gap_reason("stage_na:docs"), "어휘에 있어야 보고서가 설명한다"
 
     def test_동봉_어댑터가_구조적_부재와_미룬_부재를_가른다(self):
@@ -4294,18 +4101,16 @@ class TestStageNotApplicable:
                     assert "통과가 아니다" not in (spec.get("_note") or ""), \
                         "%s.%s" % (name, sid)
 
-    def test_게이트는_stage_na_만으로_등급을_내리지_않는다(self, gated, fxdir,
-                                                    monkeypatch):
+    def test_게이트는_stage_na_만으로_등급을_내리지_않는다(self, gated, monkeypatch):
         repo, paths, s = gated
         # 다른 gap 을 걷어내 stage_na 만 남긴다 — 1파일 픽스처는 scoped 가
         # 늘 퇴화이고, build 는 when_touched 밖이라 stage_not_touched 다.
         monkeypatch.setattr(contract_mod, "DEGENERATE_RATIO", 2.0)
         self._adapter(repo, e2e=dict(self.NA), docs=dict(self.NA),
                       build={"cmd": ["run", "build"]})
-        fx = make_fixture(fxdir, "all-pass", dict(ALL_PASS))
-        _gate(repo, fx)
-        report = json.loads((paths.run_dir / "04_gate_report.json")
-                            .read_text(encoding="utf-8"))
+        _report(repo)
+        _gate(repo, dict(ALL_PASS))
+        report = _report_of(paths)
         assert "stage_na:docs" in report["gaps"] and "stage_na:e2e" in report["gaps"]
         assert "stage_absent:docs" not in report["gaps"]
         assert [g for g in report["gaps"] if not rep_mod.is_non_demoting(g)] == [], \
@@ -8089,12 +7894,12 @@ class TestPr06WorkSection:
 
 class TestGateTestsByFile:
 
-    def test_full_실행이_파일별_케이스_수를_남긴다(self, gated, fxdir):
+    def test_full_실행이_파일별_케이스_수를_남긴다(self, gated):
         repo, paths, s = gated
         cases = ('<testcase classname="src/lib/match.test.ts" name="a"/>'
                  '<testcase classname="src/lib/match.test.ts" name="b"/>')
-        env = _gate(repo, make_fixture(fxdir, "byfile", dict(ALL_PASS), tests=1300,
-                                       cases=cases))
+        _report(repo, tests=1300, cases=cases)
+        env = _gate(repo, dict(ALL_PASS))
         assert env["exit"] == 0, env["render"]
         _, after = st.load(repo, paths.run_id)
         assert after["tests"]["by_file"] == {"src/lib/match.test.ts": 2}, after["tests"]

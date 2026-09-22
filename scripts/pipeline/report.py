@@ -35,9 +35,6 @@ GAP_REASONS = {
                  "`not_applicable` 로 사유를 선언했다. 표시이고 등급은 "
                  "내리지 않는다 (ADR-H047 추기)"),
     "stage_not_touched": "그 스테이지가 볼 변경이 없었다",
-    "attribution_unparsed": ("스테이지가 실패했는데 귀속이 실패 항목을 하나도 "
-                             "못 읽었다 — 어댑터의 파싱 규칙이 실물 출력에 "
-                             "안 맞는다 (ADR-H069)"),
     "review05": "05 의 리뷰어가 전부 또는 일부 실패했다",
     "infra_skipped": "인프라 프로브 실패로 건너뛴 검증이 있다",
     "precheck_policy_override": ("`precheck` 정책 실패(예산·브랜치·base)를 사람이 "

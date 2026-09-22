@@ -29,7 +29,6 @@ sys.path.insert(0, str(_HERE.parent))
 
 import harness  # noqa: E402
 import adapters  # noqa: E402
-import attribution  # noqa: E402
 
 
 # `--scope` 의 어휘. **셋째 값을 만들지 않는다** — 소비자 없는 어휘를 두는
@@ -224,7 +223,8 @@ def _check_budget(root, config, changed, checks, scope="worktree", adapter=None)
     budget = config.get("budget") or {}
     # **파일 수는 소스만 센다** (ADR-H066). 테스트 파일은 어댑터의 글롭이
     # 가르고, 줄 수는 그대로 전체다 — 테스트가 과대한 PR 은 `lines_max` 가 잡는다.
-    tests = [p for p in changed if attribution.is_test_file(adapter or {}, p)]
+    globs = ((adapter or {}).get("attribution") or {}).get("test_file_globs") or []
+    tests = [p for p in changed if harness.glob_any(globs, p)]
     files = len(changed) - len(tests)
     lines = _changed_lines(root, changed, scope, config)
     over = []

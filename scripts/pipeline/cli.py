@@ -1239,14 +1239,14 @@ def _docs_lane_source_check(root, paths, s, ctx, where, source_changed=None,
     docs 레인은 계약이 없어 03(claims 제출)과 05(라우팅) 두 자리가 따로 묻는다.
     술어는 05 의 라우팅과 같은 `review._source_changed` 다.
     """
-    import attribution
+    import precheck as pc
     import review as review_mod
 
     prof = s.get("profile") or {}
     if prof.get("name") != "docs":
         return False
     if source_changed is None:
-        changed = attribution._changed_paths(root)
+        changed = pc.changed_files(root, "worktree")
         source_changed = bool(changed) and review_mod._source_changed(
             ctx["config"], changed)
     if not source_changed:
@@ -3046,19 +3046,19 @@ _RECORD_HANDLERS = {"01-plan": _record_01,
 # ------------------------------------------------------------------------ gate
 
 def cmd_gate(root, args):
-    return st.emit(run_gate_cmd(root, args.phase, args.stage, args.replay,
-                                args.run_id))
+    return st.emit(run_gate_cmd(root, args.phase, args.stage, args.run_id))
 
 
-def run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
+def run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
+    """`runner` 는 테스트의 스텁 주입 통로다 — CLI 는 주지 않는다."""
     try:
-        return _run_gate_cmd(root, phase, only_stage, replay, run_id)
+        return _run_gate_cmd(root, phase, only_stage, run_id, runner)
     except ConfigDeclarationError as exc:
         _paths, s = st.load(Path(root), run_id)
         return _declaration_envelope("gate", s, exc)
 
 
-def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
+def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
     import gate as gate_mod
 
     root = Path(root)
@@ -3093,7 +3093,7 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
     st.append_event(paths, "stage_start", cmd="gate", phase=pid, round=round_no)
     report = gate_mod.run_gate(root, config, adapter, s,
                                phase_item["front"], paths.run_dir,
-                               only_stage=only_stage, replay=replay,
+                               only_stage=only_stage, runner=runner,
                                log_path=log_path)
     report["at"] = st.stamp()
     report["run_id"] = s["run_id"]
@@ -3139,25 +3139,6 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
     log_text = ""
     if log_path.exists():
         log_text = log_path.read_text(encoding="utf-8", errors="replace")
-    dispatch = gate_mod.attribute(
-        root, config, adapter, report, s, replay=replay, log_text=log_text,
-        stuck_after=((phase_item["front"].get("loop") or {})
-                     .get("stuck_after_identical") or 2))
-
-    # 어느 귀속 규칙이 **판정을 냈는가**를 판정이 일어난 자리에서 적는다
-    # (ADR-H069). 나중에 런들을 긁지 않는 이유: `--replay` 가 이 경로를 그대로
-    # 지나므로 보관된 실물 출력을 되먹이면 관측이 공짜로 따라온다. 두 분기가
-    # 모두 지나는 유일한 자리라 여기서 한 번만 적는다.
-    import attribution
-    _failures = (dispatch or {}).get("failures") or []
-    _node = s.setdefault("phases", {}).setdefault(pid, {})
-    _node["attribution_rules"] = sorted(
-        set(_node.get("attribution_rules") or [])
-        | attribution.rules_fired(adapter, _failures))
-    # 실패는 났는데 항목을 하나도 못 읽었다 — 규칙이 실물 출력에 안 맞는다는
-    # 뜻이고, 지금까지 이 사실에는 아무 표시가 없었다. 비강등이 아니다.
-    if any(f.get("kind") == "stage" for f in _failures):
-        st.demote(s, st.GRADES[1], "attribution_unparsed")
 
     if report.get("tests"):
         s["tests"] = report["tests"]
@@ -3165,55 +3146,36 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
         if gap not in s.setdefault("gaps", []):
             s["gaps"].append(gap)
 
-    if dispatch is None:
-        shrank = (report.get("tests") or {}).get("status") == "shrank"
-        if shrank:
-            return _gate_fail(root, paths, s, phase_item, ctx, report,
-                              {"owner": None, "stuck": False,
-                               "reason": "테스트 수가 하한 아래로 떨어졌다"},
-                              round_no)
+    if report.get("failed") is None:
+        if (report.get("tests") or {}).get("status") == "shrank":
+            return _gate_fail(root, paths, s, phase_item, ctx, adapter, report,
+                              round_no, log_text, reason="테스트 수가 하한 아래로 떨어졌다")
         st.demote(s, report.get("grade") or st.GRADES[1])
         s["fingerprint"] = st.fingerprint(root, config)
-        # 실패가 없어도 회차를 남긴다 — "귀속을 안 했다"와 "귀속할 실패가
-        # 없었다"는 다른 사실이고, 빈 파일이 후자를 말한다.
-        _write_attribution(paths, report,
-                           {"by_owner": {}, "failures": [], "deferred": [],
-                            "owner": None, "stuck": False}, round_no)
         st.append_event(paths, "stage_done", cmd="gate", phase=pid,
                         grade=s["grade"])
         st.save(paths, s)
         return _advance_to_next(root, paths, s, phase_item, ctx, cmd="gate")
 
-    return _gate_fail(root, paths, s, phase_item, ctx, report, dispatch, round_no)
+    return _gate_fail(root, paths, s, phase_item, ctx, adapter, report, round_no,
+                      log_text)
 
 
-def _gate_fail(root, paths, s, phase_item, ctx, report, dispatch, round_no):
-    import gate as gate_mod   # noqa: F401  — 대칭을 위해 남긴다
+def _gate_fail(root, paths, s, phase_item, ctx, adapter, report, round_no, log_text,
+               reason=None):
+    """실패를 **작성자에게 그대로** 되돌린다 — 귀속하지 않는다 (ADR-H075).
 
-    _write_attribution(paths, report, dispatch, round_no)
-    st.append_event(paths, "attribution", cmd="gate", phase="04-gate",
-                    owner=dispatch.get("owner"), stuck=dispatch.get("stuck"))
-
-    if dispatch.get("owner") == "infra":
-        # **카운터를 소모하지 않는다.** 외부 의존 미기동이 구현 역할의 실패로
+    인프라 매칭이면 카운터를 소모하지 않고 에스컬레이션한다. 아니면 `repair` 를
+    하나 쓰고, 상한이면 에스컬레이션, 아니면 실패 스테이지의 출력 브리프를 봉투에
+    싣는다. 작성자가 하나라 누구의 실패인지 물을 것이 없다.
+    """
+    failed = report.get("failed") or {}
+    text = log_text or failed.get("output") or ""
+    infra = adapters.infra_match(adapter, failed.get("exit", 1), text) if failed else None
+    if infra:
+        # **카운터를 소모하지 않는다.** 외부 의존 미기동이 작성자의 실패로
         # 오분류되면 예산을 태운다.
-        st.escalate(paths, s,
-                    "외부 의존 실패로 보인다 (패턴: %s)" % dispatch.get("infra"),
-                    ["의존을 띄우고 `gate` 를 다시 돌린다",
-                     "이 스테이지를 건너뛰고 진행한다(등급에 남는다)", "중단한다"],
-                    phase="04-gate")
-        return _escalation_envelope("gate", paths, s)
-
-    if dispatch.get("stuck"):
-        # **소유자를 이름으로 적는다.** "같은 실패가 두 번" 만으로는 누구에게
-        # 두 번 보냈는지가 안 보이고, 그것이 다음 판단(계약을 고칠 것인가
-        # 범위를 줄일 것인가)에 필요한 사실이다.
-        st.escalate(paths, s,
-                    "같은 실패를 같은 소유자(%s)에게 되풀이해 보냈다 — "
-                    "예산이 남아도 멈춘다 (%s)"
-                    % (dispatch.get("owner") or "?",
-                       ", ".join(dispatch.get("pairs") or [])[:200]),
-                    ["계약을 고쳐 다시 돌린다", "범위를 줄인다", "중단한다"],
+        st.escalate(paths, s, "외부 의존 실패로 보인다 (패턴: %s)" % infra,
                     phase="04-gate")
         return _escalation_envelope("gate", paths, s)
 
@@ -3221,91 +3183,52 @@ def _gate_fail(root, paths, s, phase_item, ctx, report, dispatch, round_no):
                                           _loop_counter(phase_item["front"]),
                                           _loop_max(phase_item["front"]),
                                           "gate_failure", paths=paths)
-    # **쌍을 쌓는다** — `owner|sig`. 시그니처만 쌓으면 flip 이 배정한 다음 역할이
-    # 지시를 받기 전에 정체 감지가 먼저 멈춘다 (M33).
-    s.setdefault("sig_chain", []).extend(dispatch.get("pairs") or [])
     st.set_phase_status(s, "04-gate", "failed")
     st.save(paths, s)
 
     if exceeded:
         _loop_on_exceed(phase_item["front"])
-        st.escalate(paths, s, "수리 예산 %d회를 소진했다" % max_,
-                    ["계약을 고쳐 다시 돌린다", "범위를 줄인다", "중단한다"],
-                    phase="04-gate")
+        st.escalate(paths, s, "수리 예산 %d회를 소진했다" % max_, phase="04-gate")
         return st.envelope("gate", False, 5, s, {"report": report["gaps"]},
                            "## 예산 소진 — 에스컬레이션\n\n`ESCALATION.md` 를 본다.",
                            "python scripts/pipeline/cli.py resume --ack "
                            "--answer-file <경로>")
 
-    brief = _dispatch_brief(dispatch, paths, round_no)
-    # 수리 배정도 기동 지시다. 제출 기준에서는 03 의 재제출로만 잡혀
-    # **어느 페이즈가 태웠는지가 04 에서 03 으로 옮겨 보였다.**
-    repair_keys = ["04:r%d:%s" % (used, dispatch.get("owner"))]
-    st.count_instructions(s, "04-gate", repair_keys)
-    st.append_event(paths, "dispatch", cmd="gate", phase="04-gate",
-                    owner=dispatch.get("owner"))
+    owner = ctx["config"].get("primary_role") or "impl"
+    brief = _gate_brief(report, round_no, owner, text, reason)
+    # 수리 배정도 기동 지시다 (ADR-H064).
+    st.count_instructions(s, "04-gate", ["04:r%d:%s" % (used, owner)])
+    st.append_event(paths, "dispatch", cmd="gate", phase="04-gate", owner=owner)
+    st.save(paths, s)
     return st.envelope("gate", False, 4, s,
                        {"repair_dispatch": brief, "gaps": report.get("gaps")},
-                       _repair_render(dispatch, brief),
+                       _repair_render(brief),
                        "python scripts/pipeline/cli.py gate --phase 04 --run-id %s"
                        % s["run_id"])
 
 
-def _write_attribution(paths, report, dispatch, round_no):
-    path = paths.run_dir / "attribution.json"
-    data = {"schema": 1, "run_id": report.get("run_id"), "rounds": []}
-    if path.exists():
-        try:
-            data = harness._read_json(path)
-        except (OSError, ValueError):
-            pass
-    data.setdefault("rounds", []).append({
-        "round": round_no,
-        "stage": (report.get("failed") or {}).get("id"),
-        "stage_exit": (report.get("failed") or {}).get("exit"),
-        "failures": dispatch.get("failures") or [],
-        "by_owner": {k: [f["id"] for f in v]
-                     for k, v in (dispatch.get("by_owner") or {}).items()},
-        "infra": dispatch.get("owner") == "infra",
-        "deferred": dispatch.get("deferred") or [],
-        "rules_inactive": report.get("rules_inactive") or [],
-    })
-    _write_json(path, data)
-    _write_json(paths.gates / ("gr-%d.dispatch.json" % round_no), dispatch)
-
-
-def _dispatch_brief(dispatch, paths, round_no):
-    """봉투에는 **실패당 60줄 상한**의 브리프만. 전문은 파일에 있다."""
-    owner = dispatch.get("owner")
-    items = (dispatch.get("by_owner") or {}).get(owner) or []
-    brief = []
-    for f in items:
-        lines = (f.get("message") or "").splitlines()[:60]
-        brief.append({"id": f.get("id"), "unit": f.get("unit"),
-                      "file": f.get("file"), "frames": f.get("frames"),
-                      "lines": lines})
+def _gate_brief(report, round_no, owner, text, reason=None):
+    """봉투에는 **출력 끝 60줄 · 4,000자**의 브리프만. 전문은 로그 파일에 있다."""
+    failed = report.get("failed") or {}
+    tail = [ln for ln in (text or "").splitlines() if ln.strip()][-60:]
     return {"round": round_no, "owner": owner,
-            "reason": (items[0].get("owner_reason") if items else None),
-            "failure_count": len(items),
-            "file": "gates/gr-%d.dispatch.json" % round_no,
-            "brief": brief, "deferred": dispatch.get("deferred") or []}
+            "stage": failed.get("id"), "exit": failed.get("exit"),
+            "reason": reason, "output": "\n".join(tail)[-4000:],
+            "log": report.get("log")}
 
 
-def _repair_render(dispatch, brief):
-    lines = ["## 04 게이트 실패 — 수리 지시", "",
-             "**`%s` 에게만** 보낸다. 배정 근거: %s"
-             % (brief["owner"], brief.get("reason") or "-"), ""]
-    for f in brief["brief"]:
-        lines.append("- `%s` %s" % (f["id"], f.get("unit") or ""))
-        if f.get("file"):
-            lines.append("  - 파일: `%s`" % f["file"])
-        for l in (f.get("lines") or [])[:6]:
-            lines.append("  - %s" % l)
-    if brief.get("deferred"):
-        lines += ["", "미룬 것 (동시 배정 금지):"]
-        lines += ["- %s (%d건) — %s" % (d["owner"], d["failure_count"], d["reason"])
-                  for d in brief["deferred"]]
-    lines += ["", "**실패를 다시 분류하지 마라.** 배정은 끝났다.",
+def _repair_render(brief):
+    head = ("스테이지 `%s` 가 exit %s 로 실패했다" % (brief["stage"], brief["exit"])
+            if brief.get("stage") else (brief.get("reason") or "게이트 실패"))
+    lines = ["## 04 게이트 실패 — 수리 지시 (%d회차)" % brief["round"], "",
+             "**`%s` 에게** 되돌린다. %s." % (brief["owner"], head), ""]
+    if brief.get("reason") and brief.get("stage"):
+        lines += [brief["reason"], ""]
+    if brief.get("output"):
+        lines += ["```", brief["output"], "```", ""]
+    lines += ["전문은 `%s` 에 있다." % (brief.get("log") or "gates/"), "",
+              "**출력을 요약해 없애지 마라** — 작성자가 실패 출력을 그대로 받는다. "
+              "계약이 틀렸다고 판단되면 고치지 말고 `CONTRACT_DEFECT` 로 보고한다.",
               "고친 뒤 `gate` 를 다시 돌린다."]
     return "\n".join(lines)
 
@@ -4136,7 +4059,6 @@ def build_parser():
     sp = sub.add_parser("gate", add_help=False)
     sp.add_argument("--phase", dest="phase", default="04")
     sp.add_argument("--stage", dest="stage", default=None)
-    sp.add_argument("--replay", dest="replay", default=None)
     sp.add_argument("--run-id", dest="run_id", default=None)
 
     sp = sub.add_parser("report", add_help=False)

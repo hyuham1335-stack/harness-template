@@ -39,12 +39,6 @@ PHASES_DIR_REL = "harness/phases"
 # harness 를 import 하므로 역방향은 안 된다.
 RUNS_REL = "_workspace/runs"
 
-# 어댑터 `attribution` 의 규칙 이름 = 어댑터 필드명. 승격 판정이 **선언**과
-# **관측**을 같은 어휘로 대조한다 (ADR-H069). 관측을 내는 쪽은
-# `pipeline/attribution.py` 의 `rules_fired` 다 — 그 모듈이 이 모듈을 부르므로
-# 어휘의 집은 여기다.
-ADAPTER_RULE_NAMES = ("compile_error_regex", "symbol_not_found_patterns",
-                      "app_frame_prefixes", "test_file_globs")
 PROFILE_DIR_REL = "harness/profiles"
 
 # 경로 240자 상한 — 한글 식별자가 흔한 리포에서 이게 깨지면 원장이 조용히 오염된다
