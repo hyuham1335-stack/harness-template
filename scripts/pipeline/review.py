@@ -18,7 +18,6 @@ glob 엔진을 쓰면 같은 경로가 두 곳에서 다르게 읽힌다 — 이
 실패다 (M11 · M17).
 """
 
-import re
 import sys
 from pathlib import Path
 
@@ -32,10 +31,6 @@ import verdict  # noqa: E402
 AGENTS_REL = ".claude/agents"
 
 DEFAULT_FINDINGS_MAX = 50
-
-# 05 가 산출하는 리뷰 파일의 이름. `code` 축약을 쓰는 것은 경로 240자 상한 때문이다.
-REVIEW_FILE = "05_review_%s.json"
-
 
 def agent_path(root, agent):
     """리뷰어는 에이전트 파일이다 (ADR-H076 결정 7) — 모델·effort 가 프론트매터에 있다."""
@@ -298,11 +293,3 @@ def inline_budget(config, diff_text):
     return {"inline": not over, "lines": lines, "bytes": size,
             "over": over,
             "fallback": "경로 전달" if over else None}
-
-
-_SEVERITY_HEADING = re.compile(r"(?mi)^#{1,6}\s*(critical|major|minor)\b")
-
-
-def severity_headings(raw_text):
-    """`.raw.md` 의 심각도 헤딩 수. 검증기가 findings 개수와 대조한다."""
-    return len(_SEVERITY_HEADING.findall(raw_text or ""))

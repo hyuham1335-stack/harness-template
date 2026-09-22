@@ -3096,8 +3096,6 @@ def _write_json(path, data):
                           encoding="utf-8")
 
 
-# ---------------------------------------------- advance · retry · escalate · resume
-
 # -------------------------------------------------------------------- precheck
 
 def cmd_precheck(root, args):

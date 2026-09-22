@@ -10,7 +10,6 @@
 신호이므로, 필드를 늘리지 말고 코어에 스테이지·신호를 추가한다.
 """
 
-import json
 import sys
 import time
 from pathlib import Path

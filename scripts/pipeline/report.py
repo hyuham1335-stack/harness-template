@@ -37,14 +37,12 @@ GAP_REASONS = {
     "stage_not_touched": "그 스테이지가 볼 변경이 없었다",
     "review05": "05 의 리뷰어가 전부 또는 일부 실패했다",
     "infra_skipped": "인프라 프로브 실패로 건너뛴 검증이 있다",
-    "tests_not_ran": "테스트가 한 건도 돌지 않았다",
     "pr_closed": "PR 이 닫혔다 — 수리·코멘트를 하지 않았다",
     "pr_merged": "PR 이 이미 머지됐다 — 수리·코멘트를 하지 않았다",
     "pr_review_skipped": ("07 의 `/code-review` 를 사유를 적고 건너뛰었다 — 05 가 "
                           "놓친 것을 잴 표본이 이 런에는 없다"),
     "pr_review_open": ("07 의 `/code-review` 가 05 가 낸 키를 가리키지 않는 "
                        "Critical/Major 를 냈다 — 05 가 놓친 것이고, 수리는 사람이 정한다"),
-    "local_only": "원격이 없어 로컬 커밋까지만 했다",
     "lane_miss": ("선언한 docs 레인이 빗나가 앞 페이즈가 그 양보(콜론 뒤)를 "
                   "적용한 채 지나갔다 — 03·05 의 실물에서 역할 소유 경로가 바뀌었다"),
     # 아래 다섯은 gate.py 가 처음부터 만들던 사유인데 어휘에 없었다 — 파일럿
@@ -87,10 +85,6 @@ def short_narrative(data):
         if n < NARRATIVE_MIN_CHARS:
             out.append((".".join(path), n))
     return out
-
-
-def _sum_phase(timing, key):
-    return sum((c.get(key) or 0) for c in (timing or {}).get("phases", {}).values())
 
 
 def gap_reason(gap):

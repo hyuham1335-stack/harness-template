@@ -1,20 +1,12 @@
-"""코어와 순차 실행기가 함께 쓰는 원시요소.
+"""`state.py` 가 쓰는 시각·인코딩 원시요소.
 
-**이 파일이 생긴 이유는 소유권이지 재사용이 아니다.** 트랜스크립트를 읽는 일과
-출력 인코딩을 고정하는 일은 `scripts/execute.py`(순차 step 실행기) 안에 살고
-있었는데, 8페이즈 코어(`scripts/pipeline/*`)가 그것을 쓰려고
-실행기를 import 했다. 그래서 **코어가 실행기에 의존**했다.
-
-`harness-template` 추출은 실행기를 안 싣는다 — 헤드리스 승인 우회를 클론하는
-사람이 물려받게 하지 않기 위해서다 (ROADMAP 36). 그 상태로 추출하면 코어가
-없는 모듈을 물고 죽는다. 지식을 **그것을 소유해야 할 계층**으로 내린 것이 이
-파일이다 (ADR-H037). [[ADR-H031]] 이 스택 실행기 이름 목록을 코어에서 어댑터
-선언으로 내린 것과 방향만 반대이고 규율은 같다 — 그 상수 이름을 여기 적지 않는
-것은 그것을 감시하는 자물쇠(`CoreHasNoStackNamesTest`)가 인용까지 잡기 때문이고,
-잡는 것이 맞다.
-
-**실행기는 여전히 이것을 쓴다** — 여기서 내보내고 `execute.py` 가 읽는다.
-같은 지식이 두 곳에 살면 한쪽만 고쳐지는 날이 온다.
+시각(`resolve_tz`·`now_iso`)과 출력 인코딩 고정은 한때 순차 실행기(`execute.py`)
+안에 살았고 코어가 그것을 import 했다 — **코어가 실행기에 의존**했다. 지식을
+**그것을 소유해야 할 계층**으로 내린 것이 이 파일이다 (ADR-H037). 실행기는
+이 템플릿에 없다(`CoreDoesNotImportTheExecutorTest` 가 그 자물쇠다). [[ADR-H031]]
+이 스택 실행기 이름 목록을 코어에서 어댑터 선언으로 내린 것과 방향만 반대이고
+규율은 같다 — 그 상수 이름을 여기 적지 않는 것은 그것을 감시하는 자물쇠
+(`CoreHasNoStackNamesTest`)가 인용까지 잡기 때문이고, 잡는 것이 맞다.
 
 모듈명 `runtime` 은 stdlib 과 겹치지 않는다(확인함). `scripts/pipeline/` 이
 stdlib `trace` 를 가리지 않으려고 `trace_contract.py` 를 쓴 것과 같은 확인이다.
@@ -25,7 +17,6 @@ import re
 import sys
 import warnings
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 def resolve_tz():
     """기록에 찍을 타임존을 정한다 — `HARNESS_TZ`, 없으면 시스템 로컬.
