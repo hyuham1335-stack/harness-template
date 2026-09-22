@@ -181,6 +181,12 @@ def _models_cell(state):
         "\n".join("  - %s" % b for b in node.get("blind_spots") or []))
 
 
+def _false_positive_count(state):
+    rounds = ((state.get("phases") or {}).get("01-plan") or {}).get("rounds") or {}
+    return sum(len(sub.get("false_positive") or [])
+               for subs in rounds.values() for sub in subs.values())
+
+
 def _counter_cell(node):
     """`used / max` 와, 지급이 있었으면 그 사실까지.
 
@@ -385,6 +391,9 @@ def build(state, data, timing=None):
         # **프로파일이 리뷰어 상한을 정한다.** 그 값이 어디서 나왔는지가
         # 보고서에 없으면 "리뷰어 1명" 이 계획인지 결함인지 갈리지 않는다 (M34).
         ("프로파일", _profile_cell(state.get("profile"))),
+        # 메인이 코드 근거로 기각한 01 지적 수 — 기각이 잦으면 리뷰어가 아니라
+        # 기각이 검토 대상이다. 근거는 `01_review_r{n}.json` 의 `false_positive` 다.
+        ("01 기각(false_positive)", _false_positive_count(state)),
         # 00 이 무엇을 보고 정했고 어떤 양보가 실제로 적용됐나 (ADR-H044).
         ("00 트리아지", _triage_cell(state)),
         ("트리아지 적용 양보",

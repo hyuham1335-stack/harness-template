@@ -29,6 +29,9 @@
       {"id": "full", "once_after_loop": true, "assert_tests_ran": true}
     ]
   },
+  "submit_checks": [
+    {"id": "monotonicity", "on_fail": 8}
+  ],
   "loop": {
     "counter": "review_repair", "max": 2, "stuck_after_identical": 2,
     "on_exceed": "escalate", "rereview": "delta_single_reviewer",
@@ -118,11 +121,6 @@ ADR-H053). 다른 관점이 매칭됐으면 `dropped` 에 남고 보고서가 �
 **상한을 넘으면 우선순위 뒤쪽부터 빠진다** — `gen · data · sec · test · arch · docs`
 (배열 순서). `test` 가 `arch` 보다 앞이라 넷이 다 매칭되는 `normal` 런에서는 `arch` 가
 `dropped` 로 간다 (ADR-H062).
-
-**봉투가 01 의 자진신고와 라우팅을 대조한다** (ADR-H067). 매칭된 리뷰어(`dropped`
-포함)의 `risk`(`data` → `schema`·`boundary`, `sec` → `authz`·`boundary`)를 INTENT
-`risk` 가 하나도 안 적었으면 `risk_undeclared` 이벤트와 이 페이즈 노드에 한 번 남는다.
-**관측이다** — 등급도 exit 도 바뀌지 않고, 02 를 되돌려 돌리지도 않는다. 네가 할 일은 없다.
 
 각 리뷰어에게 주는 것 — 봉투의 **「리뷰 범위」** 줄이 둘 중 하나를 정한다
 (`review.depth`, 레인별 · ADR-H059):

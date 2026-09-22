@@ -1522,7 +1522,7 @@ class TestRequires:
         target.write_text("가" * 300, encoding="utf-8")
         assert cli.check_requires(repo, req, c, s)[0]["ok"]
         req2 = [{"kind": "file", "path": "${run.dir}/01_plan.md",
-                 "must_contain": "<!-- INTENT"}]
+                 "must_contain": "## 유닛"}]
         assert not cli.check_requires(repo, req2, c, s)[0]["ok"]
 
     def test_file_kind_sha256_pointer(self, ctx):
@@ -1570,7 +1570,7 @@ class TestRequires:
 
 
 # ---------------------------------------------------------------------------
-# E. 01 판정 — quote · 커버리지 · 드리프트 · 단조성
+# E. 01 판정 — 리뷰어 제출 · 수렴 · false_positive
 # ---------------------------------------------------------------------------
 
 REQUEST_TEXT = (
@@ -1578,39 +1578,19 @@ REQUEST_TEXT = (
     "외부 서비스를 새로 부르지는 마.\n")
 
 
-def _plan(intent=None, coverage=None, body=None):
-    """정상 플랜 하나. 인자로 한 군데씩 망가뜨린다."""
-    intent = intent if intent is not None else {
-        "invariants": [
-            {"id": "INV-1", "kind": "must", "text": "빈 문자열은 0",
-             "source_quote": "빈 문자열은 0 을 돌려주고"},
-            {"id": "INV-2", "kind": "must_not", "text": "외부 호출 금지",
-             "source_quote": "외부 서비스를 새로 부르지는 마"},
-        ],
-        "out_of_scope": [],
-        "acceptance": [{"id": "AC-1", "text": "0~1 유사도",
-                        "source_quote": "책 제목 유사도를 재는 함수"}],
-        "risk": [],
-    }
-    coverage = coverage if coverage is not None else {
-        "covers": [{"id": "INV-1", "status": "covered", "plan_section": "## 경계값"},
-                   {"id": "INV-2", "status": "covered", "plan_section": "## 외부 경계"}],
-        "added_scope": [],
-    }
-    body = body if body is not None else (
+def _plan(body=None):
+    """정상 플랜 하나 — 형식은 자유이고 200바이트 이상이면 된다."""
+    return body if body is not None else (
         "# 플랜\n\n## 경계값\n빈 문자열을 먼저 거른다.\n\n"
-        "## 외부 경계\n순수 함수다. 아무것도 부르지 않는다.\n" + "여백 " * 40)
-    return ("<!-- INTENT\n%s\n-->\n\n%s\n\n<!-- COVERAGE\n%s\n-->\n"
-            % (json.dumps(intent, ensure_ascii=False),
-               body,
-               json.dumps(coverage, ensure_ascii=False)))
+        "## 외부 경계\n순수 함수다. 아무것도 부르지 않는다.\n" + "여백 " * 60)
 
 
-def _review(reviewer="plan", round_=1, findings=None, mode="primary",
-            resolved=None):
-    return {"reviewer": reviewer, "round": round_, "mode": mode,
-            "findings": findings if findings is not None else [],
-            "resolved_from_previous": resolved or []}
+def _review(reviewer="plan", round_=1, findings=None, false_positive=None):
+    out = {"reviewer": reviewer, "round": round_,
+           "findings": findings if findings is not None else []}
+    if false_positive is not None:
+        out["false_positive"] = false_positive
+    return out
 
 
 def _raw(findings):
@@ -1655,80 +1635,6 @@ def _submit_review(repo, paths, payload, round_=1):
     j.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     r.write_text(_raw(payload["findings"]), encoding="utf-8")
     return cli.run_record(repo, phase="01", file=str(j), reviewer=code, round_=round_)
-
-
-class TestPlanSubmission:
-
-    def test_clean_plan_is_accepted(self, run01):
-        repo, paths, s = run01
-        env = _submit_plan(repo, paths, _plan())
-        assert env["exit"] == 0, env["render"]
-        assert env["data"]["drift_score"] == 0
-
-    def test_forged_quote_is_rejected(self, run01):
-        """없는 요구를 지어내는 것을 막는 유일한 기계적 손잡이다."""
-        repo, paths, s = run01
-        intent = json.loads(_plan().split("<!-- INTENT\n")[1].split("\n-->")[0])
-        intent["invariants"][0]["source_quote"] = "요청에 없는 문장이다"
-        env = _submit_plan(repo, paths, _plan(intent=intent))
-        assert env["exit"] == 8
-        assert "INV-1" in json.dumps(env["data"], ensure_ascii=False)
-
-    def test_whitespace_only_differences_are_tolerated(self, run01):
-        repo, paths, s = run01
-        intent = json.loads(_plan().split("<!-- INTENT\n")[1].split("\n-->")[0])
-        intent["invariants"][0]["source_quote"] = "빈 문자열은   0 을\n돌려주고"
-        assert _submit_plan(repo, paths, _plan(intent=intent))["exit"] == 0
-
-    def test_coverage_must_hit_each_invariant_exactly_once(self, run01):
-        repo, paths, s = run01
-        cov = {"covers": [{"id": "INV-1", "status": "covered",
-                           "plan_section": "## 경계값"}], "added_scope": []}
-        assert _submit_plan(repo, paths, _plan(coverage=cov))["exit"] == 8
-
-    def test_duplicate_coverage_is_rejected(self, run01):
-        repo, paths, s = run01
-        cov = {"covers": [{"id": "INV-1", "status": "covered", "plan_section": "## 경계값"},
-                          {"id": "INV-1", "status": "covered", "plan_section": "## 경계값"},
-                          {"id": "INV-2", "status": "covered", "plan_section": "## 외부 경계"}],
-               "added_scope": []}
-        assert _submit_plan(repo, paths, _plan(coverage=cov))["exit"] == 8
-
-    def test_plan_section_must_exist_in_the_body(self, run01):
-        repo, paths, s = run01
-        cov = {"covers": [{"id": "INV-1", "status": "covered", "plan_section": "## 없는 절"},
-                          {"id": "INV-2", "status": "covered", "plan_section": "## 외부 경계"}],
-               "added_scope": []}
-        assert _submit_plan(repo, paths, _plan(coverage=cov))["exit"] == 8
-
-    def test_uncovered_needs_a_reason(self, run01):
-        repo, paths, s = run01
-        cov = {"covers": [{"id": "INV-1", "status": "covered", "plan_section": "## 경계값"},
-                          {"id": "INV-2", "status": "dropped"}], "added_scope": []}
-        env = _submit_plan(repo, paths, _plan(coverage=cov))
-        assert env["exit"] == 8
-
-    def test_dropped_with_reason_is_drift_not_schema_error(self, run01):
-        """드리프트는 exit 4 — 기계 판정 실패이고 예산이 남아 있다."""
-        repo, paths, s = run01
-        cov = {"covers": [{"id": "INV-1", "status": "covered", "plan_section": "## 경계값"},
-                          {"id": "INV-2", "status": "dropped", "reason": "범위 밖으로 뺐다"}],
-               "added_scope": []}
-        env = _submit_plan(repo, paths, _plan(coverage=cov))
-        assert env["exit"] == 4
-        assert env["data"]["drift_score"] > 0
-
-    def test_short_request_may_skip_the_intent_block(self, repo, phases):
-        req = repo / "_workspace" / "requests" / "tiny.md"
-        req.parent.mkdir(parents=True, exist_ok=True)
-        req.write_text("오타 하나 고쳐 줘\n", encoding="utf-8")
-        paths, s = st.create_run(repo, "tiny", req)
-        st.set_phase_status(s, "01-plan", "running")
-        st.save(paths, s)
-        p = paths.run_dir / "01_plan.md"
-        p.write_text("# 플랜\n\n## 수정\n" + "가" * 300, encoding="utf-8")
-        env = cli.run_record(repo, phase="01", file=str(p), reviewer=None, round_=None)
-        assert env["exit"] == 0, env["render"]
 
 
 class TestReviewConvergence:
@@ -1777,77 +1683,7 @@ class TestReviewConvergence:
                              reviewer="plan", round_=1)
         assert env["exit"] == 8
 
-    def test_finding_may_not_vanish_between_rounds(self, run01):
-        """지적이 조용히 증발하는 것을 막는다."""
-        repo, paths, s = run01
-        _submit_plan(repo, paths, _plan())
-        finding = {"id": "F-1", "severity": "critical", "title": "범위",
-                   "quote": "범위가 넓다"}
-        _submit_review(repo, paths, _review("plan", findings=[finding]))
-        env = _submit_review(repo, paths, _review("plan", round_=2), round_=2)
-        assert env["exit"] == 8, "이전 open 지적이 findings 에도 resolved 에도 없다"
-
     # ── M21: 단조성 검사가 세 방향으로 샜다
-
-    def test_a_reraised_finding_is_neither_new_nor_vanished(self, run01):
-        """① 제목이 지적의 신원이라 다듬은 제목이 오탐을 두 번 낸다.
-
-        `finding_key = sha1(category|target_role|title)` 이므로 리뷰어가 같은
-        지적을 다른 제목으로 다시 올리면 '신규 지적' 이자 동시에 '증발한 지적'
-        이 된다. 재제기를 1급 어휘로 두어 둘 다 아니게 한다.
-        """
-        repo, paths, s = run01
-        _submit_plan(repo, paths, _plan())
-        first = {"id": "F-1", "severity": "critical", "title": "범위가 넓다",
-                 "quote": "범위가 넓다"}
-        _submit_review(repo, paths, _review("plan", findings=[first]))
-
-        reraised = {"id": "F-1", "severity": "critical",
-                    "title": "범위가 여전히 넓다", "quote": "범위가 넓다",
-                    "reraised_from_previous": "F-1"}
-        env = _submit_review(
-            repo, paths, _review("plan", round_=2, findings=[reraised]), round_=2)
-        assert env["exit"] == 0, env["render"]
-        _, after = st.load(repo, paths.run_id)
-        assert st.phase_status(after, "01-plan") != "passed", "재제기는 미해결이다"
-
-    def test_a_reraise_must_point_at_something_open(self, run01):
-        """없는 지적을 가리키는 재제기는 단조성을 우회하는 구멍이 된다."""
-        repo, paths, s = run01
-        _submit_plan(repo, paths, _plan())
-        f1 = {"id": "F-1", "severity": "critical", "title": "범위", "quote": "범위가 넓다"}
-        _submit_review(repo, paths, _review("plan", findings=[f1]))
-        ghost = {"id": "F-9", "severity": "critical", "title": "x", "quote": "범위가 넓다",
-                 "reraised_from_previous": "F-404"}
-        env = _submit_review(
-            repo, paths, _review("plan", round_=2, findings=[ghost]), round_=2)
-        assert env["exit"] == 8, env["render"]
-        assert "reraised_from_previous" in " ".join(env["data"]["errors"])
-
-    def test_previous_open_drops_what_an_earlier_round_closed(self, run01):
-        """② 해소가 누적되지 않아 3라운드가 1라운드에 닫힌 지적까지 또 적어야 했다.
-
-        그 목록이 리뷰어 프롬프트에 실리므로 접두부가 라운드마다 자란다.
-        """
-        repo, paths, s = run01
-        _submit_plan(repo, paths, _plan())
-        f1 = {"id": "F-1", "severity": "critical", "title": "범위", "quote": "범위가 넓다"}
-        _submit_review(repo, paths, _review("plan", findings=[f1]))
-
-        f2 = {"id": "F-2", "severity": "critical", "title": "다른 것",
-              "quote": "범위가 넓다"}
-        _submit_review(repo, paths,
-                       _review("plan", round_=2, findings=[f2],
-                               resolved=[{"id": "F-1", "resolved_by": "좁혔다"}]),
-                       round_=2)
-
-        # 3라운드: F-1 은 1라운드에서 닫혔으므로 다시 적지 않아도 통과해야 한다.
-        env = _submit_review(
-            repo, paths,
-            _review("plan", round_=3,
-                    resolved=[{"id": "F-2", "resolved_by": "고쳤다"}]),
-            round_=3)
-        assert env["exit"] == 0, env["render"]
 
     def test_raw_without_severity_headings_is_rejected(self, run01):
         """M20 — 이 규칙이 코드에만 있고 문서에 없어서 P1 의 제출 6건 전부에
@@ -1874,31 +1710,11 @@ class TestReviewConvergence:
             for sev in ("critical", "major", "minor"):
                 assert sev in submit, "%s 가 %s 를 적지 않는다" % (name, sev)
 
-    def test_resolved_from_previous_closes_it(self, run01):
-        repo, paths, s = run01
-        _submit_plan(repo, paths, _plan())
-        finding = {"id": "F-1", "severity": "critical", "title": "범위",
-                   "quote": "범위가 넓다"}
-        _submit_review(repo, paths, _review("plan", findings=[finding]))
-        env = _submit_review(
-            repo, paths,
-            _review("plan", round_=2,
-                    resolved=[{"id": "F-1", "resolved_by": "범위를 좁혔다"}]),
-            round_=2)
-        assert env["exit"] == 0, env["render"]
-
-
     def test_convergence_keeps_the_round_record(self, run01):
-        """수렴이 라운드 기록을 지우지 않는다 — 02 가 01 로 되돌릴 수 있다.
+        """수렴이 라운드 기록을 지우지 않는다 — 보고서와 08 이 회차별 제출을 읽는다.
 
         예전에는 수렴 경로가 `phases["01-plan"]["rounds"]` 에 **수렴 회차(정수)**
-        를 대입해 회차별 제출 기록을 통째로 날렸다. 01 이 다시 돌지 않으면
-        무해했지만, 02 의 Critical 이 01 로 되돌리는 경로가 처음 돌자
-        `_previous_open` 이 정수를 순회하려다 죽었다. 그리고 그 기록은
-        **단조성 검사가 근거로 삼는 것**이라, 죽지 않았더라도 이전 회차 지적이
-        조용히 사라지는 것을 더는 잡지 못했을 것이다.
-
-        그 정수를 읽는 소비자는 어디에도 없었다 — 순수한 손실이었다 (P3).
+        를 대입해 회차별 제출 기록을 통째로 날렸다 (P3).
         """
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
@@ -1910,6 +1726,61 @@ class TestReviewConvergence:
         assert isinstance(node["rounds"], dict), node["rounds"]
         assert set(node["rounds"]["1"]) == {"plan"}
         assert node["converged_at_round"] == 1
+
+    def test_a_second_round_without_a_critical_closes_the_phase(self, run01):
+        """단조성은 01 에서 꺼졌다 — 다음 회차에 그 Critical 이 안 나오면 닫힌 것이다."""
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        crit = {"id": "F-1", "severity": "critical", "title": "범위",
+                "quote": "범위가 넓다"}
+        _submit_review(repo, paths, _review("plan", findings=[crit]))
+        env = _submit_review(repo, paths, _review("plan", round_=2), round_=2)
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "01-plan") == "passed"
+
+    # ── false_positive — 메인이 코드 근거로 Critical 을 기각한다 (마스터 R-04)
+
+    FP = {"id": "F-1", "reason": "요청이 가리키는 함수는 이미 빈 문자열을 거른다",
+          "evidence": "harness/config.json:1"}
+
+    def _critical(self):
+        return {"id": "F-1", "severity": "critical", "title": "범위",
+                "quote": "범위가 넓다"}
+
+    def test_a_false_positive_with_evidence_does_not_block(self, run01):
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        env = _submit_review(repo, paths, _review(
+            "plan", findings=[self._critical()], false_positive=[dict(self.FP)]))
+        assert env["exit"] == 0, env["render"]
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "01-plan") == "passed"
+        sub = after["phases"]["01-plan"]["rounds"]["1"]["plan"]
+        assert sub["blocking"] == 0 and sub["false_positive"] == [self.FP], sub
+        assert sub["keys"][0]["false_positive"] is True, sub["keys"]
+        text, _missing = rep_mod.build(after, {})
+        assert "| 01 기각(false_positive) | 1 |" in text, text
+
+    def test_a_false_positive_without_an_existing_path_is_rejected(self, run01):
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        bad = dict(self.FP, evidence="src/nowhere.ts:3")
+        env = _submit_review(repo, paths, _review(
+            "plan", findings=[self._critical()], false_positive=[bad]))
+        assert env["exit"] == 8, env["render"]
+        assert "evidence" in " ".join(env["data"]["errors"]), env["data"]
+        _, after = st.load(repo, paths.run_id)
+        assert st.phase_status(after, "01-plan") != "passed"
+
+    def test_a_false_positive_must_name_a_finding_of_this_round(self, run01):
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        env = _submit_review(repo, paths, _review(
+            "plan", findings=[self._critical()],
+            false_positive=[dict(self.FP, id="F-404")]))
+        assert env["exit"] == 8, env["render"]
+        assert "findings" in " ".join(env["data"]["errors"]), env["data"]
 
 
 FIVE_UNIT_CONTRACT = """# 계약: 제목 유사도
@@ -2224,7 +2095,7 @@ class TestRecord03ContractUnitsZero:
                          "path": "_workspace/contract_x.md"}
         st.save(paths, s)
         (paths.run_dir / "01_plan.md").write_text(
-            "<!-- INTENT -->\n<!-- COVERAGE -->\n" + "플랜 본문. " * 40,
+            _plan(),
             encoding="utf-8")
         c = repo / "_workspace" / "contract_x.md"
         c.parent.mkdir(parents=True, exist_ok=True)
@@ -6896,39 +6767,6 @@ class TestPr06BodyTruth:
     def _plan(self, paths, text):
         (paths.run_dir / "01_plan.md").write_text(text, encoding="utf-8")
 
-    def test_INTENT_블록의_INV_가_본문에_나온다(self, repo, request_file, phases):
-        _branch(repo, "feat-x")
-        run_id, paths = _enter_06(repo, request_file, phases)
-        _pp, s = st.load(repo, run_id)
-        intent = json.dumps({"invariants": [
-            {"id": "INV-1", "kind": "must", "text": "상한을 바꾸지 않는다"},
-            {"id": "INV-2", "kind": "must_not", "text": "로직을 고치지 않는다"}]},
-            ensure_ascii=False)
-        self._plan(paths, "<!-- INTENT " + intent + " -->" + chr(10) * 2 +
-                   "# 플랜" + chr(10))
-        body = self._body(repo, paths, s)
-        assert "INV-1" in body and "상한을 바꾸지 않는다" in body, body
-        assert "INV-2" in body, body
-        assert "INV 블록이 없다" not in body, body
-
-    def test_INV_가_진짜_없으면_없다고_적는다(self, repo, request_file, phases):
-        """수정이 내용을 지어내지 않게 잠근다."""
-        _branch(repo, "feat-x")
-        run_id, paths = _enter_06(repo, request_file, phases)
-        _pp, s = st.load(repo, run_id)
-        self._plan(paths, "# 플랜" + chr(10) + chr(10) + "본문뿐이다." + chr(10))
-        assert "INV 블록이 없다" in self._body(repo, paths, s)
-
-    def test_헤딩_형태의_INV_도_받는다(self, repo, request_file, phases):
-        """다른 스택은 헤딩을 쓸 수 있다 — 폴백을 남긴다."""
-        _branch(repo, "feat-x")
-        run_id, paths = _enter_06(repo, request_file, phases)
-        _pp, s = st.load(repo, run_id)
-        self._plan(paths, "## INV" + chr(10) * 2 + "- INV-9 지키는 것" +
-                   chr(10) * 2 + "## 다음" + chr(10))
-        body = self._body(repo, paths, s)
-        assert "INV-9" in body and "INV 블록이 없다" not in body, body
-
     def test_요청_인용이_경계에서_끊기고_끊긴_사실을_적는다(self, repo,
                                                           request_file, phases):
         _branch(repo, "feat-x")
@@ -7017,24 +6855,8 @@ class TestPr06BodyReadability:
         assert "내가_지어낸_코드" in first
         assert "내가_지어낸_코드 (" not in first
 
-    def test_summary_가_있으면_개요_맨_위에_들어간다(self, repo, request_file,
-                                                   phases):
-        _branch(repo, "feat-x")
-        run_id, paths = _enter_06(repo, request_file, phases)
-        _pp, s = st.load(repo, run_id)
-        intent = json.dumps({"summary": "시트 동기화 API 를 추가한다."},
-                            ensure_ascii=False)
-        (paths.run_dir / "01_plan.md").write_text(
-            "<!-- INTENT " + intent + " -->" + chr(10) * 2 + "# 플랜" + chr(10),
-            encoding="utf-8")
-        body = self._body(repo, paths, s)
-        lines = body.splitlines()
-        i = lines.index("## 개요")
-        assert lines[i + 2] == "시트 동기화 API 를 추가한다.", body
-
-    def test_summary_가_없으면_아무_줄도_추가되지_않는다(self, repo, request_file,
-                                                      phases):
-        """감사 대상이 아니다 — INV 절과 달리 '없다' 고 적지 않는다."""
+    def test_개요는_원본_요청_인용으로_시작한다(self, repo, request_file, phases):
+        """플랜에서 아무것도 옮겨 적지 않는다 — 요청 원문만 인용한다."""
         _branch(repo, "feat-x")
         run_id, paths = _enter_06(repo, request_file, phases)
         _pp, s = st.load(repo, run_id)
@@ -7043,7 +6865,7 @@ class TestPr06BodyReadability:
         body = self._body(repo, paths, s)
         lines = body.splitlines()
         i = lines.index("## 개요")
-        assert lines[i + 2] == "_01 의 INV 블록이 없다._", body
+        assert lines[i + 2] == "**원본 요청**", body
 
     def test_작업_내용의_계약_원문이_details_로_접힌다(self, repo, request_file,
                                                     phases):
@@ -8091,50 +7913,11 @@ class TestConvergenceThreshold:
         _submit_review(repo, paths, _review("plan", findings=[_crit()]))
         env = _submit_review(
             repo, paths,
-            _review("plan", round_=2, findings=[_minor(title="전혀 다른 제목")],
-                    resolved=[{"id": "F-1", "resolved_by": "범위 절을 고쳤다"}]),
+            _review("plan", round_=2, findings=[_minor(title="전혀 다른 제목")]),
             round_=2)
         assert env["exit"] == 0, env["render"]
         _, after = st.load(repo, paths.run_id)
         assert st.phase_status(after, "01-plan") == "passed"
-
-    def test_reraised_critical_is_not_new_but_still_open(self, run01):
-        repo, paths, s = run01
-        _submit_plan(repo, paths, _plan())
-        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
-        again = dict(_crit(title="여전히 어긋난다"), reraised_from_previous="F-1")
-        env = _submit_review(repo, paths,
-                             _review("plan", round_=2, findings=[again]),
-                             round_=2)
-        assert env["exit"] == 0, env["render"]
-        assert "신규" not in env["data"]["reason"], env["data"]
-        _, after = st.load(repo, paths.run_id)
-        assert st.phase_status(after, "01-plan") != "passed"
-
-    def test_identical_critical_two_rounds_escalates_before_the_cap(self, run01):
-        """`stuck_after_identical: 2` 를 01 도 읽는다 — 상한까지 태우지 않는다."""
-        repo, paths, s = run01
-        _submit_plan(repo, paths, _plan())
-        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
-        env = _submit_review(repo, paths,
-                             _review("plan", round_=2, findings=[_crit()]),
-                             round_=2)
-        _, after = st.load(repo, paths.run_id)
-        assert after.get("escalated"), env["render"]
-        assert "반복" in after["escalation"]["reason"], after["escalation"]
-        assert after["counters"]["round"]["used"] < 3, after["counters"]["round"]
-
-    def test_stuck_after_identical_is_read_from_01(self, run01):
-        """변이 테스트 — 값을 3 으로 올리면 2라운드 반복은 아직 정체가 아니다."""
-        repo, paths, s = run01
-        _rewrite(_phase_file(repo, "01-plan.md"),
-                 lambda f: f["loop"].__setitem__("stuck_after_identical", 3))
-        _submit_plan(repo, paths, _plan())
-        _submit_review(repo, paths, _review("plan", findings=[_crit()]))
-        _submit_review(repo, paths, _review("plan", round_=2, findings=[_crit()]),
-                       round_=2)
-        _, after = st.load(repo, paths.run_id)
-        assert not after.get("escalated"), after.get("escalation")
 
     def test_delta_round_still_names_the_sole_reviewer(self, run01):
         """01 리뷰어가 하나뿐이라 델타 선택은 늘 자명하다 — 그래도 선언대로
@@ -8151,11 +7934,7 @@ class TestConvergenceThreshold:
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
         _submit_review(repo, paths, _review("plan", findings=[_crit()]))
-        env = _submit_review(
-            repo, paths,
-            _review("plan", round_=2,
-                    resolved=[{"id": "F-1", "resolved_by": "고쳤다"}]),
-            round_=2)
+        env = _submit_review(repo, paths, _review("plan", round_=2), round_=2)
         assert env["exit"] == 0, env["render"]
         _, after = st.load(repo, paths.run_id)
         assert st.phase_status(after, "01-plan") == "passed"
@@ -8962,7 +8741,7 @@ class TestJourneyHint:
         st.save(paths, s)
         if plan:
             (paths.run_dir / "01_plan.md").write_text(
-                "<!-- INTENT -->\n<!-- COVERAGE -->\n" + "플랜 본문. " * 40,
+                _plan(),
                 encoding="utf-8")
         return paths
 
@@ -9614,78 +9393,3 @@ class TestReviewDepth:
         assert "05 리뷰 범위" in text and "diff+refs" in text, text
 
 
-class TestRiskUndeclared:
-    """01 INTENT 의 `risk` 는 자진신고다 — 05 라우팅이 그것과 대조한다 (ADR-H067).
-
-    게이트가 아니라 관측이다. 리뷰어의 `risk` 선언과 매칭 결과만 본다 —
-    오탐률을 모른 채 등급을 치르게 하지 않는다.
-    """
-
-    CFG = {"reviewers": [
-        {"code": "gen", "skill": "g", "when_role_owned": True},
-        {"code": "data", "skill": "d", "when": ["x"], "risk": ["schema", "boundary"]},
-        {"code": "sec", "skill": "s", "when": ["y"], "risk": ["authz", "boundary"]}]}
-
-    def _routed(self, kept, dropped=()):
-        return {"reviewers": [{"code": c} for c in kept],
-                "dropped": [{"code": c} for c in dropped]}
-
-    def test_a_declared_risk_covers_the_reviewer(self):
-        assert rv.undeclared_risk(self.CFG, self._routed(["gen", "data"]),
-                                  ["schema"]) == []
-
-    def test_a_matched_reviewer_without_its_risk_is_named(self):
-        assert rv.undeclared_risk(self.CFG, self._routed(["gen", "sec"]),
-                                  []) == ["sec"]
-
-    def test_inv_skipped_means_nothing_to_compare(self):
-        assert rv.undeclared_risk(self.CFG, self._routed(["sec"]), None) == []
-
-    def test_a_dropped_reviewer_still_counts_as_matched(self):
-        """상한은 리뷰 예산이지 위험의 부재가 아니다."""
-        assert rv.undeclared_risk(self.CFG, self._routed(["gen", "data"], ["sec"]),
-                                  ["schema"]) == ["sec"]
-
-    def test_config_declares_risk_only_in_the_vocabulary(self):
-        import verdict as vd
-        cfg = _cfg()
-        declared = {r["code"]: r.get("risk") for r in cfg["reviewers"]}
-        assert declared["data"] and declared["sec"], declared
-        for code, risk in declared.items():
-            assert set(risk or []) <= set(vd.RISK_VOCAB), code
-        schema = json.loads(
-            (ROOT / "harness" / "config.schema.json").read_text(encoding="utf-8"))
-        bad = json.loads(json.dumps(cfg))
-        bad["reviewers"][1]["risk"] = ["performance"]
-        assert harness.validate(bad, schema), "어휘 밖 값은 거부다"
-
-    def _at_05_with_api_change(self, repo, request_file, phases, risk):
-        run_id, paths = _enter_05(repo, request_file, phases)
-        _p, s = st.load(repo, run_id)
-        s["phases"]["01-plan"]["risk"] = risk
-        st.save(paths, s)
-        (repo / "src" / "app" / "api" / "x").mkdir(parents=True)
-        (repo / "src" / "app" / "api" / "x" / "route.ts").write_text(
-            "export async function POST() {}\n", encoding="utf-8")
-        return run_id, paths
-
-    def _kinds(self, paths):
-        return [e for e in st.read_events(paths) if e["kind"] == "risk_undeclared"]
-
-    def test_05_entry_records_the_event_once(self, repo, request_file, phases):
-        run_id, paths = self._at_05_with_api_change(repo, request_file, phases, [])
-        cli.run_next(repo, run_id)
-        cli.run_next(repo, run_id)
-        got = self._kinds(paths)
-        assert len(got) == 1, got
-        assert got[0]["data"]["reviewers"] == ["sec"], got
-        _p, s = st.load(repo, run_id)
-        assert s["phases"]["05-code-review"]["risk_undeclared"] == ["sec"]
-        assert not any(g.startswith("risk_undeclared") for g in s.get("gaps") or []), \
-            "관측이다 — 등급을 치르지 않는다"
-
-    def test_05_entry_is_silent_when_risk_was_declared(self, repo, request_file, phases):
-        run_id, paths = self._at_05_with_api_change(
-            repo, request_file, phases, ["authz"])
-        cli.run_next(repo, run_id)
-        assert self._kinds(paths) == []

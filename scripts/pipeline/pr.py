@@ -125,36 +125,6 @@ def _diff_stat(root, config):
     return r.stdout.strip()
 
 
-_INTENT = re.compile(r"(?s)<!--\s*INTENT\s*(\{.*?\})\s*-->")
-
-
-def _inv_block(plan_text):
-    """01 의 INV(불변) 목록. 없으면 없다고 적는다 — 지어내지 않는다.
-
-    **INV 는 헤딩이 아니라 `<!-- INTENT {...} -->` JSON 주석 안에 있다**
-    (`01-plan.md` 의 산출물 형태). 헤딩만 찾던 예전 구현은 이 리포의 모든
-    플랜에서 빈 문자열을 돌려줬고, 본문이 "01 의 INV 블록이 없다" 고
-    **없는 결손을 보고**했다 (M42).
-
-    헤딩 폴백을 남긴다 — 다른 스택이 헤딩을 쓸 수 있고, `01-plan.md` 는 짧은
-    요청에서 INV 블록을 생략한다고도 적는다. 둘 다 없으면 빈 문자열이고,
-    **그때는 "없다" 가 참이다.**
-    """
-    m = _INTENT.search(plan_text or "")
-    if m:
-        try:
-            inv = (json.loads(m.group(1)) or {}).get("invariants") or []
-        except ValueError:
-            inv = []
-        rows = ["- **%s** `%s` — %s" % (i.get("id"), i.get("kind"),
-                                        i.get("text"))
-                for i in inv if isinstance(i, dict) and i.get("id")]
-        if rows:
-            return "\n".join(rows)
-    m = re.search(r"(?ms)^#{2,}\s*INV.*?(?=^##\s|\Z)", plan_text or "")
-    return m.group(0).strip() if m else ""
-
-
 def _contract_text(root, state, config):
     """계약 원문. **살아 있는 파일이 없으면 스냅샷을 읽는다** (M54).
 
@@ -215,23 +185,6 @@ def _gap_display(gap):
     """
     label = report_mod.gap_reason(gap)
     return "%s (%s)" % (gap, label) if label else gap
-
-
-def _summary_block(plan_text):
-    """01 의 짧은 총평. **감사 대상이 아니다 — 없다고 적지 않는다.**
-
-    INV·계약 절은 없으면 결손이라 "없다" 고 적어야 완료 등급의 근거가
-    맞는다. 이 필드는 그런 사실이 아니라 순수 가독성 보조라, 없다고 적으면
-    이 필드가 없던 과거 모든 런의 본문에 결손처럼 보이는 줄이 하나 늘어난다.
-    """
-    m = _INTENT.search(plan_text or "")
-    if not m:
-        return ""
-    try:
-        summary = (json.loads(m.group(1)) or {}).get("summary")
-    except ValueError:
-        return ""
-    return summary.strip() if isinstance(summary, str) else ""
 
 
 def _no_units(state):
@@ -484,9 +437,6 @@ def build_body(root, paths, state, config):
         grade,
         (" (" + ", ".join(_gap_display(g) for g in gaps) + ")" if gaps else ""))
 
-    plan_text = _read(paths.run_dir / "01_plan.md")
-    inv = _inv_block(plan_text)
-    summary = _summary_block(plan_text)
     request, request_note = _quoted_request(paths.request)
     units = _contract_sections(root, state, config)
     stat = _diff_stat(root, config)
@@ -508,9 +458,6 @@ def build_body(root, paths, state, config):
 
     lines = [head, ""]
     lines += ["## 개요", ""]
-    if summary:
-        lines += [summary, ""]
-    lines += [inv or "_01 의 INV 블록이 없다._", ""]
     lines += ["**원본 요청**", ""]
     lines += ["> " + request.replace("\n", "\n> ") if request
               else "_요청 원문이 없다._", ""]

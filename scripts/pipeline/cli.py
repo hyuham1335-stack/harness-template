@@ -104,31 +104,20 @@ SUBMIT_CHECKS = {
         "exit": 8, "impl": ("verdict:check_vocabulary",),
         "why": "작성자가 자기 글을 리뷰한 것은 독립 관측이 아니다"},
     "source_quote_substring": {
-        "exit": 8, "impl": ("verdict:check_plan", "verdict:check_review"),
-        "why": "인용이 원문에 실재하는가. **건초더미가 페이즈마다 다르다** — 01 플랜은 "
-               "요청 원문, 01·05 리뷰어는 `.raw.md` 다"},
+        "exit": 8, "impl": ("verdict:check_review",),
+        "why": "리뷰어의 인용이 자기 원문 `.raw.md` 에 실재하는가 — 옮겨 적는 쪽이 "
+               "지어내거나 바꾸지 않았는가"},
     "raw_json_severity_match": {
         "exit": 8, "impl": ("verdict:check_review",),
         "why": "원문의 심각도 헤딩 수와 findings 수가 맞는가 — 1라운드 수렴을 "
                "허용하는 만큼 \"Major 0건\" 이 진짜인지 묻는 것이 이것뿐이다"},
     "monotonicity": {
         "exit": 8, "impl": ("verdict:check_review",),
-        "why": "이전 회차의 열린 지적이 조용히 증발하지 않았는가"},
-    "coverage_exact_once": {
-        "exit": 8, "impl": ("verdict:check_plan",),
-        "why": "COVERAGE 가 각 불변식을 정확히 한 번 덮는가"},
-    "plan_section_exists": {
-        "exit": 8, "impl": ("verdict:check_plan",),
-        "why": "`covered` 가 가리킨 `plan_section` 이 본문에 실재하는가"},
-    "coverage_reason_required": {
-        "exit": 8, "impl": ("verdict:check_plan",),
-        "why": "`covered` 가 아닌데 사유가 없으면 드리프트를 셀 수 없다"},
-    "intent_risk_vocabulary": {
-        "exit": 8, "impl": ("verdict:check_plan",),
-        "why": "INTENT 의 `risk` 가 `RISK_VOCAB` 안인가 — 02 생략이 이 자진신고 위에 선다"},
-    "drift_score_zero": {
-        "exit": 4, "impl": ("verdict:check_plan",),
-        "why": "의도가 새어 나갔다. 예산이 남아 있으므로 8 이 아니라 4 다"},
+        "why": "이전 회차의 열린 지적이 조용히 증발하지 않았는가 (05 의 델타 라운드)"},
+    "false_positive_evidence": {
+        "exit": 8, "impl": ("cli:_record_01_review",),
+        "why": "메인이 리뷰어의 지적을 기각하려면 findings 안의 id · 사유 · 리포에 실재하는 "
+               "경로를 근거로 대야 한다 — 기록 없는 기각은 지적의 증발이다"},
     "dispatched_roles": {
         "exit": 8, "impl": ("cli:_dispatch_problem",),
         "why": "계약의 절이 부르는 역할이 전부 디스패치됐는가"},
@@ -254,15 +243,6 @@ def _converge_blocking(front):
             "가 어휘 밖이다: %r (%s)" % (bad, ", ".join(verdict.SEVERITIES)),
             scope="converge")
     return tuple(got)
-
-
-def _loop_stuck_after(front):
-    """`loop.stuck_after_identical`. 01 도 이제 읽는다 (ADR-H041)."""
-    got = (front.get("loop") or {}).get("stuck_after_identical")
-    if not got:
-        raise ConfigDeclarationError(front.get("id"), "stuck_after_identical",
-                                     "가 없다")
-    return int(got)
 
 
 DECLARATION_RENDER = """## 페이즈 선언을 읽을 수 없다
@@ -1613,16 +1593,6 @@ def _plan_05_review(root, paths, s, ctx):
             if c not in [r["code"] for r in routed["reviewers"]]]
     node["planned"] = [r["code"] for r in routed["reviewers"]] + kept
     node["routing"] = routed
-    # **자진신고한 위험과 라우팅을 대조한다 — 관측만** (ADR-H067). `next` 가
-    # 여러 번 불려도 원장에는 한 번만 남긴다. 등급은 치르지 않는다.
-    if "risk_undeclared" not in node:
-        risk = ((s.get("phases") or {}).get("01-plan") or {}).get("risk")
-        node["risk_undeclared"] = review_mod.undeclared_risk(
-            ctx["config"], routed, risk)
-        if node["risk_undeclared"]:
-            st.append_event(paths, "risk_undeclared", cmd="next",
-                            phase="05-code-review",
-                            reviewers=node["risk_undeclared"], declared=risk)
     node["profile_reconfirmed"] = refreshed if refreshed.get("changed") else None
     node["contract_dropped"] = refreshed.get("dropped") or []
     node["mode"] = review_mod.mode(ctx["config"],
@@ -1895,9 +1865,8 @@ def render_packet(root, phase, ctx, s, checks=None):
     if pid == "01-plan" and not _reviewers_for(front, s):
         parts.append(
             "## 리뷰어 — 0명 (%s 레인)\n\n이 런은 플랜 리뷰어를 부르지 않는다. "
-            "인용 검증·커버리지·드리프트의 기계 검사가 이 페이즈의 전부이고, "
-            "플랜 제출이 통과하면 1라운드에 닫힌다. 리뷰어를 부르지 마라 — "
-            "라우팅 밖의 제출은 받지 않는다."
+            "플랜 제출이 이 페이즈의 전부이고 1라운드에 닫힌다. 리뷰어를 부르지 "
+            "마라 — 라우팅 밖의 제출은 받지 않는다."
             % ((s.get("profile") or {}).get("name")))
     role_tpl = _section(body, "## 역할 프롬프트 템플릿")
     if role_tpl and pid == "03-implement" and not _roles_for(front, ctx, s):
@@ -2464,38 +2433,19 @@ def _record_01(root, paths, s, phase_item, ctx, file, reviewer, round_):
 
 
 def _record_01_plan(root, paths, s, phase_item, ctx, file):
+    """플랜 제출. 기계가 보는 것은 파일의 존재와 크기(`produces`)뿐이다 —
+    내용은 plan-reviewer 가 리포를 읽으며 본다."""
     if not file.exists():
         return st.envelope("record", False, 3, s, {}, "산출물이 없다: %s" % file, None)
-    text = file.read_text(encoding="utf-8")
-    request_text = paths.request.read_text(encoding="utf-8")
-    limit = ((ctx["config"].get("profile") or {}).get("inv_skip_below_chars") or 0)
-
-    got = verdict.check_plan(text, request_text, limit)
     node = s.setdefault("phases", {}).setdefault("01-plan", {})
-    node["drift_score"] = got["drift_score"]
-    # INV 생략(짧은 요청)이면 `None` — 02 는 그때 보수적으로 돈다 (ADR-H060).
-    node["risk"] = got.get("risk")
-    if got.get("inv_skipped"):
-        s.setdefault("profile", {})["inv_skipped"] = True
-
-    if not got["ok"]:
-        st.set_phase_status(s, "01-plan", "failed")
-        st.append_event(paths, "check_fail", cmd="record", phase="01-plan",
-                        exit=got["exit"], errors=len(got["errors"]))
-        st.save(paths, s)
-        return st.envelope("record", False, got["exit"], s,
-                           {"errors": got["errors"], "drift_score": got["drift_score"],
-                            "drift": got["drift"]},
-                           _plan_fail_render(got), _same_command(s, "01"))
-
     node["plan_accepted"] = True
     st.set_phase_status(s, "01-plan", "running")   # node 는 상태 안의 같은 dict 다
     st.save(paths, s)
     codes = _reviewers_for(phase_item["front"], s)
     if not codes:
-        # docs 레인 — 리뷰어 0명 (ADR-H044). 기계 검사(인용·커버리지·드리프트)가
-        # 이 페이즈의 전부이고 1라운드에 닫는다. 정책 스킵이라 등급은 안
-        # 내려가지만 **`applied` 에 남아** 예측이 빗나가면 gap 이름이 된다.
+        # docs 레인 — 리뷰어 0명 (ADR-H044). 플랜 제출이 이 페이즈의 전부이고
+        # 1라운드에 닫는다. 정책 스킵이라 등급은 안 내려가지만 **`applied` 에
+        # 남아** 선언이 빗나가면 gap 이름이 된다.
         _note_applied(s, "01:reviewers=0")
         rounds = node.setdefault("rounds", {})
         st.save(paths, s)
@@ -2504,25 +2454,43 @@ def _record_01_plan(root, paths, s, phase_item, ctx, file):
         ctx, s, _instruction_keys(s, "01-plan", ctx, phase_item["front"]))
     return st.envelope(
         "record", True, 0, s,
-        {"drift_score": 0, "round": _round_no(s), "reviewers": codes},
-        "## 플랜이 받아들여졌다\n\n인용 검증과 커버리지가 통과했고 드리프트가 0 이다.\n"
-        "이제 **리뷰어 둘을 병렬로** 돌린다 (`%s`). 회차마다 원문 `.raw.md` 와 "
-        "구조화 `.json` 을 함께 낸다.%s"
+        {"round": _round_no(s), "reviewers": codes},
+        "## 플랜을 받았다\n\n리뷰어 `%s` 를 돌린다. 회차마다 원문 `.raw.md` 와 "
+        "구조화 `.json` 을 함께 낸다. 리뷰어는 **리포를 읽을 수 있다** — 플랜이 "
+        "가리키는 파일을 열어 근거를 확인한다. 받은 Critical 이 틀렸다고 보면 "
+        "`record` 전에 JSON 최상위에 `false_positive: [{id, reason, evidence}]` 를 "
+        "달아 낸다 — `evidence` 는 리포에 실재하는 경로다.%s"
         % ("`, `".join(codes), ("\n\n" + tiers) if tiers else ""),
         "python scripts/pipeline/cli.py record --phase 01 --file <리뷰 json> "
         "--reviewer <code> --round %d --run-id %s" % (_round_no(s), s["run_id"]))
 
 
-def _plan_fail_render(got):
-    if got["exit"] == 4:
-        lines = ["## 드리프트 — 의도가 새어 나갔다", ""]
-        for d in got["drift"]:
-            lines.append("- `%s` (%s): %s — 사유: %s"
-                         % (d["id"], d.get("kind"), d["status"], d["reason"]))
-        lines += ["", "덮거나, 사용자 승인을 받아야 넘어간다. 예산은 남아 있다."]
-        return "\n".join(lines)
-    return ("## 제출물 거부\n\n" +
-            "\n".join("- %s" % e for e in got["errors"]))
+def _false_positive_errors(root, payload):
+    """메인의 기각(`false_positive`)에 근거가 있는가. 반환: [오류].
+
+    셋이 다 있어야 한다 — 이 회차 findings 안의 `id` · 비지 않은 `reason` ·
+    리포에 실재하는 경로 `evidence`(`path[:줄]`). 사유의 진위는 기계가 못 본다 —
+    기록이 억지력이고, 리뷰어가 리포를 읽을 수 있는 것이 가짜 Critical 의
+    1차 방어다.
+    """
+    ids = {f.get("id") for f in payload.get("findings") or []}
+    errors = []
+    for fp in payload.get("false_positive") or []:
+        if not isinstance(fp, dict):
+            errors.append("false_positive 항목은 {id, reason, evidence} 객체다: %r" % (fp,))
+            continue
+        fid = fp.get("id")
+        if fid not in ids:
+            errors.append("false_positive %r 가 이 회차 findings 에 없다 — 기각은 "
+                          "리뷰어가 낸 지적에만 한다" % (fid,))
+        if not str(fp.get("reason") or "").strip():
+            errors.append("false_positive %r 에 reason 이 없다" % (fid,))
+        ev = str(fp.get("evidence") or "").strip()
+        rel = re.sub(r":\d+$", "", ev)
+        if not ev or not (Path(root) / rel).exists():
+            errors.append("false_positive %r 의 evidence 가 리포에 없다: %r — "
+                          "실재하는 경로(`path[:줄]`)를 근거로 댄다" % (fid, ev))
+    return errors
 
 
 def _round_no(s):
@@ -2549,22 +2517,31 @@ def _record_01_review(root, paths, s, phase_item, ctx, file, reviewer, round_):
     raw_text = raw_path.read_text(encoding="utf-8")
 
     rounds = node.setdefault("rounds", {})
-    prev_open = _previous_open(rounds, round_, reviewer)
-    got = verdict.check_review(payload, raw_text, prev_open,
-                               _converge_blocking(phase_item["front"]))
-    if not got["ok"]:
+    blocking = _converge_blocking(phase_item["front"])
+    # `previous_open=[]` — 01 은 단조성을 끈다. 다음 회차에 그 지적이 안 나오면
+    # 닫힌 것이고, 남았으면 리뷰어가 다시 낸다.
+    got = verdict.check_review(payload, raw_text, [], blocking)
+    errors = got["errors"] or _false_positive_errors(root, payload)
+    if errors:
         st.append_event(paths, "check_fail", cmd="record", phase="01-plan",
-                        reviewer=reviewer, errors=len(got["errors"]))
+                        reviewer=reviewer, errors=len(errors))
         st.save(paths, s)
-        return st.envelope("record", False, 8, s, {"errors": got["errors"]},
+        return st.envelope("record", False, 8, s, {"errors": errors},
                            "## 리뷰 제출 거부\n\n" +
-                           "\n".join("- %s" % e for e in got["errors"]),
+                           "\n".join("- %s" % e for e in errors),
                            _same_command(s, "01"))
 
+    # 기각된 지적은 `findings[]` 와 원문에 그대로 남는다(헤딩 대조가 전체를
+    # 센다) — 차단 계수에서만 빠지고, 어느 것을 왜 기각했는지가 기록으로 남는다.
+    dismissed = {fp["id"] for fp in payload.get("false_positive") or []}
+    keys = [dict(k, false_positive=True) if k["id"] in dismissed else k
+            for k in got["keys"]]
     slot = rounds.setdefault(str(round_), {})
-    slot[reviewer] = {"mode": payload.get("mode") or "primary",
-                      "keys": got["keys"], "blocking": got["blocking"],
-                      "closed": got["closed"]}
+    slot[reviewer] = {"keys": keys, "closed": got["closed"],
+                      "blocking": sum(1 for k in keys if k["severity"] in blocking
+                                      and not k.get("false_positive")),
+                      "false_positive": [dict(fp) for fp in
+                                         payload.get("false_positive") or []]}
     st.save(paths, s)
 
     # 2라운드부터는 **열린 차단 지적을 낸 리뷰어만** 다시 온다 (ADR-H041) —
@@ -2651,26 +2628,17 @@ def _keys_from_05_render(keys):
     return "\n".join(lines)
 
 
-def _open_blocking_keys(rounds, upto_round, blocking):
-    """`upto_round` 까지 제출된 것 중 **아직 열린 차단 키** 집합."""
-    return {k["key"] for k in _previous_open(rounds, upto_round + 1)
-            if k.get("severity") in blocking}
-
-
 def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
     front = phase_item["front"]
     blocking = _converge_blocking(front)
     subs = [dict(v, code=k) for k, v in slot.items()]
-    prev_keys = {k["key"] for r in rounds for sub in rounds[r].values()
-                 for k in sub.get("keys") or [] if int(r) < round_}
-    drift = (s["phases"]["01-plan"] or {}).get("drift_score") or 0
-    ok, reason = verdict.converged(round_, subs, prev_keys, drift, blocking)
+    ok, reason = verdict.converged(subs, blocking)
 
     conv = front.get("converge") or {}
     profile = (s.get("profile") or {}).get("name") or "normal"
     max_rounds = (conv.get("max_by_profile") or {}).get(profile) or 5
     if profile != "normal" and (conv.get("max_by_profile") or {}).get(profile):
-        # 라운드 상한이 레인의 양보다 — 예측이 빗나가면 gap 이름에 들어간다.
+        # 라운드 상한이 레인의 양보다 — 선언이 빗나가면 gap 이름에 들어간다.
         _note_applied(s, "01:max_rounds=%d" % max_rounds)
 
     if ok:
@@ -2684,9 +2652,7 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
                        "converged", paths=paths)
         return _advance_to_next(root, paths, s, phase_item, ctx)
 
-    # **봉투는 실효 상한을 말해야 한다** (M56). `max_rounds` 는 선언값이라
-    # 왕복 뒤 지급을 받은 런에서 "5라운드 안에" 라고 적으면서 실제로는 10 을
-    # 다 쓰고 멈춘다 — 사람이 그 숫자로 판단할 수 없다.
+    # **봉투는 실효 상한을 말해야 한다** (M56) — 사람이 그 숫자로 판단한다.
     used, max_eff, exceeded = st.counter_inc(
         s, _loop_counter(front), max_rounds, "not_converged", paths=paths)
     options = ["이대로 진행한다(미해결 지적을 안고 간다)",
@@ -2698,33 +2664,8 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
                     options, phase="01-plan")
         return _escalation_envelope("record", paths, s)
 
-    # **같은 차단 지적이 그대로 반복되면 상한 전에 멈춘다** (ADR-H041).
-    # `stuck_after_identical` 은 01 에 선언돼 있었지만 04 만 읽었다 — 01 은
-    # 같은 Critical 이 다섯 번 반복돼도 상한까지 태웠다.
-    stuck_after = _loop_stuck_after(front)
-    open_now = _open_blocking_keys(rounds, round_, blocking)
-    identical = 1
-    for r in range(round_ - 1, 0, -1):
-        if open_now and _open_blocking_keys(rounds, r, blocking) == open_now:
-            identical += 1
-        else:
-            break
-    if open_now and identical >= stuck_after:
-        _loop_on_exceed(front)
-        st.escalate(paths, s,
-                    "01 의 같은 %s 지적 %d건이 %d라운드 연속 반복됐다 — 플랜 "
-                    "수정이 지적을 닫지 못한다: %s"
-                    % ("·".join(blocking), len(open_now), identical, reason),
-                    options, phase="01-plan")
-        return _escalation_envelope("record", paths, s)
-
-    # **다음 라운드는 열린 차단 지적을 낸 리뷰어만 온다** (ADR-H041). 05 의
-    # 델타 재리뷰(`_delta_reviewer`)와 같은 규율이고, 결정론이다.
-    planned = [code for code in slot
-               if any(k["key"] in open_now for k in slot[code].get("keys") or [])]
-    if not planned:
-        # 차단 키가 없는데 미수렴 — 폴백 1라운드다. 전원이 다시 온다.
-        planned = list(slot)
+    # 리뷰어는 `plan` 하나다 — 다음 라운드도 같은 리뷰어가 온다 (ADR-H045).
+    planned = list(slot)
     s["phases"]["01-plan"].setdefault("rounds_planned", {})[str(used + 1)] = planned
     # **지시를 낸 자리에서 센다.** 01 의 루프는 `record → record` 라 `next`
     # 의 계수를 지나쳤고, 다섯 라운드 열 번을 불러도 예산은 2 였다 (ADR-H042).
@@ -2737,10 +2678,12 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
         "record", True, 0, s,
         {"round": used + 1, "reason": reason, "planned": planned},
         "## %d라운드가 필요하다\n\n%s\n\n다음 회차의 강제 초점: %s\n\n"
-        "**다시 부를 리뷰어는 `%s` 다** — 열린 차단 지적을 낸 쪽만 온다. "
-        "다른 리뷰어는 이번 회차에 부르지 않는다.\n\n"
-        "플랜은 **부분 편집**으로 고친다 — 전체를 다시 쓰면 접두부가 라운드마다 "
-        "쌓인다.%s"
+        "**다시 부를 리뷰어는 `%s` 다.** 플랜은 **부분 편집**으로 고친다 — 전체를 "
+        "다시 쓰면 접두부가 라운드마다 쌓인다.\n\n"
+        "열린 Critical 이 틀렸다고 보면 플랜을 억지로 맞추지 말고 **코드 근거로 "
+        "기각한다** — 다음 회차 리뷰 JSON 을 `record` 하기 전에 최상위에 "
+        "`false_positive: [{id, reason, evidence}]` 를 단다(`evidence` 는 리포에 "
+        "실재하는 경로). 근거 없는 기각은 exit 8 이다.%s"
         % (used + 1, reason, focus or "(없음)", "`, `".join(planned),
            ("\n\n" + tiers) if tiers else ""),
         "python scripts/pipeline/cli.py record --phase 01 --file <리뷰 json> "

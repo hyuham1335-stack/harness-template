@@ -118,9 +118,6 @@ EVENT_KINDS = (
     # 빗나갔다(`triage_miss`). 둘을 뭉치면 임계값을 고칠 근거(어느 예측이
     # 얼마나 틀리나)가 원장에서 사라진다.
     "triage_decided", "triage_miss",
-    # 05 라우팅이 매칭한 리뷰어의 위험을 01 INTENT 의 `risk` 가 안 적었다.
-    # 게이트가 아니라 관측이다 — 오탐률을 본 뒤 승격을 정한다 (ADR-H067).
-    "risk_undeclared",
 )
 
 GRADES = ("PASS", "PASS_WITH_GAPS", "INCOMPLETE")
