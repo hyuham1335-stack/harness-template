@@ -146,11 +146,11 @@
 | `false_positive` 의 `id`·`reason`·`evidence` 중 하나가 없거나 경로가 리포에 없다 | exit 8 — 근거를 채우거나 기각을 거둔다 |
 | 라운드 상한 초과 | exit 7 → 에스컬레이션. 미해결 Critical 전문과 3지선다 |
 
-**라운드 상한은 `max_by_profile` 이 레인별로 정한다** (ADR-H041). 수렴 규칙이
+**라운드 상한은 `loop.max_by_profile` 이 레인별로 정한다** (ADR-H041). 수렴 규칙이
 "열린 Critical 0건" 하나라 상한은 천장이지 경로가 아니다. `loop.counter` 와
 `loop.on_exceed` 는 코드가 실제로 읽는다 (M36) — `on_exceed` 의 어휘는 `escalate`
-하나이고 어휘 밖 값은 `lint-phases` 와 런타임이 둘 다 거부한다. `converge.on_exceed`
-는 `loop.on_exceed` 와 같아야 한다.
+하나이고 어휘 밖 값은 `lint-phases` 와 런타임이 둘 다 거부한다. `converge` 에는
+읽히는 둘(`blocking_severities`·`focus_round_2`)만 있다 (ADR-H076).
 
 **`review.unless` 가 `docs` 레인에서 리뷰어를 0명으로 만든다.** 문서만 바뀌는
 런에서 plan-reviewer 는 관측이 아니라 고정비다 — 플랜 제출이 이 페이즈의 전부이고

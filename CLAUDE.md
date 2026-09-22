@@ -38,7 +38,7 @@
 
 `docs/harness/`는 하네스 템플릿 자체의 문서다 (`ROADMAP.md` — 승격 로드맵, `DECISIONS.md` — `ADR-H` 결정 기록, `PILOT-LOG.md` — 런별 실측 기록). 프로젝트 작업 중에는 **읽기만 하고 고치지 않는다.**
 
-하네스 구조(`harness/phases/` 8페이즈 · `scripts/pipeline/` 실행기 · `.claude/agents/` 역할 · `.claude/skills/*-reviewer/` 리뷰어)와 진입점 `/feature` 는 `README.md` 의 표가 단일 출처다. 여기 중복해서 적지 않는다.
+하네스 구조(`harness/phases/` 8페이즈 · `scripts/pipeline/` 실행기 · `.claude/agents/` 역할·리뷰어)와 진입점 `/feature` 는 `README.md` 의 표가 단일 출처다. 여기 중복해서 적지 않는다.
 
 ## 스택 · 배포
 
