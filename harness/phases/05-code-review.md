@@ -70,7 +70,7 @@
 
 ```
 1. precheck --scope pr      정적 · 무료   예산 · 브랜치 · divergence · 인프라
-2. contract-trace           정적 · 무료   계약 ↔ 코드 대조 10종
+2. contract-trace           정적 · 무료   계약 ↔ 코드 대조 5종
 3. Critical 있으면 선수리 + gate --phase 05 --stage loop             → 2로 복귀
 4. 리뷰:  diff ≤ merge_below_diff_lines  → 단일 에이전트 · 다중 체크리스트
           그보다 크면                      → 병렬 fan-out (profile 상한까지)
@@ -97,11 +97,11 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
   페이즈가 선언한 루프 구간 전부**(compile → scoped)다 — scoped 만 돌리면
   테스트 러너가 타입체크 없이 통과시킨 타입 에러가 PR 까지 흘러간다
   (ADR-H046). 수리 뒤 재게이트도 같은 명령이다.
-- `entrypoint_resolver` 가 없으면 진입점을 푸는 검사 셋만 빠지고 사유와 함께
+- `entrypoint_resolver` 가 없으면 진입점을 푸는 검사 둘만 빠지고 사유와 함께
   `skipped`·`skip_reasons` 에 남는다.
-- 테스트 존재 검사(`untested_entrypoint`·`untested_error_symbol`·`authz_untested`·
-  `missing_journey_spec`)는 03 제출이 같은 함수로 이미 요구했다 — 여기서는 보통 0건이고, 04·05 수리 중에
-  테스트가 사라졌을 때 잡는다 (ADR-H058).
+- 테스트 존재 검사(`untested_entrypoint`·`untested_error_symbol`)는 03 제출이 같은
+  함수로 이미 요구했다 — 여기서는 보통 0건이고, 04·05 수리 중에 테스트가 사라졌을 때
+  잡는다 (ADR-H058).
   **스킵을 통과로 적지 마라.**
 
 ### 4번 — 리뷰어 라우팅은 결정론이다

@@ -185,8 +185,8 @@ PR 본문의 diff 통계는 `main...HEAD`(커밋된 것)를 읽는다. **03 이 
 **여기부터 밖으로 나간다.** 앞의 셋이 무료다.
 
 `pr` 전에 **흐름 노트 `06_pr_notes.json`** 을 쓴다 — PR 본문의 「핵심 흐름」과
-「직접 확인하는 법」이다(형식은 `06-pr.md` 1.5번). 단계마다 `refs` 에 계약이 이름
-붙인 식별자를 적는다. 없거나 계약 밖이면 `pr` 이 exit 8 로 알린다 (ADR-H058).
+「직접 확인하는 법」이다(형식은 `06-pr.md` 1.5번). `step` 한 줄 이상과 `verify`
+하나 이상이 있어야 한다 — 없으면 `pr` 이 exit 8 로 알린다. `refs` 는 선택이다.
 
 ```bash
 python scripts/pipeline/cli.py precheck --scope pr --phase 06 --run-id <id>

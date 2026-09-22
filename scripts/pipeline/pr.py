@@ -261,8 +261,8 @@ def _check_mark(v):
 
 NOTES_FILE = "06_pr_notes.json"
 
-NOTES_EXAMPLE = ('{"schema":1,"flow":[{"step":"채널 정책에 따라 본문을 만든다",'
-                 '"refs":["formatForChannel"]}],"verify":["…"]}')
+NOTES_EXAMPLE = ('{"schema":1,"flow":[{"step":"채널 정책에 따라 본문을 만든다"}],'
+                 '"verify":["…"]}')
 
 
 def read_notes(paths):
@@ -277,12 +277,11 @@ def read_notes(paths):
 
 
 def check_notes(root, paths, state, config):
-    """06 흐름 노트를 대조한다 (ADR-H058 추기). 반환: (노트, 문제 목록).
+    """06 흐름 노트의 형식을 본다 (ADR-H058 추기 · ADR-H075). 반환: (노트, 문제 목록).
 
-    **`refs` 만 검사한다.** step 산문의 백틱은 자연어라 오탐한다. refs 는 계약이
-    이름 붙인 것이어야 한다 — 식별자형은 `contract.symbols()` 와 전체 일치, 경로형
-    (`/` 포함)은 진입점 표기나 계약 컨테이너와 접미사 일치. 이것이 PR 본문의
-    「핵심 흐름」을 계약에 묶는 유일한 끈이다.
+    `flow[].step` 한 줄 이상과 `verify` 하나 이상이 있어야 한다. `refs` 는 선택이고
+    검사하지 않는다 — 계약 식별자 대조는 옮겨 적기를 기계가 대조하는 의례였고
+    PR 본문은 사람이 읽는다.
     """
     notes, err = read_notes(paths)
     if err:
@@ -296,41 +295,11 @@ def check_notes(root, paths, state, config):
     if not isinstance(verify, list) or not [v for v in verify
                                             if isinstance(v, str) and v.strip()]:
         problems.append("`verify` 가 비었다 — 직접 확인하는 법을 하나 이상 적는다")
-    parsed = _contract_parsed(root, state, config)
-    if parsed is None:
-        problems.append("계약을 읽지 못해 `refs` 를 대조할 수 없다")
     for i, step in enumerate(flow, 1):
         step = step if isinstance(step, dict) else {}
         if not str(step.get("step") or "").strip():
             problems.append("flow[%d] — `step` 이 비었다" % i)
-        refs = step.get("refs")
-        if not isinstance(refs, list) or not refs:
-            problems.append("flow[%d] — `refs` 가 비었다. 계약 식별자를 하나 이상 적는다" % i)
-            continue
-        for ref in refs:
-            if parsed is not None and not _ref_known(ref, parsed):
-                problems.append("flow[%d] — `%s` 는 계약에 없다" % (i, ref))
     return notes, problems
-
-
-def _ref_known(ref, parsed):
-    import contract as contract_mod
-    if not isinstance(ref, str) or not ref.strip():
-        return False
-    ref = ref.strip()
-    if "/" not in ref:
-        return ref in contract_mod.symbols(parsed)
-    for ep in parsed.get("entrypoints") or []:
-        if ref in (ep.get("raw"), ep.get("path"),
-                   "%s %s" % (ep.get("method"), ep.get("path"))):
-            return True
-    ref = ref.lstrip("./")
-    for item in ((parsed.get("units") or []) + (parsed.get("screens") or [])
-                 + (parsed.get("journeys") or [])):
-        c = (item.get("container") or "").replace("\\", "/").lstrip("./")
-        if c and (ref == c or ref.endswith("/" + c) or c.endswith("/" + ref)):
-            return True
-    return False
 
 
 def _flow_lines(paths):
@@ -362,8 +331,8 @@ def _by_file_count(by_file, rel):
 def _verified_lines(root, state, config):
     """유닛 | 테스트 파일 | 케이스 수. **못 잰 것은 「미측정」이다** — 0 이 아니다.
 
-    유닛의 테스트 파일은 계약 심볼이 본문에 나오는 테스트 파일이다
-    (`untested_contract_item` 과 같은 규칙). 케이스 수는 마지막 full 실행이
+    유닛의 테스트 파일은 계약 심볼이 본문에 나오는 테스트 파일이다.
+    케이스 수는 마지막 full 실행이
     남긴 `state.tests.by_file` 이다 — 06 이 리포트를 다시 읽지 않는다.
     """
     import adapters
@@ -375,8 +344,7 @@ def _verified_lines(root, state, config):
     if not units:
         return head + ["_계약 유닛이 없다._", ""]
     _config, adapter = adapters.load(root)
-    tests = trace_contract._unit_test_files(adapter, trace_contract.repo_files(root),
-                                            parsed)
+    tests = trace_contract._unit_test_files(adapter, trace_contract.repo_files(root))
     tinfo = state.get("tests") or {}
     by_file = tinfo.get("by_file")
     rows = ["| 유닛 | 테스트 파일 | 케이스 수 |", "|---|---|---|"]
@@ -391,8 +359,8 @@ def _verified_lines(root, state, config):
                    if isinstance(by_file, dict) else [None])
             count = "미측정" if None in got else str(sum(got))
         rows.append("| `%s` | %s | %s |" % (u["raw"].replace("|", "\\|"), files, count))
-    notes = ["_테스트 파일은 계약 심볼이 본문에 나오는 파일이다(`untested_contract_item` "
-             "과 같은 규칙). 케이스 수는 마지막 full 실행의 리포트다._"]
+    notes = ["_테스트 파일은 계약 심볼이 본문에 나오는 파일이다. 케이스 수는 마지막 "
+             "full 실행의 리포트다._"]
     if not isinstance(by_file, dict):
         notes.append("_파일별 케이스 수가 없다 — 미측정._")
     elif tinfo.get("ran") is not None and sum(by_file.values()) != tinfo["ran"]:

@@ -1913,7 +1913,7 @@ class TestRecord03ContractUnitsZero:
     파일럿 40dc(FR-014) 의 `04_gate_report.json` 은 `contract: {units: 0,
     entrypoints: 0}` 인데 게이트를 통과했다 — `## 유닛` 을 `### ` 헤딩으로
     적어 파서(`_units`, 최상위 `- ` 불릿만)가 아무것도 못 읽었고, 그 결과
-    계약에 서술된 심볼까지 `out_of_contract` 로 잡혔고 scoped 는
+    계약에 서술된 심볼까지 계약 밖으로 잡혔고 scoped 는
     `no_selector` 로 스킵됐다. 파일 크기와 절 제목만 보는 `requires` 는 이것을
     못 가른다.
     """
@@ -2066,16 +2066,8 @@ class TestTestsRequiredAt03:
         assert env["exit"] == 0, env["render"]
         r = env["render"]
         assert "게이트가 세는 테스트" in r
-        assert "POST /api/analyze" in r and "admin" in r
+        assert "POST /api/analyze" in r
         assert "MATCH_EMPTY" in r
-
-    def test_목록은_계약에서_나온다_태그가_없으면_거부_경로를_요구하지_않는다(
-            self, repo, request_file, phases, monkeypatch):
-        text = TESTS_REQUIRED_CONTRACT.replace(" [admin]", "")
-        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch, text)
-        r = cli.run_next(repo, run_id)["render"]
-        line = next(l for l in r.splitlines() if "`POST /api/analyze`" in l)
-        assert "성공 경로" in line and "거부 경로" not in line, line
 
     # --- 제출 ---------------------------------------------------------------
 
@@ -2089,8 +2081,6 @@ class TestTestsRequiredAt03:
         _p, s = st.load(repo, run_id)
         assert st.phase_status(s, "03-implement") != "passed"
         assert "untested_error_symbol" in env["render"]
-        assert "authz_untested" in env["render"]
-        assert "authz_denied_pattern" in env["render"], "오탐이면 고칠 자리를 알린다"
 
     def test_빠진_테스트는_03_을_거부한다(self, repo, request_file, phases,
                                          monkeypatch):
@@ -2121,8 +2111,8 @@ class TestTestsRequiredAt03:
         p = _write_contract(repo, TESTS_REQUIRED_CONTRACT)
         _route(repo, "analyze")
         req = tr.required_tests(repo, config, adapter, p)
-        full = tr.run(repo, config, adapter, p, changed=[])
-        codes = ("untested_entrypoint", "untested_error_symbol", "authz_untested")
+        full = tr.run(repo, config, adapter, p)
+        codes = ("untested_entrypoint", "untested_error_symbol")
         assert (sorted(f["code"] for f in req["findings"])
                 == sorted(f["code"] for f in full["findings"] if f["code"] in codes))
 
@@ -2810,86 +2800,6 @@ P8_FALSE_POSITIVES = (
 )
 
 
-class TestContractDataShapes:
-    """계약의 「데이터 형태」 절이 파서에 등록된 적이 없었다 (M57).
-
-    `parse()` 는 `config.contract.sections` 가 이름 붙인 절만 읽는데 그 매핑에
-    이 절이 없었다. 템플릿은 거기 타입·상수를 적게 하므로, 계약이 이름 붙인
-    이름이 `symbols()` 에 안 들어오고 `out_of_contract` 가 전부 "계약에 없는
-    심볼" 로 잡았다 — **P8 의 지적 6/6 이 그 구조적 오탐이다.**
-
-    C4([[ADR-H034]])가 그 여섯을 한 버킷으로 접었으므로 고치지 않으면 이
-    파이프라인의 **첫 승격 후보가 기계가 틀린 규칙 위에 선다.** 그래서 P9 전에
-    닫는다.
-    """
-
-    def _parse(self, repo, text=DATA_SHAPES_DOC):
-        cfg = json.loads((repo / "harness" / "config.json").read_text(encoding="utf-8"))
-        return contract_mod.parse(text, cfg)
-
-    def test_계약이_이름_붙인_타입과_상수가_심볼에_들어온다(self, repo):
-        """**P8 오탐 여섯이 전부 여기서 회수된다.**"""
-        got = contract_mod.symbols(self._parse(repo))
-        missing = [n for n in P8_FALSE_POSITIVES if n not in got]
-        assert missing == [], "P8 이 오탐으로 잡은 이름이 아직 안 들어온다: %s" % missing
-
-    def test_불릿이_아닌_연속_줄도_읽는다(self, repo):
-        """상수 다섯이 그 모양이다 — 최상위 불릿만 보면 2/6 밖에 못 잡는다."""
-        got = contract_mod.symbols(self._parse(repo))
-        consts = [n for n in P8_FALSE_POSITIVES if n.isupper()]
-        assert all(n in got for n in consts), got
-
-    def test_타입_상수_형태가_아닌_낱말은_안_들어온다(self, repo):
-        """**미탐을 막는 회귀다.**
-
-        절 전체의 백틱을 형태 없이 다 모으면 `map`·`any` 같은 흔한 낱말이
-        계약에 있다는 이유로 **진짜 위반이 조용히 통과한다.** 오탐을 고치려다
-        미탐을 만드는 것이 이 자리의 실패 방식이다.
-        """
-        got = contract_mod.symbols(self._parse(repo))
-        for noise in ("retryAfterSeconds", "map", "windowStart", "globalThis",
-                      "any", "src", "process", "declare"):
-            assert noise not in got, "%r 가 심볼로 들어왔다" % noise
-
-    def test_절이_없으면_빈_결과이고_예외가_아니다(self, repo):
-        """그 절이 없는 옛 계약이 그대로 돌아야 한다."""
-        p = self._parse(repo, OLD_CONTRACT_DOC)
-        assert p["data_shapes"] == []
-        assert [u["symbol"] for u in p["units"]] == ["f"]
-
-    def test_기존_세_키가_안_바뀐다(self, repo):
-        """`units`·`entrypoints`·`errors` 는 이 증분이 건드리지 않는다."""
-        p = self._parse(repo)
-        assert [u["symbol"] for u in p["units"]] == ["matchTitle"]
-        assert p["entrypoints"] == [] and p["errors"] == []
-
-    def test_게이트의_귀속도_같은_심볼_집합을_쓴다(self, repo):
-        """`symbols()` 소비자는 둘이고 **둘 다 넓어진다** — 말없이 넓히지 않는다.
-
-        `gate.py` 가 컴파일·테스트 실패를 역할에 배정할 때 같은 집합으로
-        `in_contract` 를 판정한다. 여기서 잠그지 않으면 이 증분이 게이트 거동을
-        바꾼 사실이 어디에도 안 드러난다.
-        """
-        got = contract_mod.symbols(self._parse(repo))
-        assert "RateLimitDecision" in got and "matchTitle" in got, got
-
-    def test_실물_P8_계약에서_여섯이_전부_회수된다(self, repo):
-        """**픽스처가 아니라 그 런이 실제로 쓴 계약으로 확인한다.**
-
-        `_workspace/runs/**` 는 그 런의 사실 기록이라 한 바이트도 안 고친다 —
-        읽기만 한다. 스냅샷이 없는 환경에서는 건너뛴다: 없는 것을 실패로 적으면
-        「파일이 없다」와 「고쳐지지 않았다」가 같은 빨간불이 된다.
-        """
-        snap = (ROOT / "_workspace" / "runs" / "20260908-1720-dca1"
-                / "06_contract_snapshot.md")
-        if not snap.exists():
-            pytest.skip("P8 계약 스냅샷이 없다 — 판정할 표본이 없는 것이지 실패가 아니다")
-        got = contract_mod.symbols(
-            self._parse(repo, snap.read_text(encoding="utf-8")))
-        missing = [n for n in P8_FALSE_POSITIVES if n not in got]
-        assert missing == [], missing
-
-
 class TestContractTraceMissingImpl:
     """컨테이너명 + 심볼명 **쌍**으로 본다. 심볼명만 보면 거짓 통과한다."""
 
@@ -2951,7 +2861,7 @@ class TestContractTraceErrorsAndEntrypoints:
         assert [f for f in got["findings"] if f["code"] == "missing_entrypoint"] == []
 
     def test_no_resolver_skips_only_that_check(self, repo):
-        """스킵을 통과로 적지 않는다. 나머지 4종은 수행한다."""
+        """스킵을 통과로 적지 않는다. 나머지 셋은 수행한다."""
         config, adapter = _load(repo)
         adapter = dict(adapter)
         adapter.pop("entrypoint_resolver", None)
@@ -2961,255 +2871,11 @@ class TestContractTraceErrorsAndEntrypoints:
         assert [f for f in got["findings"] if f["code"] == "missing_entrypoint"] == []
         # 오류 어휘 검사는 그대로 돌아야 한다.
         assert any(f["code"] == "missing_error_symbol" for f in got["findings"])
-        # 진입점 해석에 기대는 셋만 빠지고 나머지 일곱은 돈다.
-        assert set(got["skipped"]) == {"missing_entrypoint", "untested_entrypoint",
-                                       "authz_untested"}
-        assert len(got["checks_run"]) == 7
-
-
-class TestContractTraceAdapterConventions:
-    """**contract-trace 는 어댑터가 선언한 관례를 읽는다** (ADR-H049).
-
-    파일럿 원장 140건 중 41건이 `contract-trace` 출처였고 그중
-    `maxduration-route-config-not-out-of-contract` 가 9회/7런 반복 오탐이었다 —
-    라우트 파일이 내보내는 `POST`·`maxDuration` 은 진입점 관례인데 계약의
-    `## 유닛` 에 다시 적지 않으면 `out_of_contract` 로 잡혔다. 또 ad59(FR-007)
-    는 계약에 API_SPEC 표기 `{id}` 를 그대로 써 `[id]` 폴더를 못 찾아
-    `missing_entrypoint` critical 을 냈다. 둘 다 스택 관례라 **어댑터가
-    선언하고 코어는 읽기만 한다** (ADR-H031).
-    """
-
-    ROUTE = ("export const maxDuration = 30\n"
-             "export async function POST() {}\n"
-             "export function helperNotInContract(): void {}\n")
-
-    def _route_file(self, repo, *parts):
-        d = repo / "src" / "app" / "api"
-        for part in parts:
-            d = d / part
-        d.mkdir(parents=True, exist_ok=True)
-        f = d / "route.ts"
-        f.write_text(self.ROUTE, encoding="utf-8")
-        return f.relative_to(repo).as_posix()
-
-    def _ooc(self, got):
-        return sorted(f["symbol"] for f in got["findings"]
-                      if f["code"] == "out_of_contract")
-
-    def _missing(self, got):
-        return [f for f in got["findings"] if f["code"] == "missing_entrypoint"]
-
-    def test_계약의_중괄호_파라미터가_대괄호_폴더로_해석된다(self, repo):
-        self._route_file(repo, "items", "[id]")
-        c = CONTRACT.replace("- `POST /api/analyze` → 200",
-                             "- `POST /api/items/{id}` → 200")
-        got = _trace(repo, _write_contract(repo, c))
-        assert self._missing(got) == [], got["findings"]
-
-    def test_대괄호_표기는_그대로_해석된다(self, repo):
-        self._route_file(repo, "items", "[id]")
-        c = CONTRACT.replace("- `POST /api/analyze` → 200",
-                             "- `POST /api/items/[id]` → 200")
-        got = _trace(repo, _write_contract(repo, c))
-        assert self._missing(got) == [], got["findings"]
-
-    def test_진입점_파일의_관례_export_는_계약_밖이_아니다(self, repo):
-        rel = self._route_file(repo, "analyze")
-        got = _trace(repo, _write_contract(repo), changed=[rel])
-        assert self._ooc(got) == ["helperNotInContract"], got["findings"]
-
-    def test_진입점이_아닌_파일의_같은_이름은_여전히_잡힌다(self, repo):
-        """관례는 **진입점 파일**에만 있다 — 다른 파일의 `maxDuration` 은 신규 심볼이다."""
-        f = repo / "src" / "lib" / "limits.ts"
-        f.write_text("export const maxDuration = 30\n", encoding="utf-8")
-        got = _trace(repo, _write_contract(repo), changed=["src/lib/limits.ts"])
-        assert self._ooc(got) == ["maxDuration"], got["findings"]
-
-    def test_어댑터가_관례를_선언하지_않으면_종전_동작이다(self, repo):
-        rel = self._route_file(repo, "analyze")
-        config, adapter = _load(repo)
-        adapter = json.loads(json.dumps(adapter))
-        adapter["entrypoint_resolver"].pop("implied_exports", None)
-        adapter["entrypoint_resolver"].pop("param_styles", None)
-        got = tr.run(repo, config, adapter, _write_contract(repo), changed=[rel])
-        assert self._ooc(got) == ["POST", "helperNotInContract", "maxDuration"]
-
-    def test_실물_어댑터가_둘_다_선언한다(self):
-        a = harness._read_json(ROOT / "harness/adapters/nextjs-ts.json")
-        r = a["entrypoint_resolver"]
-        assert "POST" in r["implied_exports"] and "maxDuration" in r["implied_exports"]
-        assert r["param_styles"] == ["[]"]
-        # 스키마가 두 필드를 받는다 — 어댑터가 doctor 를 통과해야 한다.
-        errors = harness.validate(
-            a, harness._read_json(ROOT / "harness/adapters/adapter.schema.json"))
-        assert errors == [], errors
-
-
-class TestConventionFilesBeyondTheEntrypointMap:
-    """미구현 백로그 24 — 관례 면제가 **진입점 맵에만** 걸려 있었다.
-
-    [[ADR-H049]] 의 면제는 작동하지만 `is_entrypoint_file()` 이 참일 때만
-    걸리는데 `nextjs-ts` 의 진입점 맵은 API route 하나뿐이다. 그래서 화면
-    파일이 관례로 내보내는 이름이 계약에 없다는 이유로 major 가 됐다 —
-    클론 4런의 `contract-trace` findings 6건 중 5건이 `out_of_contract`
-    major 였고 전부 deferred 로 버려졌다.
-
-    **관례 파일 목록은 어댑터가 선언하고 코어는 읽기만 한다** (ADR-H031 ·
-    ADR-H038). 진입점이 아닌 관례 파일이므로 `is_entrypoint_file` 의 뜻은
-    넓히지 않고 `is_convention_file` 을 따로 둔다.
-
-    **타입 전용 export 는 [[ADR-H072]] 결정 4 가 닫았다** — `type`·`interface`
-    는 `out_of_contract` 가 아예 안 본다. `enum` 은 런타임 객체를 내보내므로
-    면제가 아니다.
-    """
-
-    PAGE = ("export const dynamic = 'force-dynamic'\n"
-            "export const metadata = {}\n"
-            "export async function generateMetadata() {}\n"
-            "export function generateStaticParams() {}\n"
-            "export const viewport = {}\n"
-            "export default function Page() {}\n")
-
-    def _ooc(self, got):
-        return sorted(f["symbol"] for f in got["findings"]
-                      if f["code"] == "out_of_contract")
-
-    def _write(self, repo, rel, text):
-        f = repo / rel
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(text, encoding="utf-8")
-        return rel
-
-    def test_화면_관례_파일의_export_는_한_건도_안_잡힌다(self, repo):
-        rel = self._write(repo, "src/app/items/page.tsx", self.PAGE)
-        got = _trace(repo, _write_contract(repo), changed=[rel])
-        assert self._ooc(got) == [], got["findings"]
-
-    def test_레이아웃도_같다(self, repo):
-        rel = self._write(repo, "src/app/layout.tsx",
-                          "export const metadata = {}\n"
-                          "export default function Layout() {}\n")
-        got = _trace(repo, _write_contract(repo), changed=[rel])
-        assert self._ooc(got) == [], got["findings"]
-
-    def test_관례_파일이_아니면_같은_이름도_잡힌다(self, repo):
-        """면제는 **파일**에 걸린다 — 아무 데서나 `metadata` 를 내보내는 것은 신규 심볼이다."""
-        rel = self._write(repo, "src/lib/meta.ts", "export const metadata = {}\n")
-        got = _trace(repo, _write_contract(repo), changed=[rel])
-        assert self._ooc(got) == ["metadata"], got["findings"]
-
-    def test_어댑터가_관례_글롭을_선언하지_않으면_종전_동작이다(self, repo):
-        rel = self._write(repo, "src/app/items/page.tsx", self.PAGE)
-        config, adapter = _load(repo)
-        adapter = json.loads(json.dumps(adapter))
-        adapter["entrypoint_resolver"].pop("convention_globs", None)
-        got = tr.run(repo, config, adapter, _write_contract(repo), changed=[rel])
-        assert "dynamic" in self._ooc(got), got["findings"]
-
-    def test_타입_전용_export_는_계약에_없어도_안_잡힌다(self, repo):
-        """[[ADR-H072]] 결정 4 — 계약은 런타임 심볼을 본다.
-
-        클론 4런의 `out_of_contract` 6건 중 3건이 타입 별칭이었고 전부
-        major · 전부 deferred 였다. 탈출구가 「01 이 내부 타입까지 계약에
-        열거한다」뿐이면 계약이 타입 선언서가 된다 (백로그 24).
-        """
-        rel = self._write(repo, "src/lib/shapes.ts",
-                          "export type ItemRow = { id: string }\n"
-                          "export interface ItemView { id: string }\n")
-        got = _trace(repo, _write_contract(repo), changed=[rel])
-        assert self._ooc(got) == [], got["findings"]
-
-    def test_enum_은_런타임_값이라_그대로_잡힌다(self, repo):
-        """`export enum` 은 런타임 객체를 내보낸다 — 다른 모듈이 값으로 쓴다."""
-        rel = self._write(repo, "src/lib/shapes.ts",
-                          "export enum Status { Open = 'open' }\n")
-        got = _trace(repo, _write_contract(repo), changed=[rel])
-        assert self._ooc(got) == ["Status"], got["findings"]
-
-    def test_런타임_export_는_그대로_잡힌다(self, repo):
-        rel = self._write(repo, "src/lib/shapes.ts",
-                          "export const ROWS = 1\n"
-                          "export function toRow() {}\n")
-        got = _trace(repo, _write_contract(repo), changed=[rel])
-        assert self._ooc(got) == ["ROWS", "toRow"], got["findings"]
-
-    def test_어댑터가_정규식을_덮으면_면제도_어댑터_몫이다(self, repo):
-        """override 정규식에는 `kw` 그룹이 없다 — `groupdict()` 로 읽어
-        터지지 않고, 면제는 그 어댑터가 정한다.
-        """
-        rel = self._write(repo, "src/lib/shapes.ts",
-                          "export type ItemRow = { id: string }\n")
-        config, adapter = _load(repo)
-        adapter = json.loads(json.dumps(adapter))
-        adapter.setdefault("attribution", {})["public_symbol_regex"] = (
-            r"^\s*export\s+(?:type|const)\s+(?P<name>[^\W\d][\w$]*)")
-        got = tr.run(repo, config, adapter, _write_contract(repo),
-                     changed=[rel])
-        assert self._ooc(got) == ["ItemRow"], got["findings"]
-
-    def test_실물_어댑터가_글롭과_이름을_선언한다(self):
-        a = harness._read_json(ROOT / "harness/adapters/nextjs-ts.json")
-        r = a["entrypoint_resolver"]
-        assert r["convention_globs"], r
-        for name in ("metadata", "generateMetadata", "generateStaticParams",
-                     "viewport"):
-            assert name in r["implied_exports"], name
-        errors = harness.validate(
-            a, harness._read_json(ROOT / "harness/adapters/adapter.schema.json"))
-        assert errors == [], errors
-
-
-class TestUntestedEntrypointLink:
-    """진입점 폴백은 **그 유닛과 연결된** 진입점만 본다 (G-2).
-
-    `_entrypoint_referenced(unit, ...)` 가 `unit` 을 안 써서, 아무 진입점
-    경로 하나가 테스트 blob 에 있으면 **모든 유닛**의 지적이 억제됐다.
-    사실상 이 검사가 꺼져 있었고, §E6 의 baseline 3런은 그동안 발화할 수
-    없는 검사를 재고 있었다.
-    """
-
-    CONTRACT = """# 계약: x
-
-## 유닛
-- `lib/alpha.ts · doAlpha(x: string): void`
-- `lib/beta.ts · doBeta(x: string): void`
-
-## 진입점
-- `POST /api/alpha` → 201
-"""
-
-    def _repo(self, repo):
-        (repo / "src" / "lib").mkdir(parents=True, exist_ok=True)
-        (repo / "src" / "lib" / "alpha.ts").write_text(
-            "export function doAlpha(x: string) {}\n", encoding="utf-8")
-        (repo / "src" / "lib" / "beta.ts").write_text(
-            "export function doBeta(x: string) {}\n", encoding="utf-8")
-        d = repo / "src" / "app" / "api" / "alpha"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "route.ts").write_text(
-            "import { doAlpha } from '../../../lib/alpha';\n"
-            "export async function POST() { doAlpha('x'); }\n", encoding="utf-8")
-        t = repo / "src" / "lib" / "alpha.test.ts"
-        # 진입점 경로만 언급하고 어느 심볼도 부르지 않는다.
-        t.write_text("it('routes', () => { fetch('/api/alpha'); });\n",
-                     encoding="utf-8")
-
-    def test_한_진입점이_다른_유닛의_지적을_덮지_않는다(self, repo):
-        self._repo(repo)
-        got = _trace(repo, _write_contract(repo, self.CONTRACT), changed=[])
-        untested = [f for f in got["findings"]
-                    if f["code"] == "untested_contract_item"]
-        symbols = {f.get("symbol") for f in untested}
-        assert "doBeta" in symbols, \
-            "진입점 하나가 blob 에 있다고 모든 유닛이 커버로 처리되면 안 된다"
-
-    def test_연결을_못_풀면_evidence_에_적는다(self, repo):
-        self._repo(repo)
-        got = _trace(repo, _write_contract(repo, self.CONTRACT), changed=[])
-        untested = [f for f in got["findings"]
-                    if f["code"] == "untested_contract_item"]
-        assert untested, "억제가 침묵으로 일어나면 안 된다"
-        assert all(f.get("evidence") for f in untested)
+        # 진입점 해석에 기대는 둘만 빠지고 나머지 셋은 돈다.
+        assert set(got["skipped"]) == {"missing_entrypoint", "untested_entrypoint"}
+        assert len(got["checks_run"]) == 3
+        assert tr.CHECKS == ("missing_impl", "missing_error_symbol", "missing_entrypoint",
+                             "untested_entrypoint", "untested_error_symbol")
 
 
 class TestScopeSelectorWidth:
@@ -3353,122 +3019,9 @@ class TestScopeSeesUntrackedFiles:
         got = self._select(repo)
         config, adapter = _load(repo)
         contract_path = _write_contract(repo, self.CONTRACT)
-        trace = tr.run(repo, config, adapter, contract_path, changed=[])
+        trace = tr.run(repo, config, adapter, contract_path)
         assert got["repo_files"] == trace["repo_files"], (got, trace["repo_files"])
         assert got["repo_files"] > 0
-
-
-class TestContractTraceBaseline:
-    """오탐 이력이 있는 둘(`untested_contract_item`·`out_of_contract`)은 **언제나** warn_only 다.
-
-    원장이 없으니 「그 검사가 지적을 낸 런 수」로 유예를 셀 수 없다 — 78/78 · 6/6
-    오탐 이력을 근거로 상수로 둔다. 둘 자체는 Wave 4 가 지운다.
-    """
-
-    def _contract_untested(self, repo):
-        (repo / "src" / "lib" / "match.test.ts").write_text("// 아무것도 안 부른다\n",
-                                                            encoding="utf-8")
-        return _write_contract(repo)
-
-    def test_untested_is_always_warn_only(self, repo):
-        got = _trace(repo, self._contract_untested(repo))
-        f = next(f for f in got["findings"] if f["code"] == "untested_contract_item")
-        assert f["resolution"] == "warn_only"
-        assert f["why_warn_only"]
-        assert "baseline" not in got, "런 수 유예는 원장과 함께 사라졌다"
-
-    def test_test_existence_checks_have_no_grace(self, repo):
-        """존재 검사 셋은 유예가 없다 — 첫 런부터 지적이다 (ADR-H058 결정 8)."""
-        got = _trace(repo, self._contract_untested(repo))
-        f = next(f for f in got["findings"] if f["code"] == "untested_error_symbol")
-        assert f["resolution"] == "deferred"
-
-    def test_symbol_referenced_by_test_is_clean(self, repo):
-        """심볼 문자열 **또는** 진입점 경로 — 둘 다 실패할 때만 지적한다."""
-        got = _trace(repo, _write_contract(repo))   # match.test.ts 가 matchTitle 을 import 한다
-        assert [f for f in got["findings"] if f["code"] == "untested_contract_item"] == []
-
-    def test_out_of_contract_is_always_warn_only(self, repo):
-        (repo / "src" / "lib" / "match.ts").write_text(
-            "export function matchTitle(): number { return 0 }\n"
-            "export function 계약에없는함수(): void {}\n", encoding="utf-8")
-        got = _trace(repo, _write_contract(repo), changed=["src/lib/match.ts"])
-        f = next(f for f in got["findings"] if f["code"] == "out_of_contract")
-        assert f["resolution"] == "warn_only"
-
-    def test_out_of_contract_only_looks_at_changed_files(self, repo):
-        """안 건드린 파일의 기존 심볼을 신규로 세면 온 리포가 지적이 된다."""
-        (repo / "src" / "lib" / "기존.ts").write_text(
-            "export function 아주오래된함수(): void {}\n", encoding="utf-8")
-        got = _trace(repo, _write_contract(repo), changed=[])
-        assert [f for f in got["findings"] if f["code"] == "out_of_contract"] == []
-
-
-class TestOutOfContractReadsDataShapes:
-    """P8 의 오탐 6/6 이 실제로 사라지는가 (M57). **이 증분의 성공 정의다.**
-
-    앞의 `TestContractDataShapes` 는 파서가 이름을 모으는지를 묻고, 여기서는
-    그 결과가 `out_of_contract` 까지 도달하는지를 묻는다. 둘이 갈라져 있어야
-    "모으긴 하는데 검사가 안 쓴다" 를 잡을 수 있다.
-
-    P8 의 여섯은 `env.ts` 의 상수 다섯과 `rate-limit.ts` 의 타입 하나였다.
-    여기서는 같은 **모양**을 최소로 재현한다 — 실물 파일 내용을 복사하면
-    이 테스트가 그 런의 코드에 묶인다.
-    """
-
-    CONTRACT = """# 계약: x
-
-## 데이터 형태
-
-- `RateLimitDecision { allowed: boolean; retryAfterSeconds: number }`
-- 상수는 전부 `src/lib/env.ts` 에서 온다:
-  `RATE_LIMIT_MAX_REQUESTS`(20) · `RATE_LIMIT_WINDOW_MS`(60_000)
-
-## 유닛
-
-- `lib/match.ts · matchTitle(a: string, b: string): number`
-"""
-
-    ENV_TS = """
-export const RATE_LIMIT_MAX_REQUESTS = 20
-export const RATE_LIMIT_WINDOW_MS = 60_000
-"""
-    RATE_LIMIT_TS = """
-export type RateLimitDecision = { allowed: boolean }
-"""
-    EXTRA_TS = """
-export const 계약에없는상수 = 3
-"""
-
-    def _write(self, repo):
-        (repo / "src" / "lib" / "env.ts").write_text(
-            self.ENV_TS, encoding="utf-8")
-        (repo / "src" / "lib" / "rate-limit.ts").write_text(
-            self.RATE_LIMIT_TS, encoding="utf-8")
-        return ["src/lib/env.ts", "src/lib/rate-limit.ts"]
-
-    def _ooc(self, got):
-        return sorted(f["symbol"] for f in got["findings"]
-                      if f["code"] == "out_of_contract")
-
-    def test_데이터_형태에_적힌_이름은_계약_밖이_아니다(self, repo):
-        """P8 이 여섯을 잡은 그 경로다. 이제 0 이어야 한다."""
-        changed = self._write(repo)
-        got = _trace(repo, _write_contract(repo, self.CONTRACT), changed=changed)
-        assert self._ooc(got) == [], got["findings"]
-
-    def test_그래도_계약에_없는_것은_여전히_잡는다(self, repo):
-        """**검사를 무력화한 것이 아니다.**
-
-        오탐을 없애려고 판정을 넓히면 진짜 위반이 함께 사라진다 — 그러면
-        고친 것이 아니라 끈 것이다.
-        """
-        changed = self._write(repo)
-        (repo / "src" / "lib" / "env.ts").write_text(
-            (repo / "src" / "lib" / "env.ts").read_text(encoding="utf-8")
-            + self.EXTRA_TS, encoding="utf-8")
-        got = _trace(repo, _write_contract(repo, self.CONTRACT), changed=changed)
-        assert self._ooc(got) == ["계약에없는상수"], got["findings"]
 
 
 def _route(repo, name, test_body=None):
@@ -3496,12 +3049,12 @@ class TestContractTraceUntestedEntrypoint:
 
     def test_route_test_next_to_route_passes(self, repo):
         _route(repo, "analyze", "it('ok', () => {})\n")
-        got = _trace(repo, _write_contract(repo), changed=[])
+        got = _trace(repo, _write_contract(repo))
         assert _codes(got, "untested_entrypoint") == [], got["findings"]
 
     def test_no_test_is_major_for_the_test_role(self, repo):
         _route(repo, "analyze")
-        got = _trace(repo, _write_contract(repo), changed=[])
+        got = _trace(repo, _write_contract(repo))
         miss = _codes(got, "untested_entrypoint")
         assert len(miss) == 1
         assert miss[0]["severity"] == "major"
@@ -3512,14 +3065,14 @@ class TestContractTraceUntestedEntrypoint:
         """스템이 같은 `route.test.ts` 라도 다른 라우트 것이면 통과가 아니다."""
         _route(repo, "analyze")
         _route(repo, "other", "it('ok', () => {})\n")
-        got = _trace(repo, _write_contract(repo), changed=[])
+        got = _trace(repo, _write_contract(repo))
         assert len(_codes(got, "untested_entrypoint")) == 1, got["findings"]
 
     def test_alias_import_from_elsewhere_counts(self, repo):
         _route(repo, "analyze")
         (repo / "src" / "lib" / "analyze-flow.test.ts").write_text(
             'import { POST } from "@/app/api/analyze/route";\n', encoding="utf-8")
-        got = _trace(repo, _write_contract(repo), changed=[])
+        got = _trace(repo, _write_contract(repo))
         assert _codes(got, "untested_entrypoint") == [], got["findings"]
 
     def test_relative_import_from_elsewhere_counts(self, repo):
@@ -3527,12 +3080,12 @@ class TestContractTraceUntestedEntrypoint:
         (repo / "src" / "lib" / "analyze-flow.test.ts").write_text(
             "const m = await import(\n  '../app/api/analyze/route'\n)\n",
             encoding="utf-8")
-        got = _trace(repo, _write_contract(repo), changed=[])
+        got = _trace(repo, _write_contract(repo))
         assert _codes(got, "untested_entrypoint") == [], got["findings"]
 
     def test_unresolved_entrypoint_is_recorded_not_flagged(self, repo):
         """진입점이 없으면 `missing_entrypoint` 의 몫이다 — 여기서 겹쳐 지적하지 않는다."""
-        got = _trace(repo, _write_contract(repo), changed=[])
+        got = _trace(repo, _write_contract(repo))
         assert _codes(got, "untested_entrypoint") == []
         assert got["entrypoints_unresolved"] == ["POST /api/analyze"]
 
@@ -3540,7 +3093,7 @@ class TestContractTraceUntestedEntrypoint:
         config, adapter = _load(repo)
         adapter = dict(adapter)
         adapter.pop("entrypoint_resolver", None)
-        got = tr.run(repo, config, adapter, _write_contract(repo), changed=[])
+        got = tr.run(repo, config, adapter, _write_contract(repo))
         assert "untested_entrypoint" in got["skipped"]
         assert got["skip_reasons"]["untested_entrypoint"]
 
@@ -3548,7 +3101,7 @@ class TestContractTraceUntestedEntrypoint:
 class TestContractTraceUntestedErrorSymbol:
 
     def test_error_constant_absent_from_tests_is_major(self, repo):
-        got = _trace(repo, _write_contract(repo), changed=[])
+        got = _trace(repo, _write_contract(repo))
         miss = _codes(got, "untested_error_symbol")
         assert len(miss) == 1 and miss[0]["severity"] == "major"
         assert miss[0]["symbol"] == "MATCH_FAILED"
@@ -3557,63 +3110,14 @@ class TestContractTraceUntestedErrorSymbol:
     def test_error_constant_in_a_test_is_clean(self, repo):
         (repo / "src" / "lib" / "match.test.ts").write_text(
             "expect(code).toBe('MATCH_FAILED')\n", encoding="utf-8")
-        got = _trace(repo, _write_contract(repo), changed=[])
+        got = _trace(repo, _write_contract(repo))
         assert _codes(got, "untested_error_symbol") == []
 
     def test_a_longer_name_is_not_a_match(self, repo):
         (repo / "src" / "lib" / "match.test.ts").write_text(
             "expect(code).toBe('MATCH_FAILED_TWICE')\n", encoding="utf-8")
-        got = _trace(repo, _write_contract(repo), changed=[])
+        got = _trace(repo, _write_contract(repo))
         assert len(_codes(got, "untested_error_symbol")) == 1
-
-
-class TestContractTraceAuthzUntested:
-    """`[역할]` 태그 진입점은 **그 진입점의** 테스트에 거부 단언이 있어야 한다."""
-
-    TAGGED = CONTRACT.replace("- `POST /api/analyze` → 200",
-                              "- `POST /api/analyze` [admin] → 200")
-
-    def test_denial_in_the_routes_own_test_passes(self, repo):
-        _route(repo, "analyze", "expect(res.status).toBe(403)\n")
-        got = _trace(repo, _write_contract(repo, self.TAGGED), changed=[])
-        assert _codes(got, "authz_untested") == [], got["findings"]
-
-    def test_no_denial_is_major(self, repo):
-        _route(repo, "analyze", "expect(res.status).toBe(200)\n")
-        got = _trace(repo, _write_contract(repo, self.TAGGED), changed=[])
-        miss = _codes(got, "authz_untested")
-        assert len(miss) == 1 and miss[0]["severity"] == "major"
-        assert miss[0]["category"] == "AUTHZ_MISSING_RULE"
-
-    def test_denial_in_another_routes_test_does_not_count(self, repo):
-        _route(repo, "analyze", "expect(res.status).toBe(200)\n")
-        _route(repo, "other", "expect(res.status).toBe(403)\n")
-        got = _trace(repo, _write_contract(repo, self.TAGGED), changed=[])
-        assert len(_codes(got, "authz_untested")) == 1, got["findings"]
-
-    def test_untagged_entrypoint_is_not_checked(self, repo):
-        _route(repo, "analyze", "expect(res.status).toBe(200)\n")
-        got = _trace(repo, _write_contract(repo), changed=[])
-        assert _codes(got, "authz_untested") == []
-
-    def test_adapter_without_pattern_skips_with_a_reason(self, repo):
-        _route(repo, "analyze", "expect(res.status).toBe(200)\n")
-        config, adapter = _load(repo)
-        adapter = json.loads(json.dumps(adapter))
-        adapter["attribution"].pop("authz_denied_pattern", None)
-        got = tr.run(repo, config, adapter, _write_contract(repo, self.TAGGED),
-                     changed=[])
-        assert "authz_untested" in got["skipped"]
-        assert "authz_denied_pattern" in got["skip_reasons"]["authz_untested"]
-        assert _codes(got, "authz_untested") == []
-
-    def test_real_adapter_declares_pattern_and_aliases(self):
-        a = harness._read_json(ROOT / "harness/adapters/nextjs-ts.json")
-        assert re.search(a["attribution"]["authz_denied_pattern"], "toBe(403)")
-        assert a["attribution"]["import_aliases"] == {"@/": "src/"}
-        errors = harness.validate(
-            a, harness._read_json(ROOT / "harness/adapters/adapter.schema.json"))
-        assert errors == [], errors
 
 
 class TestContractTraceNoContract:
@@ -3648,7 +3152,8 @@ class TestContractTraceCli:
                                run_id=run_id)
         raw = (repo / "_workspace" / "runs" / run_id / "05_trace.json").read_text(
             encoding="utf-8")
-        assert "제목맞추기" in raw
+        # 한글이 이스케이프 없이 그대로 실린다 — 파일의 `note` 가 한글이다.
+        assert "선수리한다" in raw and "\\u" not in raw
 
 
 # ---------------------------------------------------------------------------
@@ -7471,260 +6976,10 @@ class TestConditionLint:
 
 
 # ---------------------------------------------------------------------------
-# G. e2e 준비 — 계약 `## 여정` (ADR-H058 추기)
-# ---------------------------------------------------------------------------
-
-JOURNEY_CONTRACT = TESTS_REQUIRED_CONTRACT.replace(" [admin]", "") + """
-## 여정
-
-- `e2e/analyze.spec.ts · analyzeJourney`
-  - POST /api/analyze
-"""
-
-
-def _journey_contract(steps="POST /api/analyze"):
-    return JOURNEY_CONTRACT.replace("  - POST /api/analyze", "  - " + steps)
-
-
-def _set_e2e(repo, stage):
-    a = repo / "harness" / "adapters" / "nextjs-ts.json"
-    data = json.loads(a.read_text(encoding="utf-8"))
-    data["stages"]["e2e"] = stage
-    a.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _journey_spec(repo, body):
-    p = repo / "e2e" / "analyze.spec.ts"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(body, encoding="utf-8")
-    return p
-
-
-class TestContractJourneys:
-    """계약 `## 여정` 파서 — 유닛과 같은 형식에 들여쓴 줄이 진입점 순서다."""
-
-    def _parse(self, repo, text):
-        cfg = json.loads((repo / "harness" / "config.json").read_text(encoding="utf-8"))
-        return contract_mod.parse(text, cfg)
-
-    def test_여정과_단계를_읽는다(self, repo):
-        doc = ("## 여정\n\n- `e2e/a.spec.ts · aJourney`\n"
-               "  - `POST /api/a` → GET /api/a/[id] -> `DELETE /api/a/[id]`\n")
-        j = self._parse(repo, doc)["journeys"]
-        assert [(x["container"], x["symbol"]) for x in j] == [("e2e/a.spec.ts", "aJourney")]
-        assert j[0]["steps"] == [{"method": "POST", "path": "/api/a"},
-                                 {"method": "GET", "path": "/api/a/[id]"},
-                                 {"method": "DELETE", "path": "/api/a/[id]"}]
-
-    def test_템플릿의_기본_본문은_여정이_없다(self, repo):
-        text = (repo / "harness" / "templates" / "contract.md").read_text(encoding="utf-8")
-        p = self._parse(repo, text)
-        assert "## 여정" in text
-        assert p["journeys"] == [] and p["journeys_dropped"] == []
-
-    def test_여정_슬러그는_계약이_이름_붙인_것이다(self, repo):
-        p = self._parse(repo, JOURNEY_CONTRACT)
-        assert "analyzeJourney" in contract_mod.symbols(p)
-
-    def test_문제_목록(self, repo):
-        ok = self._parse(repo, JOURNEY_CONTRACT)
-        assert contract_mod.journey_problems(ok) == []
-        for steps in ("GET /api/analyze", "POST /api/other", "없음"):
-            p = self._parse(repo, _journey_contract(steps))
-            assert contract_mod.journey_problems(p), steps
-        bad = self._parse(repo, JOURNEY_CONTRACT.replace(
-            "`e2e/analyze.spec.ts · analyzeJourney`", "`0`"))
-        assert bad["journeys_dropped"] and contract_mod.journey_problems(bad)
-
-
-class TestContract03Journeys:
-    """**러너 없는 여정은 디스패치 전에 거부한다** — 워커가 스펙을 쓴 뒤가 아니라."""
-
-    def _enter(self, repo, request_file, monkeypatch, text=JOURNEY_CONTRACT):
-        monkeypatch.setattr(adapters, "run_stage",
-                            lambda *a, **k: {"id": "compile", "state": "ran",
-                                             "exit": 0, "sec": 0.1})
-        return TestRecord03ContractUnitsZero()._enter_03(repo, request_file, text)
-
-    def _total(self, repo, run_id):
-        _p, s = st.load(repo, run_id)
-        return st._budget_node(s).get("total", 0)
-
-    def test_e2e_가_없으면_next_가_exit_8_이고_지시를_세지_않는다(
-            self, repo, request_file, phases, monkeypatch):
-        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch)
-        before = self._total(repo, run_id)
-        env = cli.run_next(repo, run_id)
-        assert env["exit"] == 8, env["render"]
-        assert "e2e" in env["render"] and "ADR" in env["render"]
-        assert "next" in (env["next_command"] or "")
-        assert self._total(repo, run_id) == before
-
-    def test_해당_없음_스택은_그렇게_말한다(self, repo, request_file, phases,
-                                           monkeypatch):
-        _set_e2e(repo, {"cmd": None, "not_applicable": "브라우저가 없다."})
-        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch)
-        env = cli.run_next(repo, run_id)
-        assert env["exit"] == 8 and "해당 없음" in env["render"], env["render"]
-
-    def test_이미_쓴_스펙은_지우라고_한다(self, repo, request_file, phases,
-                                         monkeypatch):
-        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch)
-        _journey_spec(repo, "describe('analyzeJourney', () => {})\n")
-        env = cli.run_next(repo, run_id)
-        assert env["exit"] == 8 and "e2e/analyze.spec.ts" in env["render"], env["render"]
-
-    def test_진입점에_없는_단계는_거부한다(self, repo, request_file, phases,
-                                        monkeypatch):
-        _set_e2e(repo, {"cmd": ["run", "e2e"]})
-        for steps in ("GET /api/analyze", "POST /api/other"):
-            run_id, _paths, _c = self._enter(repo, request_file, monkeypatch,
-                                             _journey_contract(steps))
-            env = cli.run_next(repo, run_id)
-            assert env["exit"] == 8, (steps, env["render"])
-            assert steps in env["render"], env["render"]
-
-    def test_record_03_이_백스톱이다(self, repo, request_file, phases, monkeypatch):
-        run_id, _paths, claims = self._enter(repo, request_file, monkeypatch)
-        env = cli.run_record(repo, "03", str(claims), run_id=run_id)
-        assert env["exit"] == 8 and "여정" in env["render"], env["render"]
-        _p, s = st.load(repo, run_id)
-        assert st.phase_status(s, "03-implement") != "passed"
-
-    def test_러너가_있으면_패킷에_여정_행이_있다(self, repo, request_file, phases,
-                                               monkeypatch):
-        _set_e2e(repo, {"cmd": ["run", "e2e"]})
-        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch)
-        env = cli.run_next(repo, run_id)
-        assert env["exit"] == 0, env["render"]
-        line = next(l for l in env["render"].splitlines() if "analyzeJourney" in l)
-        assert "e2e/analyze.spec.ts" in line
-
-    def test_여정이_없는_계약은_영향이_없다(self, repo, request_file, phases,
-                                          monkeypatch):
-        run_id, _paths, _c = self._enter(repo, request_file, monkeypatch,
-                                         TESTS_REQUIRED_CONTRACT)
-        assert cli.run_next(repo, run_id)["exit"] == 0
-
-
-class TestJourneyHint:
-    """계약을 쓰라는 봉투가 e2e 부재를 말한다 — 메인이 어댑터를 추론하지 않는다."""
-
-    HINT = "e2e 가 없다"
-
-    def _at_03_without_contract(self, repo, request_file, mode="contract", plan=True):
-        init = cli.run_init(repo, "x", request_file)
-        paths, s = st.load(repo, init["run_id"])
-        st.set_phase_status(s, "01-plan", "passed")
-        s["phase"] = "03-implement"
-        s["contract"] = {"mode": mode, "present": False,
-                         "path": "_workspace/contract_x.md"}
-        st.save(paths, s)
-        if plan:
-            (paths.run_dir / "01_plan.md").write_text(
-                _plan(),
-                encoding="utf-8")
-        return paths
-
-    def test_next_거부_봉투가_e2e_부재를_말한다(self, repo, request_file, phases):
-        paths = self._at_03_without_contract(repo, request_file)
-        env = cli.run_next(repo, paths.run_id)
-        assert env["exit"] == 3 and "진입 거부" in env["render"], env["render"]
-        failed = [c for c in env["data"]["requires_report"] if not c["ok"]]
-        assert failed and all("contract_file" in c["message"] for c in failed), failed
-        assert self.HINT in env["render"] and "없음" in env["render"], env["render"]
-
-    def test_해당_없음_스택(self, repo, request_file, phases):
-        _set_e2e(repo, {"cmd": None, "not_applicable": "브라우저가 없다."})
-        paths = self._at_03_without_contract(repo, request_file)
-        env = cli.run_next(repo, paths.run_id)
-        assert env["exit"] == 3 and "해당 없음" in env["render"], env["render"]
-
-    def test_e2e_가_있으면_힌트가_없다(self, repo, request_file, phases):
-        _set_e2e(repo, {"cmd": ["run", "e2e"]})
-        paths = self._at_03_without_contract(repo, request_file)
-        env = cli.run_next(repo, paths.run_id)
-        assert env["exit"] == 3, env["render"]
-        assert "## 여정" not in env["render"], env["render"]
-
-    def test_전이_봉투도_말한다(self, repo, request_file, phases):
-        paths = self._at_03_without_contract(repo, request_file)
-        _p, s = st.load(repo, paths.run_id)
-        s["phase"] = "01-plan"
-        s["phases"]["01-plan"].pop("status", None)
-        st.save(paths, s)
-        loaded, _ = cli.load_phases(repo)
-        env = cli._advance_to_next(repo, paths, s, loaded["01-plan"],
-                                   cli.build_context(repo, paths, s))
-        assert "선행 조건이 남았다" in env["render"], env["render"]
-        assert self.HINT in env["render"], env["render"]
-
-    def test_no_contract_런은_힌트가_없다(self, repo, request_file, phases):
-        paths = self._at_03_without_contract(repo, request_file, mode="no_contract",
-                                             plan=False)
-        env = cli.run_next(repo, paths.run_id)
-        assert env["exit"] == 3 and "진입 거부" in env["render"], env["render"]
-        assert self.HINT not in env["render"], env["render"]
-
-    def test_docs_선언_빗나감_봉투도_말한다(self, repo, phases):
-        paths = TestDocsLane()._at_01(repo)
-        _submit_plan(repo, paths, _plan())
-        (repo / "src" / "lib" / "match.ts").write_text("export const x = 1\n",
-                                                        encoding="utf-8")
-        claims = paths.run_dir / "03_claims.json"
-        claims.write_text('{"schema":1,"roles":[]}', encoding="utf-8")
-        env = cli.run_record(repo, phase="03", file=str(claims), reviewer=None,
-                             round_=None)
-        assert env["exit"] == 3 and "docs 레인 선언" in env["render"], env["render"]
-        assert self.HINT in env["render"], env["render"]
 
 
 # ---------------------------------------------------------------------------
-# C. ui 역할 — 계약 `## 화면` 이 있을 때만 디스패치한다 (ADR-H057)
-# ---------------------------------------------------------------------------
 
-import gate as gate_mod  # noqa: E402
-
-SCREENS = """
-## 화면
-
-- `components/analyze/AnalyzeForm.tsx · AnalyzeForm`
-  - 정상: 파일을 고르면 분석 버튼이 켜진다
-"""
-
-SCREEN_CONTRACT = TESTS_REQUIRED_CONTRACT + SCREENS
-
-SCREEN_FILE = "src/components/analyze/AnalyzeForm.tsx"
-
-
-def _screen(repo, body="export function AnalyzeForm() { return null }\n"):
-    p = repo / SCREEN_FILE
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(body, encoding="utf-8")
-    return p
-
-
-class TestContractScreens:
-
-    def _parse(self, repo, text):
-        cfg = json.loads((repo / "harness" / "config.json").read_text(encoding="utf-8"))
-        return contract_mod.parse(text, cfg)
-
-    def test_화면은_유닛과_같은_형식이고_들여쓴_줄은_세지_않는다(self, repo):
-        got = self._parse(repo, SCREEN_CONTRACT)["screens"]
-        assert [(s["container"], s["symbol"]) for s in got] == [
-            ("components/analyze/AnalyzeForm.tsx", "AnalyzeForm")]
-
-    def test_화면_심볼은_계약이_이름_붙인_것이다(self, repo):
-        p = self._parse(repo, SCREEN_CONTRACT)
-        assert "AnalyzeForm" in contract_mod.symbols(p)
-
-    def test_템플릿의_기본_본문은_화면이_없다(self, repo):
-        """파싱되는 예시는 첫 런에 베껴져 백엔드 런에 ui 가 불린다 (G2 와 같다)."""
-        text = (repo / "harness" / "templates" / "contract.md").read_text(encoding="utf-8")
-        assert "## 화면" in text
-        p = self._parse(repo, text)
-        assert p["screens"] == [] and p["screens_dropped"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -7732,7 +6987,7 @@ class TestContractScreens:
 # ---------------------------------------------------------------------------
 
 class TestPr06Notes:
-    """흐름 노트의 `refs` 는 계약 식별자여야 한다 — 산문은 검사하지 않는다."""
+    """흐름 노트는 `step`·`verify` 의 형식만 본다 — `refs` 는 선택이다 (ADR-H075)."""
 
     def _check(self, repo, paths, notes):
         _pr_notes(paths, notes)
@@ -7744,36 +6999,22 @@ class TestPr06Notes:
         return {"schema": 1, "flow": [{"step": step, "refs": list(refs)}],
                 "verify": list(verify)}
 
-    def test_계약_식별자면_통과한다(self, repo, request_file, phases):
+    def test_refs_가_있어도_통과한다(self, repo, request_file, phases):
         _run_id, paths = _enter_06(repo, request_file, phases)
-        for refs in (["matchTitle"], ["MATCH_FAILED"], ["POST /api/analyze"],
-                     ["/api/analyze"], ["lib/match.ts"], ["src/lib/match.ts"]):
+        for refs in (["matchTitle"], ["지어낸심볼", "src/lib/other.ts"], []):
             assert self._check(repo, paths, self._notes(refs)) == [], refs
 
-    def test_계약에_없는_ref_는_이름으로_거부한다(self, repo, request_file, phases):
+    def test_refs_없이_step_만_있어도_통과한다(self, repo, request_file, phases):
         _run_id, paths = _enter_06(repo, request_file, phases)
-        got = self._check(repo, paths, self._notes(["지어낸심볼", "src/lib/other.ts"]))
-        assert any("지어낸심볼" in g for g in got), got
-        assert any("src/lib/other.ts" in g for g in got), got
-
-    def test_step_산문의_백틱은_보지_않는다(self, repo, request_file, phases):
-        _run_id, paths = _enter_06(repo, request_file, phases)
-        notes = self._notes(["matchTitle"], step="`아무말` 로 부른다")
+        notes = {"schema": 1, "flow": [{"step": "`아무말` 로 부른다"}], "verify": ["확인"]}
         assert self._check(repo, paths, notes) == []
 
     def test_형식이_틀리면_거부한다(self, repo, request_file, phases):
         _run_id, paths = _enter_06(repo, request_file, phases)
-        for notes in (self._notes([]), self._notes(["matchTitle"], step=""),
+        for notes in (self._notes(["matchTitle"], step=""),
                       self._notes(["matchTitle"], verify=()),
                       {"schema": 1, "flow": [], "verify": ["x"]}, []):
             assert self._check(repo, paths, notes), notes
-
-    def test_계약_경로가_state_에_없어도_읽는다(self, repo, request_file, phases):
-        """`_drop_contract` 와 같은 낙하 — 경로의 단일 출처는 `path_template` 이다."""
-        run_id, paths = _enter_06(repo, request_file, phases)
-        _p, s = st.load(repo, run_id)
-        assert not (s.get("contract") or {}).get("path")
-        assert self._check(repo, paths, self._notes(["matchTitle"])) == []
 
     # --- pr 배선 -----------------------------------------------------------
 
@@ -7785,13 +7026,6 @@ class TestPr06Notes:
         assert env["exit"] == 8, env["render"]
         assert "06_pr_notes.json" in env["render"], env["render"]
         assert "pr" in (env["next_command"] or "")
-
-    def test_틀린_ref_는_pr_이_exit_8_로_알린다(self, repo, request_file, phases):
-        _branch(repo, "feat-x")
-        run_id, paths = _enter_06(repo, request_file, phases)
-        _pr_notes(paths, self._notes(["지어낸심볼"]))
-        env = cli.run_pr(repo, run_id=run_id)
-        assert env["exit"] == 8 and "지어낸심볼" in env["render"], env["render"]
 
     def test_닫힌_런_재실행은_노트를_검사하지_않는다(self, repo, request_file, phases):
         _branch(repo, "feat-x")

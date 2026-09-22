@@ -31,7 +31,7 @@
     "full": {"cmd": ["run", "test"], "timeout_sec": 1800, "once_after_loop": true},
     "e2e": {
       "cmd": null,
-      "_note": "Playwright E2E 는 TRD 8번에서 [Scale] 단계다. cmd:null 은 '없는 것'이고 게이트는 스킵됨으로 기록한다 — 통과가 아니다. 이 상태에서 계약에 `## 여정` 을 적으면 03 이 디스패치 전에 거부한다 (ADR-H058 추기). 도입 시 형태: cmd 와 함께 when_touched [\"e2e/**\", \"src/app/**\"], infra_preflight 에 테스트 DB URL(on_missing warn → infra_skipped:e2e). test_report.glob 에 e2e 리포트를 넣지 않는다 — 테스트 수 신호는 full 전용이고 지난 런의 XML 이 안 돈 런의 실적이 된다."
+      "_note": "Playwright E2E 는 TRD 8번에서 [Scale] 단계다. cmd:null 은 '없는 것'이고 게이트는 스킵됨으로 기록한다 — 통과가 아니다. 도입 시 형태: cmd 와 함께 when_touched [\"e2e/**\", \"src/app/**\"], infra_preflight 에 테스트 DB URL(on_missing warn → infra_skipped:e2e). test_report.glob 에 e2e 리포트를 넣지 않는다 — 테스트 수 신호는 full 전용이고 지난 런의 XML 이 안 돈 런의 실적이 된다."
     },
     "build": {
       "cmd": ["run", "build"],
@@ -50,19 +50,14 @@
   "attribution": {
     "test_file_globs": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.golden.test.ts", "e2e/**/*.spec.ts"],
     "e2e_file_globs": ["e2e/**"],
-    "authz_denied_pattern": "\\b403\\b|FORBIDDEN",
     "import_aliases": {"@/": "src/"},
-    "_authz_note": "contract-trace 의 authz_untested·untested_entrypoint 가 읽는다 (ADR-H058). 거부 단언의 모양과 경로 별칭은 스택 관례라 여기 선언한다."
+    "_import_aliases_note": "contract-trace 의 untested_entrypoint 가 읽는다 (ADR-H058). 경로 별칭은 스택 관례라 여기 선언한다."
   },
 
   "entrypoint_resolver": {
     "kind": "file-convention",
     "param_styles": ["[]"],
     "_param_styles_note": "계약이 API_SPEC 표기 {id} 로 적은 파라미터를 실제 폴더명 [id] 로도 찾는다 (ADR-H049). 코어는 이 괄호 쌍을 읽기만 한다.",
-    "implied_exports": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "maxDuration", "runtime", "dynamic", "revalidate", "preferredRegion", "metadata", "generateMetadata", "generateStaticParams", "viewport"],
-    "_implied_exports_note": "관례 파일이 내보내는 이름 — 계약의 유닛에 다시 적지 않아도 out_of_contract 가 아니다 (ADR-H049). map 의 진입점 파일과 convention_globs 에 걸린 파일에만 적용된다.",
-    "convention_globs": ["src/app/**/page.tsx", "src/app/**/layout.tsx"],
-    "_convention_globs_note": "진입점은 아니지만 스택이 이름을 정하는 파일 (백로그 24). map 에 넣으면 missing_entrypoint 가 계약에 없는 화면을 진입점으로 요구하므로 면제 전용으로 따로 선언한다.",
     "map": [
       {"route": "/api/{p}", "file": "src/app/api/{p}/route.ts", "export": "{METHOD}"}
     ]

@@ -20,8 +20,6 @@
   ],
   "submit_checks": [
     {"id": "tests_required", "from": "${run.contract_file}",
-     "unless": "state.contract.mode == \"no_contract\"", "on_fail": 8},
-    {"id": "journeys_runnable", "from": "${run.contract_file}",
      "unless": "state.contract.mode == \"no_contract\"", "on_fail": 8}
   ],
   "gate": {"runner": "adapter", "fail_fast": true, "steps": [{"id": "compile"}]},
