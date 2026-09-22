@@ -105,13 +105,5 @@
 
 
   "_budget_note": "lines_max 는 400 에서 1000 으로 올렸다 — 실측이 아니라 실제 작업에서 exit 9(예산 초과, 사람 확인 대기)가 반복적으로 발동하는 마찰 때문이다. 1000 도 여전히 미검증 초기값이다. files_max(10)·model_calls_max(24)는 이번에 안 건드렸다. files_max 는 어댑터 attribution.test_file_globs 에 걸린 테스트 파일을 빼고 센다 — lines_max 는 전체다 (ADR-H066).",
-  "budget": {"files_max": 10, "lines_max": 1000, "model_calls_max": 24},
-
-  "_models_note": "전부 **미검증**이다 — 슬롯별 모델 등급은 실측 없이 고른 값이다 (ADR-H061 로 1차 개정). 원칙은 작성자는 싸게(roles 는 전 레인 sonnet — 계약이 자유도를 묶었고 04 게이트·05 리뷰가 뒤에 있다), 검사자는 비싸게(plan · reviewers 는 normal 에서 opus — 내용 품질에 기계 검사가 없다). 표에 inherit 는 없다 — 있으면 state.models.instructed 에 실값이 안 남고 워커 비용이 메인 세션 모델에 묶인다. 봉투가 지시 키마다 `model: X` 를 찍고 /feature 가 그 값을 Agent 호출의 model 인자로 그대로 넘긴다. 실행기는 실제로 어느 모델이 돌았는지 볼 수 없다. effort 는 여기가 아니라 .claude/agents/*.md 프론트매터가 역할별로 정한다 — Agent 호출 인자에 effort 가 없어 레인별로는 못 바꾼다. 05 수리 작성자는 04 수리와 같이 roles 슬롯이다 (ADR-H064). 프로파일 키가 없으면 default 로 낙하한다.",
-  "models": {
-    "triage":    {"default": "haiku"},
-    "plan":      {"default": "sonnet", "fix": "sonnet", "normal": "opus"},
-    "roles":     {"default": "sonnet", "fix": "sonnet"},
-    "reviewers": {"default": "sonnet", "fix": "sonnet", "normal": "opus"}
-  }
+  "budget": {"files_max": 10, "lines_max": 1000, "model_calls_max": 24}
 }

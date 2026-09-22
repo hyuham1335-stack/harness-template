@@ -131,24 +131,17 @@ def _profile_cell(node):
 
 
 def _models_cell(state):
-    """봉투가 지시한 등급 + 리뷰어의 자진신고. **둘 다 실측이 아니다** — blind
-    spot 을 함께 적는다 (ADR-H052 결정 2)."""
+    """리뷰어의 자진신고(`model_used`)뿐이다. **실측이 아니다** — blind spot 을
+    함께 적는다 (ADR-H052 결정 2)."""
     node = state.get("models") or {}
-    inst = node.get("instructed") or {}
     reported = node.get("reported") or {}
-    if not inst and not reported:
+    if not reported:
         return None
-    by = {}
-    for tier in inst.values():
-        by[tier or "inherit"] = by.get(tier or "inherit", 0) + 1
-    head = " · ".join("%s: %d" % (k, v) for k, v in sorted(by.items())) or "지시 없음"
-    if reported:
-        seen = {}
-        for m in reported.values():
-            seen[m] = seen.get(m, 0) + 1
-        head += "\n  자진신고(`model_used`): %s" % " · ".join(
-            "%s: %d" % (k, v) for k, v in sorted(seen.items()))
-    return "%s\n  기준: **%s** — 봉투가 지시한 등급과 리뷰어의 자진신고다.\n%s" % (
+    seen = {}
+    for m in reported.values():
+        seen[m] = seen.get(m, 0) + 1
+    head = " · ".join("%s: %d" % (k, v) for k, v in sorted(seen.items()))
+    return "%s\n  기준: **%s** — 리뷰어의 자진신고다.\n%s" % (
         head, node.get("basis"),
         "\n".join("  - %s" % b for b in node.get("blind_spots") or []))
 
@@ -336,9 +329,9 @@ def build(state, data, timing=None):
          _counter_cell((state.get("counters") or {}).get("review_repair"))),
         ("테스트 실행 수", tests.get("ran")),
         ("테스트 상태", tests.get("status")),
-        # **지시된 등급이지 실측이 아니다** (ADR-H044). 어느 모델이 돌았는지
+        # **자진신고이지 실측이 아니다** (ADR-H052). 어느 모델이 돌았는지
         # 실행기는 보지 못한다 — blind spot 이 셀 안에 같이 적힌다.
-        ("지시된 모델 등급", _models_cell(state)),
+        ("자진신고 모델(model_used)", _models_cell(state)),
     ])
     lines += _timing_lines(timing)
 

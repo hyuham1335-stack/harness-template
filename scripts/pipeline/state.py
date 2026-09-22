@@ -260,23 +260,19 @@ def _initial_profile(profile):
     return {"name": "normal", "source": "default"}
 
 
-# 모델 등급의 관측 단위. **실행기는 어느 모델이 돌았는지 볼 수 없다** —
-# 봉투가 지시 키마다 등급을 찍고 `/feature` 가 그것을 Agent 호출의 `model`
-# 인자로 넘길 뿐이다. `budget.model_calls` 와 같은 부류의 자진신고 없는 지시다.
-# `instructed` 는 봉투가 지시한 등급, `reported` 는 리뷰어가 제출 JSON 의
-# `model_used` 로 자진신고한 모델이다 (ADR-H052 결정 2). 둘은 다른 사실이고
-# 어느 쪽도 실측이 아니다 — 자진신고는 대조할 값이 없다.
-MODELS_BASIS = "instructed+reported"
+# 모델의 관측 단위. **실행기는 어느 모델이 돌았는지 볼 수 없다** — 모델과
+# effort 는 `.claude/agents/*.md` 프론트매터가 역할별로 정하고, 상태에 남는
+# 것은 리뷰어가 제출 JSON 의 `model_used` 로 자진신고한 것뿐이다 (ADR-H052
+# 결정 2). 실측이 아니다 — 자진신고는 대조할 값이 없다.
+MODELS_BASIS = "reported"
 MODELS_BLIND_SPOTS = (
-    "지시한 등급이 실제로 쓰였는지 실행기는 보지 못한다",
     "reported 는 리뷰어의 자진신고다 — 대조할 실측이 없다 (선택 필드라 빈 것이 보통이다)",
-    "inherit 로 지시된 키는 메인 세션의 모델이고 그 값은 상태에 없다",
-    "effort 는 에이전트 프론트매터의 정적 선언이고 실행기는 무엇이 돌았는지 보지 못한다 (ADR-H061)",
+    "모델·effort 는 에이전트 프론트매터의 정적 선언이고 실행기는 무엇이 돌았는지 보지 못한다 (ADR-H061)",
 )
 
 
 def _models_node():
-    return {"basis": MODELS_BASIS, "instructed": {}, "reported": {},
+    return {"basis": MODELS_BASIS, "reported": {},
             "blind_spots": list(MODELS_BLIND_SPOTS)}
 
 
@@ -284,13 +280,6 @@ def note_model_reported(s, key, model):
     """리뷰어가 `model_used` 로 자진신고한 모델을 지시 키 `key` 에 남긴다."""
     node = s.setdefault("models", _models_node())
     node.setdefault("reported", {})[key] = model
-    return node
-
-
-def note_model_instruction(s, key, tier):
-    """봉투가 지시 키 `key` 에 등급 `tier` 를 찍었다. `None` 이면 미선언이다."""
-    node = s.setdefault("models", _models_node())
-    node.setdefault("instructed", {})[key] = tier
     return node
 
 

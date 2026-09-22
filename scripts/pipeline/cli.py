@@ -1099,27 +1099,6 @@ def _lint_agents(root, name, front, config, add):
         if not path.exists():
             add(name, "agent_file", "FAIL",
                 ".claude/agents/%s.md 가 없다 — 기동 전에 잡는다" % agent)
-            continue
-        # 모델 등급은 봉투가 레인별로 정한다 (`config.models`, ADR-H044).
-        # 프론트매터에 박으면 두 출처가 되고, 갈라진 날 어느 쪽이 이겼는지
-        # 실행기가 볼 수 없다.
-        if _agent_declares_model(path):
-            add(name, "agent_model", "WARN",
-                ".claude/agents/%s.md 프론트매터에 `model:` 이 있다 — 등급은 "
-                "봉투가 `config.models` 로 지시한다. 두 출처가 갈라지면 어느 "
-                "쪽이 이겼는지 실행기가 보지 못한다" % agent)
-
-
-def _agent_declares_model(path):
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    if not text.startswith("---"):
-        return False
-    head = text.split("---", 2)
-    front = head[1] if len(head) > 2 else ""
-    return any(line.strip().startswith("model:") for line in front.splitlines())
 
 
 def _lint_cycle(loaded, add):
@@ -1250,8 +1229,8 @@ def run_next(root, run_id=None):
         _store_dispatch(root, ctx, s, phase["front"])
     # **지시를 낸 자리에서 센다** (M26). `next` 는 같은 페이즈에서 여러 번
     # 불릴 수 있으므로 키로 멱등을 만든다.
-    _t, _m, exhausted = _instruct(
-        s, pid, _instruction_keys(s, pid, ctx, phase["front"]), ctx)
+    _t, _m, exhausted = st.count_instructions(
+        s, pid, _instruction_keys(s, pid, ctx, phase["front"]))
     st.save(paths, s)
 
     render, next_cmd = render_packet(root, phase, ctx, s, checks)
@@ -1391,67 +1370,6 @@ def _dispatch_render(root, ctx, s, front):
              "- " + " · ".join("`%s`" % i for i in ids)]
     lines += ["- `%s` — 계약에 `%s` 항목이 없다, 미호출" % (o["id"], o["heading"])
               for o in omitted]
-    return "\n".join(lines)
-
-
-# ------------------------------------------------------------- 모델 등급
-
-def _slot_of(key):
-    """지시 키 → `config.models` 슬롯. 슬롯이 없는 지시(07 의 /code-review ·
-    승격 판정)는 None — 그것은 Agent 기동이 아니라 등급을 줄 자리가 없다."""
-    parts = (key or "").split(":")
-    head = parts[0]
-    if head == "01":
-        return "plan"
-    if head in ("03", "04"):
-        return "roles"
-    if head == "05":
-        # 05 수리 작성자는 04 수리와 같은 작성자다 (ADR-H064).
-        return "roles" if len(parts) > 2 and parts[2] == "repair" else "reviewers"
-    return None
-
-
-def _model_for(config, key, profile):
-    """`config.models[slot][profile]` 또는 `default`. 미선언이면 None."""
-    models = config.get("models")
-    slot = _slot_of(key)
-    if not models or not slot:
-        return None
-    node = models.get(slot) or {}
-    return node.get(profile) or node.get("default")
-
-
-def _instruct(s, pid, keys, ctx):
-    """계수(`count_instructions`)와 등급 기록을 **같은 자리**에서 한다.
-
-    둘을 떼어 놓으면 세지 않은 지시에 등급이 붙거나 그 반대가 된다. 반환은
-    `count_instructions` 와 같다.
-    """
-    config = ctx["config"] if ctx else {}
-    profile = (s.get("profile") or {}).get("name") or "normal"
-    for k in keys:
-        if _slot_of(k):
-            st.note_model_instruction(s, k, _model_for(config, k, profile))
-    return st.count_instructions(s, pid, keys)
-
-
-def _model_tiers_render(ctx, s, keys):
-    """봉투가 지시 키마다 등급을 말한다 — 메인이 고르지 않는다."""
-    keys = [k for k in keys or [] if _slot_of(k)]
-    if not keys:
-        return ""
-    config = ctx["config"]
-    if not config.get("models"):
-        return ("## 모델 등급\n\n`config.models` 가 없다 — 등급을 지시하지 "
-                "않는다. 메인 세션의 모델을 상속한다.")
-    profile = (s.get("profile") or {}).get("name") or "normal"
-    lines = ["## 모델 등급 (봉투가 정한다 — 네가 고르지 마라)", ""]
-    for k in keys:
-        tier = _model_for(config, k, profile)
-        lines.append("- `%s` → model: `%s`" % (k, tier or "inherit"))
-    lines += ["", "Agent 호출의 `model` 인자로 **그대로** 넘긴다. `inherit` 는 "
-                  "인자를 주지 않는다. 실행기는 실제 모델을 검증하지 못한다 — "
-                  "지시로만 남고, 그 사실이 `state.models.blind_spots` 에 있다."]
     return "\n".join(lines)
 
 
@@ -1778,9 +1696,6 @@ def render_packet(root, phase, ctx, s, checks=None):
         # 07 이 05 와 같은 결함에 다른 이름을 붙이면 새 것으로 세어진다.
         # 목록을 봉투가 직접 준다 — 모델이 재구성하면 그 재구성이 곧 결함이다 (M48).
         parts.append(_keys_from_05_render(_keys_from_05(s)))
-    tiers = _model_tiers_render(ctx, s, _instruction_keys(s, pid, ctx, front))
-    if tiers:
-        parts.append(tiers)
     warns = [c for c in (checks or []) if c.get("warn")]
     if warns:
         parts.append("## 경고\n\n" + "\n".join("- %s" % c["message"] for c in warns))
@@ -2211,8 +2126,8 @@ def _advance_to_next(root, paths, s, phase_item, ctx, cmd="record"):
         _store_dispatch(root, ctx, s, nxt_item["front"])
     # **지시를 낸 자리에서 센다.** 전이가 다음 패킷을 바로 내므로 `next` 의
     # 계수를 지나친다 (ADR-H042).
-    _t, _m, exhausted = _instruct(
-        s, nxt, _instruction_keys(s, nxt, ctx, nxt_item["front"]), ctx)
+    _t, _m, exhausted = st.count_instructions(
+        s, nxt, _instruction_keys(s, nxt, ctx, nxt_item["front"]))
     st.save(paths, s)
     render, next_cmd = render_packet(root, nxt_item, ctx, s, nxt_checks)
     env = st.envelope(cmd, True, 0, s, {"next_phase": nxt}, render, next_cmd)
@@ -2246,8 +2161,6 @@ def _record_01_plan(root, paths, s, phase_item, ctx, file):
         rounds = node.setdefault("rounds", {})
         st.save(paths, s)
         return _judge_round(root, paths, s, phase_item, ctx, 1, {}, rounds)
-    tiers = _model_tiers_render(
-        ctx, s, _instruction_keys(s, "01-plan", ctx, phase_item["front"]))
     return st.envelope(
         "record", True, 0, s,
         {"round": _round_no(s), "reviewers": codes},
@@ -2255,8 +2168,8 @@ def _record_01_plan(root, paths, s, phase_item, ctx, file):
         "구조화 `.json` 을 함께 낸다. 리뷰어는 **리포를 읽을 수 있다** — 플랜이 "
         "가리키는 파일을 열어 근거를 확인한다. 받은 Critical 이 틀렸다고 보면 "
         "`record` 전에 JSON 최상위에 `false_positive: [{id, reason, evidence}]` 를 "
-        "달아 낸다 — `evidence` 는 리포에 실재하는 경로다.%s"
-        % ("`, `".join(codes), ("\n\n" + tiers) if tiers else ""),
+        "달아 낸다 — `evidence` 는 리포에 실재하는 경로다."
+        % "`, `".join(codes),
         "python scripts/pipeline/cli.py record --phase 01 --file <리뷰 json> "
         "--reviewer <code> --round %d --run-id %s" % (_round_no(s), s["run_id"]))
 
@@ -2466,10 +2379,9 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
     # **지시를 낸 자리에서 센다.** 01 의 루프는 `record → record` 라 `next`
     # 의 계수를 지나쳤고, 다섯 라운드 열 번을 불러도 예산은 2 였다 (ADR-H042).
     next_keys = ["01:r%d:%s" % (used, code) for code in planned]
-    _t, _m, exhausted = _instruct(s, "01-plan", next_keys, ctx)
+    _t, _m, exhausted = st.count_instructions(s, "01-plan", next_keys)
     st.save(paths, s)
     focus = conv.get("focus_round_2") or ""
-    tiers = _model_tiers_render(ctx, s, next_keys)
     env = st.envelope(
         "record", True, 0, s,
         {"round": used + 1, "reason": reason, "planned": planned},
@@ -2479,9 +2391,8 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
         "열린 Critical 이 틀렸다고 보면 플랜을 억지로 맞추지 말고 **코드 근거로 "
         "기각한다** — 다음 회차 리뷰 JSON 을 `record` 하기 전에 최상위에 "
         "`false_positive: [{id, reason, evidence}]` 를 단다(`evidence` 는 리포에 "
-        "실재하는 경로). 근거 없는 기각은 exit 8 이다.%s"
-        % (used + 1, reason, focus or "(없음)", "`, `".join(planned),
-           ("\n\n" + tiers) if tiers else ""),
+        "실재하는 경로). 근거 없는 기각은 exit 8 이다."
+        % (used + 1, reason, focus or "(없음)", "`, `".join(planned)),
         "python scripts/pipeline/cli.py record --phase 01 --file <리뷰 json> "
         "--reviewer %s --round %d --run-id %s"
         % (planned[0], used + 1, s["run_id"]))
@@ -3113,8 +3024,7 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
         repair_keys = ["05:r%d:repair:%s" % (used, r) for r in
                        sorted({f.get("target_role") for f in blocking
                                if f.get("target_role")})]
-        _instruct(s, "05-code-review", repair_keys, ctx)
-        tiers = _model_tiers_render(ctx, s, repair_keys)
+        st.count_instructions(s, "05-code-review", repair_keys)
         st.save(paths, s)
         return st.envelope(
             "record", False, 4, s,
@@ -3123,8 +3033,7 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             _review_repair_render(blocking, used + 1, delta, prev_open,
                                   raised=raised if node.get(
                                       "severity_raised_grant", {}).get(
-                                      "round") == round_ else None)
-            + (("\n\n" + tiers) if tiers else ""),
+                                      "round") == round_ else None),
             "python scripts/pipeline/cli.py gate --phase 04 --stage scoped "
             "--run-id %s" % s["run_id"])
 
@@ -3578,14 +3487,12 @@ def _gate_fail(root, paths, s, phase_item, ctx, report, dispatch, round_no):
     # 수리 배정도 기동 지시다. 제출 기준에서는 03 의 재제출로만 잡혀
     # **어느 페이즈가 태웠는지가 04 에서 03 으로 옮겨 보였다.**
     repair_keys = ["04:r%d:%s" % (used, dispatch.get("owner"))]
-    _instruct(s, "04-gate", repair_keys, ctx)
+    st.count_instructions(s, "04-gate", repair_keys)
     st.append_event(paths, "dispatch", cmd="gate", phase="04-gate",
                     owner=dispatch.get("owner"))
-    tiers = _model_tiers_render(ctx, s, repair_keys)
     return st.envelope("gate", False, 4, s,
                        {"repair_dispatch": brief, "gaps": report.get("gaps")},
-                       _repair_render(dispatch, brief)
-                       + (("\n\n" + tiers) if tiers else ""),
+                       _repair_render(dispatch, brief),
                        "python scripts/pipeline/cli.py gate --phase 04 --run-id %s"
                        % s["run_id"])
 

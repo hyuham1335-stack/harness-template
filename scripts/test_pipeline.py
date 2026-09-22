@@ -7213,10 +7213,10 @@ def _report_data(paths, **kw):
 
 class TestModelsReported:
     """[[ADR-H052]] 결정 2 — 리뷰어의 `model_used` 자진신고(선택). 기준은
-    `instructed+reported` 이고, 자진신고는 실측이 아니라는 사각을 같이 적는다."""
+    `reported` 뿐이고, 자진신고는 실측이 아니라는 사각을 같이 적는다."""
 
-    def test_기준이_둘을_말한다(self):
-        assert st.MODELS_BASIS == "instructed+reported"
+    def test_기준이_자진신고뿐이라고_말한다(self):
+        assert st.MODELS_BASIS == "reported"
 
     def test_자진신고가_상태에_쌓인다(self, repo, request_file):
         _, s = st.create_run(repo, "demo", request_file)
@@ -7999,91 +7999,30 @@ class TestDocsLane:
         assert env["exit"] == 3, env["render"]
 
 
-class TestModelTierRouting:
-    """등급은 봉투가 정한다 — 지시이지 실측이 아니다."""
+class TestAgentFrontmatter:
+    """모델과 effort 는 에이전트 프론트매터 하나가 정한다 (ADR-H061 · 덜어내기 Wave 3).
 
-    # 슬롯 × 레인 전체. 작성자(roles)는 싸게, 검사자(plan · reviewers)는
-    # normal 에서 opus — 계약이 작성자의 자유도를 묶었고 검사자의 내용 품질은
-    # 기계가 못 잰다 (ADR-H061). `inherit` 는 표에 없다.
-    EXPECTED_TIERS = {
-        "01:r0:plan":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "opus"},
-        "03:r0:impl":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
-        "04:r1:impl":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
-        "05:r1:gen":      {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "opus"},
-        "05:r1:repair:impl": {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
-    }
+    Agent 호출 인자로 넘기지 않으므로 여기가 유일한 출처이고 역할 종류별로 정적이다.
+    실행기는 무엇이 돌았는지 보지 못한다 — 그 사실은 `state.models.blind_spots` 에 있다.
+    """
 
-    def test_slot_and_profile_fallback(self):
-        cfg = _cfg()
-        for key, by_lane in self.EXPECTED_TIERS.items():
-            for lane, tier in by_lane.items():
-                assert cli._model_for(cfg, key, lane) == tier, (key, lane)
-                assert cli._model_for(cfg, key, lane) != "inherit", (key, lane)
-        assert cli._model_for(cfg, "07:code-review", "normal") is None
-        cfg.pop("models")
-        assert cli._model_for(cfg, "01:r0:plan", "normal") is None
+    EXPECTED = {"impl-writer": ("medium", "sonnet"), "test-writer": ("high", "sonnet"),
+                "ui-writer": ("medium", "sonnet"), "plan-reviewer": ("high", "opus")}
 
-    def test_the_profile_template_declares_the_same_tiers(self):
-        tmpl = json.loads((ROOT / "harness" / "profiles" / "nextjs-ts" / "config.json")
-                          .read_text(encoding="utf-8"))
-        assert tmpl["models"] == _cfg()["models"]
-
-    def test_the_01_packet_names_the_tiers_and_state_records_them(self, repo, phases):
-        paths, s = _init(repo, SOURCE_REQUEST)
-        env = cli.run_next(repo, run_id=paths.run_id)
-        assert env["phase"] == "01-plan", env["render"]
-        assert "## 모델 등급" in env["render"]
-        assert "`01:r0:plan` → model: `opus`" in env["render"], env["render"]
-        _, after = st.load(repo, paths.run_id)
-        assert after["models"]["instructed"] == {"01:r0:plan": "opus"}
-        assert after["models"]["basis"] == st.MODELS_BASIS
-        assert after["models"]["blind_spots"]
-
-    def test_without_a_models_block_the_packet_says_so(self, repo, phases):
-        cfg_path = repo / "harness" / "config.json"
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        cfg.pop("models")
-        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
-        paths, s = _init(repo, SOURCE_REQUEST)
-        env = cli.run_next(repo, run_id=paths.run_id)
-        assert "`config.models` 가 없다" in env["render"], env["render"]
-        _, after = st.load(repo, paths.run_id)
-        assert after["models"]["instructed"]["01:r0:plan"] is None
-
-    def test_the_report_names_the_instructed_tiers(self, repo, phases):
-        paths, s = _init(repo, SOURCE_REQUEST)
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        text, _missing = rep_mod.build(after, {})
-        assert "| 지시된 모델 등급" in text and "opus: 1" in text, text
-
-    def test_lint_warns_when_an_agent_file_pins_a_model(self, repo, phases):
-        (repo / ".claude" / "agents" / "impl-writer.md").write_text(
-            "---\nname: impl-writer\nmodel: opus\n---\n# x\n", encoding="utf-8")
-        got = [f for f in _lint(repo) if f["rule"] == "agent_model"]
-        assert got and got[0]["status"] == "WARN", got
-        assert _fails(_lint(repo)) == []
-
-    # effort 는 Agent 호출 인자로 못 넘긴다 — 에이전트 프론트매터가 유일한
-    # 자리이고 역할 종류별로 정적이다 (ADR-H061). 모델 등급과 달리 봉투 출처가
-    # 없어 두 출처 문제가 없으므로 WARN 대상이 아니다.
-    EXPECTED_EFFORT = {"impl-writer": "medium", "test-writer": "high",
-                       "ui-writer": "medium", "plan-reviewer": "high"}
-
-    def test_agent_files_pin_effort_per_role(self):
-        for agent, want in self.EXPECTED_EFFORT.items():
+    def test_agent_files_pin_effort_and_model_per_role(self):
+        for agent, (effort, model) in self.EXPECTED.items():
             text = (ROOT / ".claude" / "agents" / ("%s.md" % agent)).read_text(encoding="utf-8")
             front = text.split("---", 2)[1]
-            got = [ln.split(":", 1)[1].strip() for ln in front.splitlines()
-                   if ln.strip().startswith("effort:")]
-            assert got == [want], (agent, got)
-            assert want in ("low", "medium", "high", "xhigh", "max")
-            assert not any(ln.strip().startswith("model:") for ln in front.splitlines()), agent
+            got = {ln.split(":", 1)[0].strip(): ln.split(":", 1)[1].strip()
+                   for ln in front.splitlines() if ":" in ln}
+            assert got.get("effort") == effort and got.get("model") == model, (agent, got)
+            assert effort in ("low", "medium", "high", "xhigh", "max")
 
-    def test_lint_does_not_warn_on_effort_alone(self, repo, phases):
+    def test_lint_has_no_opinion_on_the_model_line(self, repo, phases):
         (repo / ".claude" / "agents" / "impl-writer.md").write_text(
-            "---\nname: impl-writer\neffort: medium\n---\n# x\n", encoding="utf-8")
+            "---\nname: impl-writer\nmodel: opus\n---\n# x\n", encoding="utf-8")
         assert [f for f in _lint(repo) if f["rule"] == "agent_model"] == []
+        assert _fails(_lint(repo)) == []
 
 
 class TestConditionLint:
@@ -8492,7 +8431,8 @@ class TestUiDispatch:
         env = cli.run_next(repo, run_id)
         assert env["exit"] == 0, env["render"]
         assert self._dispatched(repo, run_id) == ["impl", "test", "ui"]
-        assert "03:r0:ui" in env["render"], env["render"]
+        _, after = st.load(repo, run_id)
+        assert "03:r0:ui" in after["budget"]["model_calls"]["counted"], after["budget"]
         assert "미호출" not in env["render"], env["render"]
 
     # --- 제출 ---------------------------------------------------------------
@@ -8834,12 +8774,6 @@ class TestFixLane:
         routed = rv.route(cfg, ["src/lib/schemas.ts", "src/app/api/x/route.ts"], "fix")
         assert [r["code"] for r in routed["reviewers"]] == ["gen"], routed
         assert routed["capped"] is True
-
-    def test_model_slots_accept_fix(self):
-        cfg = _cfg()
-        for slot in ("plan", "roles", "reviewers"):
-            assert cfg["models"][slot]["fix"] == "sonnet", slot
-
 
 class TestReviewDepth:
     """05 의 리뷰 범위는 레인별로 봉투가 찍는다 (`review.depth`).
