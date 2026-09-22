@@ -655,7 +655,9 @@ def _in_scope(config, path):
     return any(harness.owns_file(role, path) for role in (config.get("roles") or []))
 
 
-def _nul_split(result):
+def nul_split(result):
+    """`-z` 출력을 나눈다. 지문과 변경 집합(precheck)이 같은 파서를 쓴다 — 갈리면
+    둘이 다른 파일 집합을 본다 (A10)."""
     return [f for f in result.stdout.split("\0") if f] if result else []
 
 
@@ -673,9 +675,9 @@ def _candidate_files(root):
         # **다른 모집단을 센다** — algo 를 갈라 둘이 우연히 같아도 안 맞게 한다.
         return harness.list_files(root), "walk-sha256"
     others = harness._git(root, "ls-files", "--others", "--exclude-standard", "-z")
-    paths = set(_nul_split(tracked))
+    paths = set(nul_split(tracked))
     if others is not None and others.returncode == 0:
-        paths |= set(_nul_split(others))
+        paths |= set(nul_split(others))
     return sorted(paths), "tree-sha256"
 
 
