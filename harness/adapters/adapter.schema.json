@@ -206,9 +206,6 @@
               },
               "file": {
                 "type": "string"
-              },
-              "export": {
-                "type": "string"
               }
             }
           }
@@ -350,16 +347,6 @@
         "timeout_sec": {
           "type": "integer",
           "minimum": 1
-        },
-        "blocking": {
-          "type": "boolean"
-        },
-        "loop_stage": {
-          "description": "여기까지가 재작업 루프.",
-          "type": "boolean"
-        },
-        "once_after_loop": {
-          "type": "boolean"
         },
         "when_touched": {
           "type": "array",

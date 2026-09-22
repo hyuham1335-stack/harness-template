@@ -25,10 +25,9 @@
     "scoped": {
       "cmd": ["run", "test", "--"],
       "_select_note": "select 를 두지 않는다 = 선택자를 인자로 그대로 붙인다(경로 필터). -t 는 테스트 이름 필터라 vitest 가 모든 파일을 변환·수집하고 환경을 세운 뒤에야 거른다 — 런 #3~#5 가 잰 83%→101%→100% 는 그 문법의 값이지 스코프 실행의 값이 아니었다 (M16).",
-      "timeout_sec": 600,
-      "loop_stage": true
+      "timeout_sec": 600
     },
-    "full": {"cmd": ["run", "test"], "timeout_sec": 1800, "once_after_loop": true},
+    "full": {"cmd": ["run", "test"], "timeout_sec": 1800},
     "e2e": {
       "cmd": null,
       "_note": "Playwright E2E 는 TRD 8번에서 [Scale] 단계다. cmd:null 은 '없는 것'이고 게이트는 스킵됨으로 기록한다 — 통과가 아니다. 도입 시 형태: cmd 와 함께 when_touched [\"e2e/**\", \"src/app/**\"], infra_preflight 에 테스트 DB URL(on_missing warn → infra_skipped:e2e). test_report.glob 에 e2e 리포트를 넣지 않는다 — 테스트 수 신호는 full 전용이고 지난 런의 XML 이 안 돈 런의 실적이 된다."
@@ -59,7 +58,7 @@
     "param_styles": ["[]"],
     "_param_styles_note": "계약이 API_SPEC 표기 {id} 로 적은 파라미터를 실제 폴더명 [id] 로도 찾는다 (ADR-H049). 코어는 이 괄호 쌍을 읽기만 한다.",
     "map": [
-      {"route": "/api/{p}", "file": "src/app/api/{p}/route.ts", "export": "{METHOD}"}
+      {"route": "/api/{p}", "file": "src/app/api/{p}/route.ts"}
     ]
   },
 

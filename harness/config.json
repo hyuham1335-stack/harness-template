@@ -3,7 +3,6 @@
 
   "project": {
     "name": "harness-template",
-    "language": "ko",
     "instruction_file": "CLAUDE.md",
     "secret_files": [".env.local", ".env"]
   },

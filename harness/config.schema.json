@@ -13,25 +13,12 @@
     },
     "project": {
       "type": "object",
-      "required": ["name", "language", "instruction_file"],
+      "required": ["name", "instruction_file"],
       "additionalProperties": false,
       "properties": {
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
-        "language": {
-          "description": "생성물(보고서·PR 본문·에스컬레이션)의 언어. 파서는 어느 언어에서도 헤딩 텍스트에 의존하지 않는다.",
-          "type": "string",
-          "enum": ["ko", "en"]
-        },
         "instruction_file": {"type": "string"},
-        "secret_files": {"type": "array", "items": {"type": "string"}},
-        "source_inject_max_chars": {
-          "description": "steps[].sources 로 프롬프트에 실을 소스 파일 합계의 상한(문자). 접두부는 모든 turn 에 곱해지므로 상한 없는 첨부는 개선이 아니라 악화다. 기본 60000.",
-          "type": "integer", "minimum": 1
-        },
-        "guardrail_docs": {
-          "description": "프롬프트에 주입할 docs/ 문서(확장자 없는 파일명)의 phase 기본값. 미지정이면 전량 주입하되 실행기가 미선택으로 드러낸다. step 이 steps[].docs 로 덮어쓴다.",
-          "type": "array", "items": {"type": "string"}
-        }
+        "secret_files": {"type": "array", "items": {"type": "string"}}
       }
     },
     "adapter": {
@@ -76,8 +63,7 @@
         "remote": {"type": "string"},
         "base_branch": {"type": "string"},
         "branch_pattern": {"type": "string"},
-        "protected": {"type": "array", "items": {"type": "string"}},
-        "pr_template": {"type": "string"}
+        "protected": {"type": "array", "items": {"type": "string"}}
       }
     },
     "roles": {
@@ -131,7 +117,7 @@
       "additionalProperties": false,
       "properties": {
         "depth": {
-          "description": "리뷰 범위. `diff` 는 diff·계약·05_trace.json 만, `diff+refs` 는 계약 `## 유닛` 이 참조하는 기존 파일까지 리뷰어 패킷에 넣는다 — diff 밖 상호작용(낙관적 잠금·상태 가드)을 보기 위해서다 (FR-007 escaped). 봉투가 결정론으로 찍고 리뷰어는 고르지 않는다.",
+          "description": "리뷰 범위. 값은 `diff+refs` 하나다 — 인라인 diff·계약·05_trace.json 에 더해 계약 `## 유닛` 이 참조하는 기존 파일까지 리뷰어 패킷에 넣는다. diff 밖 상호작용(낙관적 잠금·상태 가드)을 보기 위해서다 (FR-007 escaped). 봉투가 결정론으로 찍고 리뷰어는 고르지 않는다.",
           "$ref": "#/definitions/review_depth"
         },
         "findings_max": {
@@ -153,7 +139,7 @@
   "definitions": {
     "review_depth": {
       "type": "string",
-      "enum": ["diff", "diff+refs"]
+      "enum": ["diff+refs"]
     },
     "role": {
       "type": "object",

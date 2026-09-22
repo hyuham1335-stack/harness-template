@@ -90,7 +90,7 @@ python scripts/harness.py init --adapter nextjs-ts --name my-project
 | 항목 | 채워져 있는 값 |
 |---|---|
 | 역할과 소유 경계 | 작성자 `impl` 하나가 `src/**` 와 그 테스트, `e2e/**` 를 전부 소유합니다 (ADR-H075) |
-| 계약 문서의 절 제목 | `## 유닛` `## 진입점` `## 오류 어휘` 등. 여기 적힌 글자와 `harness/templates/contract.md` 가 정확히 같아야 합니다 |
+| 계약 문서의 절 제목 | `## 유닛` `## 진입점` `## 오류 어휘` 등. 여기 적힌 글자와 `harness/templates/contract.md` 가 정확히 같아야 합니다. 파서가 읽는 절은 유닛·진입점·오류 어휘·데이터 형태 넷이고, `schema`·`boundaries` 절은 사람용입니다 — doctor 는 제목만 대조합니다 |
 | 브랜치 규칙 | 기준 브랜치는 `main`, 작업 브랜치는 `feat-` 로 시작, `main` 직접 push 금지 |
 | 런당 예산 | 파일 10개 · 1000줄 · 모델 호출 24회 — 셋 다 **보고서용 숫자**이고 넘어도 멈추지 않습니다. 파일 수는 **테스트 파일을 빼고** 셉니다(어댑터 `attribution.test_file_globs` 기준) (ADR-H066 · H075) |
 | 코드 리뷰(05) | 리뷰어 하나(`gen`, 일반 정합성). 소스 변경이 있으면 켜지고 `diff+refs` 로 봅니다. 재검토(델타)도 같은 리뷰어입니다 (ADR-H075) |

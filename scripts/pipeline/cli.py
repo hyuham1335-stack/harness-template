@@ -1530,15 +1530,11 @@ def _review_render(s):
     round_ = ((s.get("counters") or {}).get("review_repair") or {}).get("used", 0) + 1
     planned = _planned_for_round(node, round_)
     by_code = {r.get("code"): r for r in node.get("reviewers") or []}
-    depth = node.get("depth") or "diff+refs"
-    if depth == "diff+refs":
-        lines.append("리뷰 범위: **diff+refs** — 계약 `## 유닛` 이 참조하는 **기존** "
-                     "파일을 리뷰어 패킷에 경로로 넣어라. diff 밖 상호작용(낙관적 "
-                     "잠금 · 상태 가드 · 기존 전이 함수)을 보는 것이 이 범위의 "
-                     "목적이다 — 05 가 놓치고 07 이 잡은 것이 그 자리였다 (FR-007).")
-    else:
-        lines.append("리뷰 범위: **%s** — 인라인 diff · 계약 · `05_trace.json` 만. "
-                     "그 밖의 파일은 패킷에 넣지 않는다." % depth)
+    # 값은 하나다 (ADR-H059 · ADR-H075) — `diff` 분기는 죽은 어휘였다 (ADR-H076 B).
+    lines.append("리뷰 범위: **diff+refs** — 계약 `## 유닛` 이 참조하는 **기존** "
+                 "파일을 리뷰어 패킷에 경로로 넣어라. diff 밖 상호작용(낙관적 "
+                 "잠금 · 상태 가드 · 기존 전이 함수)을 보는 것이 이 범위의 "
+                 "목적이다 — 05 가 놓치고 07 이 잡은 것이 그 자리였다 (FR-007).")
     lines.append("")
     for code in planned:
         agent = (by_code.get(code) or {}).get("agent") or code
