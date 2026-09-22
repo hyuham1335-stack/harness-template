@@ -29,6 +29,9 @@
       {"id": "full", "once_after_loop": true, "assert_tests_ran": true}
     ]
   },
+  "submit_checks": [
+    {"id": "monotonicity", "on_fail": 8}
+  ],
   "loop": {
     "counter": "review_repair", "max": 2, "stuck_after_identical": 2,
     "on_exceed": "escalate", "rereview": "delta_single_reviewer",
@@ -119,11 +122,6 @@ ADR-H053). 다른 관점이 매칭됐으면 `dropped` 에 남고 보고서가 �
 (배열 순서). `test` 가 `arch` 보다 앞이라 넷이 다 매칭되는 `normal` 런에서는 `arch` 가
 `dropped` 로 간다 (ADR-H062).
 
-**봉투가 01 의 자진신고와 라우팅을 대조한다** (ADR-H067). 매칭된 리뷰어(`dropped`
-포함)의 `risk`(`data` → `schema`·`boundary`, `sec` → `authz`·`boundary`)를 INTENT
-`risk` 가 하나도 안 적었으면 `risk_undeclared` 이벤트와 이 페이즈 노드에 한 번 남는다.
-**관측이다** — 등급도 exit 도 바뀌지 않고, 02 를 되돌려 돌리지도 않는다. 네가 할 일은 없다.
-
 각 리뷰어에게 주는 것 — 봉투의 **「리뷰 범위」** 줄이 둘 중 하나를 정한다
 (`review.depth`, 레인별 · ADR-H059):
 
@@ -138,8 +136,8 @@ ADR-H053). 다른 관점이 매칭됐으면 `dropped` 에 남고 보고서가 �
 ## 역할 프롬프트 템플릿
 
 리뷰어에게 보내는 형태다. **역할(작성자)에게 보내는 것이 아니다** — 수리 지시는
-04 의 템플릿을 그대로 쓴다. 수리 작성자의 모델은 봉투의 `## 모델 등급` 절이
-`05:r{n}:repair:{role}` 키마다 찍는다 — 04 수리와 같은 `roles` 슬롯이다 (ADR-H064).
+04 의 템플릿을 그대로 쓴다. 수리 작성자의 모델은 그 역할 에이전트의 프론트매터가
+정한다 — 04 수리와 같은 작성자다 (ADR-H064).
 
 ```
 ## 리뷰 요청 — {reviewer.code}

@@ -59,7 +59,7 @@ TERMINAL_STATUS = ("done", "abandoned")
 # 다음을 `done` 이라 적는다 — 페이즈 id 가 아니라 "여기서 끝" 이라는 표식이다.
 DONE = "done"
 
-COUNTERS = ("round", "repair", "xverify_return", "review_repair")
+COUNTERS = ("round", "repair", "review_repair")
 
 # 예산을 **무엇에 썼는가**. 카운터는 "몇 번 썼나"만 세므로, 사유가 없으면
 # "수리 2회로 안 됐다"와 "형식으로 2회 튕겼다"가 원장에서 같은 줄로 보인다
@@ -72,7 +72,6 @@ COUNTERS = ("round", "repair", "xverify_return", "review_repair")
 COUNTER_REASONS = (
     "converged",              # 01 이 수렴해 라운드를 닫았다
     "not_converged",          # 01 이 한 라운드를 더 쓴다
-    "xverify_critical",       # 02 의 Critical 이 01 로 되돌렸다
     "gate_failure",           # 04 게이트가 실패해 수리로 간다
     "review_blocking",        # 05 의 Critical/Major 를 수리한다
     "format_reject",          # 제출이 규약을 어겨 되돌아왔다 — 수리가 아니다
@@ -105,7 +104,7 @@ EVENT_KINDS = (
     "profile_reconfirmed",
     # 사람을 기다리기 시작했다(`waiting_human`, exit 9 의 자리들) — 다음 이벤트
     # 까지가 대기다. exit 10 은 `escalated → resumed` 로 따로 잰다. 이것이
-    # 없으면 `40dc` 의 00-triage 36분이 "트리아지가 36분 걸렸다" 로 읽힌다
+    # 없으면 `40dc` 가 사람을 기다린 36분이 "그 페이즈가 36분 걸렸다" 로 읽힌다
     # (ADR-H052). `format_reject` 는 제출이 규약을 어겨 exit 8 로 되돌아온
     # 것을 **횟수로** 세는 자리다 — `check_fail` 이 그 사실을 남기지만
     # 절반의 exit 8 경로는 그것조차 없었고, 세지 않으면 `e7ff` 의 sec 처럼
@@ -115,13 +114,9 @@ EVENT_KINDS = (
     # `waiting_human` 이 "기다리기 시작했다" 라면 이것은 **"무엇을 골랐다"** 다 —
     # 없으면 그 판단이 어디에도 남지 않아 06 이 같은 것을 다시 묻는다.
     "policy_acked",
-    # 00 이 레인을 정했다(`triage_decided`), 그 예측이 03·05 의 실물에서 상향으로
-    # 빗나갔다(`triage_miss`). 둘을 뭉치면 임계값을 고칠 근거(어느 예측이
-    # 얼마나 틀리나)가 원장에서 사라진다.
-    "triage_decided", "triage_miss",
-    # 05 라우팅이 매칭한 리뷰어의 위험을 01 INTENT 의 `risk` 가 안 적었다.
-    # 게이트가 아니라 관측이다 — 오탐률을 본 뒤 승격을 정한다 (ADR-H067).
-    "risk_undeclared",
+    # 선언한 docs 레인이 03·05 의 실물에서 빗나갔다(`lane_miss`) — 역할 소유
+    # 경로가 바뀌었는데 01 리뷰어·역할을 건너뛴 채 왔다.
+    "lane_miss",
 )
 
 GRADES = ("PASS", "PASS_WITH_GAPS", "INCOMPLETE")
@@ -231,12 +226,13 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
         "profile": _initial_profile(profile),
         "adapter": {"id": config.get("adapter")},
         "vcs": {"baseline": _vcs_baseline(root)},
-        "phase": "00-triage",
+        "phase": "01-plan",
         "phases": {},
         "counters": {},
         "escalated": False,
-        "contract": {"mode": "contract", "present": False},
-        "cross_verify": _cross_verify_init(config),
+        # docs 레인은 계약을 쓰지 않는다 — 선언이 그것을 정한다 (ADR-H044).
+        "contract": {"mode": "no_contract" if profile == "docs" else "contract",
+                     "present": False},
         "grade": None,
         "gaps": [],
         "budget": {"model_calls": {
@@ -248,42 +244,35 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
         "models": _models_node(),
     }
     save(paths, s)
-    append_event(paths, "run_created", cmd="init", phase="00-triage",
+    append_event(paths, "run_created", cmd="init", phase="01-plan",
                  slug=slug, request_bytes=len(raw))
     return paths, s
 
 
 def _initial_profile(profile):
-    """`init` 시점의 프로파일. 사람이 줬으면 `user`, 아니면 00 이 정한다.
+    """`init` 시점의 레인. 사람이 줬으면 `user`, 아니면 `normal`(`default`) 이다.
 
-    00 이 요청 원문의 구조 신호로 **예측**하고(`source: triage`), 03 의
-    계약(유닛·진입점 수)과 05 의 변경 파일이 그것을 재판정한다. 00 이 돌기
-    전의 값은 `default` 이고 라운드 상한이 큰 쪽(normal)이다 — 보수적으로
-    더 검토하는 쪽이다.
+    예측 단계는 없다 — 선언이 빗나가면(docs 인데 소스가 바뀜) 03·05 가
+    `lane_miss` 로 드러낸다.
     """
     if profile:
         return {"name": profile, "source": "user"}
-    return {"name": "normal", "source": "default",
-            "reason": "00 이 아직 판정하지 않았다"}
+    return {"name": "normal", "source": "default"}
 
 
-# 모델 등급의 관측 단위. **실행기는 어느 모델이 돌았는지 볼 수 없다** —
-# 봉투가 지시 키마다 등급을 찍고 `/feature` 가 그것을 Agent 호출의 `model`
-# 인자로 넘길 뿐이다. `budget.model_calls` 와 같은 부류의 자진신고 없는 지시다.
-# `instructed` 는 봉투가 지시한 등급, `reported` 는 리뷰어가 제출 JSON 의
-# `model_used` 로 자진신고한 모델이다 (ADR-H052 결정 2). 둘은 다른 사실이고
-# 어느 쪽도 실측이 아니다 — 자진신고는 대조할 값이 없다.
-MODELS_BASIS = "instructed+reported"
+# 모델의 관측 단위. **실행기는 어느 모델이 돌았는지 볼 수 없다** — 모델과
+# effort 는 `.claude/agents/*.md` 프론트매터가 역할별로 정하고, 상태에 남는
+# 것은 리뷰어가 제출 JSON 의 `model_used` 로 자진신고한 것뿐이다 (ADR-H052
+# 결정 2). 실측이 아니다 — 자진신고는 대조할 값이 없다.
+MODELS_BASIS = "reported"
 MODELS_BLIND_SPOTS = (
-    "지시한 등급이 실제로 쓰였는지 실행기는 보지 못한다",
     "reported 는 리뷰어의 자진신고다 — 대조할 실측이 없다 (선택 필드라 빈 것이 보통이다)",
-    "inherit 로 지시된 키는 메인 세션의 모델이고 그 값은 상태에 없다",
-    "effort 는 에이전트 프론트매터의 정적 선언이고 실행기는 무엇이 돌았는지 보지 못한다 (ADR-H061)",
+    "모델·effort 는 에이전트 프론트매터의 정적 선언이고 실행기는 무엇이 돌았는지 보지 못한다 (ADR-H061)",
 )
 
 
 def _models_node():
-    return {"basis": MODELS_BASIS, "instructed": {}, "reported": {},
+    return {"basis": MODELS_BASIS, "reported": {},
             "blind_spots": list(MODELS_BLIND_SPOTS)}
 
 
@@ -291,62 +280,6 @@ def note_model_reported(s, key, model):
     """리뷰어가 `model_used` 로 자진신고한 모델을 지시 키 `key` 에 남긴다."""
     node = s.setdefault("models", _models_node())
     node.setdefault("reported", {})[key] = model
-    return node
-
-
-def note_model_instruction(s, key, tier):
-    """봉투가 지시 키 `key` 에 등급 `tier` 를 찍었다. `None` 이면 미선언이다."""
-    node = s.setdefault("models", _models_node())
-    node.setdefault("instructed", {})[key] = tier
-    return node
-
-
-def _cross_verify_init(config):
-    """런 시작 시의 교차검증 요약.
-
-    **`configured` 와 `mode` 는 다른 것을 말한다.** `configured` 는 config 가
-    무엇을 선언했는가이고 `mode` 는 **실제로 무엇이 관측했는가**다. 예전에는
-    하나뿐이라 config 가 `primary` 를 선언하면 라운드가 전부 폴백으로 돌아도
-    상태는 `primary` 라고 적었다 — P3 가 다섯 라운드 내내 그랬고, 그 사실이
-    상태에도 보고서에도 남지 않았다.
-
-    `mode` 는 라운드가 제출될 때마다 `note_cross_verify_round` 가 내린다.
-    올리지는 않는다 — 한 번 약해진 관측은 뒤 라운드가 좋아도 그 런의 사실이다.
-    """
-    return {"mode": _cross_verify_mode(config),
-            "configured": _cross_verify_mode(config),
-            "rounds": {}, "degraded_rounds": 0, "last_primary_error": None}
-
-
-def _cross_verify_mode(config):
-    """primary 도 fallback 도 없으면 skipped — 02 가 등급에 드러낸다."""
-    cv = config.get("cross_verify") or {}
-    if cv.get("primary"):
-        return "primary"
-    if cv.get("fallback"):
-        return "fallback"
-    return "skipped"
-
-
-def note_cross_verify_round(s, round_, mode, primary_error=None):
-    """한 회차의 교차검증이 무엇으로 돌았는지 런 요약에 접는다.
-
-    **부재와 일시 실패를 가른다** — `primary_error` 가 있으면 primary 를
-    시도했다가 실패한 것이고(일시), 없으면 primary 가 애초에 없던 것이다(구조).
-    앱 코드에 `lookup_failed` ≠ `no_match` 를 요구하면서(ADR-005) 하네스가
-    그 둘을 한 어휘로 뭉개고 있었다.
-
-    `mode` 는 **내려가기만 한다.** 3회차가 primary 로 회복돼도 1·2회차가
-    폴백이었다는 것은 그 런의 사실이고, 등급이 그것을 말해야 한다.
-    """
-    node = s.setdefault("cross_verify", {})
-    node.setdefault("rounds", {})[str(round_)] = mode
-    if primary_error:
-        node["last_primary_error"] = primary_error
-    node["degraded_rounds"] = sum(
-        1 for v in node["rounds"].values() if v == "fallback")
-    if mode == "fallback":
-        node["mode"] = "fallback"
     return node
 
 
@@ -643,8 +576,7 @@ def counter_grant(s, name, extra, reason, now=None):
     `grants` 에 남긴다 — 보고서가 "왕복 뒤 몇 라운드를 더 줬는가"를 말할 수
     있는 것이 여기서 나온다.
 
-    지급은 무한 연장이 아니다. 부르는 쪽이 자기 왕복 예산(`xverify_return`
-    상한 1)에 묶여 있어 런당 한 번뿐이다 (M32 · ADR-H024).
+    지급은 무한 연장이 아니다. 부르는 쪽이 자기 예산에 묶여 있다 (M32 · ADR-H024).
 
     **여기서 올리는 `max` 는 `grants` 의 파생값이다** — `counter_inc` 이 매
     소모마다 `선언값 + grants 합` 으로 다시 계산하므로 두 값이 어긋나지 않는다.
@@ -670,7 +602,7 @@ def demote(s, grade, gap=None):
     """등급을 **강등만** 한다. 반환: 최종 등급.
 
     이 함수가 있기 전에는 세 곳이 `s["grade"] = ...` 를 직접 대입했고
-    (게이트 · 02 스킵 · 05 판정), **나중에 쓰는 쪽이 이겼다.** 게이트가
+    (게이트 · 레인 miss · 05 판정), **나중에 쓰는 쪽이 이겼다.** 게이트가
     나중에 돌면 05 가 남긴 `PASS_WITH_GAPS` 가 `PASS` 로 되돌아간다 —
     한 번 드러난 결손이 조용히 사라지는 경로다.
 

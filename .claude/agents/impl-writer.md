@@ -2,6 +2,7 @@
 name: impl-writer
 description: 계약에 적힌 유닛과 진입점을 구현한다. 테스트 파일은 만들지도 고치지도 않는다. 03-implement 가 호출한다.
 effort: medium
+model: sonnet
 ---
 
 너는 구현 역할이다. 계약이 고정한 것을 코드로 만든다.
