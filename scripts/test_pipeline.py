@@ -280,7 +280,7 @@ class TestPhaseDurations:
     """8페이즈가 자기 소요를 잰다 — 새 계측이 아니라 `events.jsonl` 의 유도값이다.
 
     `report.py` 가 여섯 런에 걸쳐 "소요 시간은 미측정이다" 를 적었는데,
-    `team-spec.md` 의 08 결정론 칸은 페이즈별 소요를 **이미 요구한다.**
+    08 의 결정론 칸(옛 명세)은 페이즈별 소요를 **이미 요구했다.**
     M56 과 같은 모양이다 — 선언이 있는데 코드가 안 하는 자리다.
 
     **기준은 `phase_enter` → `phase_pass` 짝이 아니라 이벤트 구간 분할이다.**
@@ -2509,16 +2509,17 @@ CORE_GLOBS = [
 ]
 
 
-def _banned_words():
-    """금지어 목록을 **team-spec 에서 읽어 온다.**
+# 코어에 박히면 안 되는 스택 고유명사. **정본은 이 상수다** — 옛 명세(2026-09-22 삭제,
+# ADR-H075)의 §0.2 금지어 블록을 옮겼다. 늘리면 여기서 늘린다.
+BANNED_STACK_WORDS = sorted({
+    "archunit", "backend-implementer", "coderabbit", "docker", "eslint", "flyway",
+    "gemini", "gradle", "jacoco", "jest", "junit", "nextjs", "postgres", "prisma",
+    "redis", "ruff", "spring", "testcontainers", "unit-test-writer", "vitest",
+})
 
-    테스트에 복사하면 정본이 늘어날 때 이 검사가 조용히 뒤처진다.
-    """
-    text = (ROOT / "docs" / "harness" / "pipeline" / "team-spec.md").read_text(
-        encoding="utf-8")
-    m = re.search(r"검수 기준.*?```\n(.*?)```", text, re.S)
-    assert m, "team-spec 0.2 의 금지어 블록을 찾지 못했다"
-    return sorted(set(m.group(1).split()))
+
+def _banned_words():
+    return BANNED_STACK_WORDS
 
 
 class TestPromotionGate:
@@ -5734,7 +5735,7 @@ class TestReport08:
             assert spot in out, spot
 
     def test_소요_표가_새_섹션을_만들지_않는다(self, repo, request_file, phases):
-        """`## 비용과 시간` 이 이미 있다. 섹션 목록은 team-spec 이 잠근다."""
+        """`## 비용과 시간` 이 이미 있다. 섹션 목록은 08 페이즈 파일이 잠근다."""
         run_id, paths = _enter_08(repo, request_file, phases)
         _report_data(paths)
         cli.run_report(repo, run_id=run_id)

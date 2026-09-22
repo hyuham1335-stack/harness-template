@@ -19,7 +19,7 @@ phases/*/RUNNING.tmp
 /reports/
 
 # 파이프라인 런 작업 공간 — 원시 텔레메트리와 계약 파일.
-# 보고서만 docs/harness/pipeline/runs/ 로 tracked 된다 (team-spec 3.8).
+# 보고서만 docs/harness/pipeline/runs/ 로 tracked 된다 (08 페이즈 파일).
 _workspace/
 
 # python 바이트코드

@@ -875,7 +875,7 @@ def parse_test_report(root, adapter, report_root=None):
     두고 코어는 이 함수만 부른다.
 
     `matched: False` 는 "리포트를 못 찾았다"이지 "테스트가 0개다"가 아니다.
-    둘을 같은 칸에 넣으면 경로 설정 오류가 초록불로 통과한다 (team-spec P1).
+    둘을 같은 칸에 넣으면 경로 설정 오류가 초록불로 통과한다 (04 페이즈 파일의 「테스트 0개」 행).
     """
     fmt = (adapter.get("test_report") or {}).get("format")
     if fmt == "junit-xml":

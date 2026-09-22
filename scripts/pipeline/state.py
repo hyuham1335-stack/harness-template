@@ -55,7 +55,7 @@ RUN_STATUS = ("active", "escalated", "done", "abandoned")
 # 재개 가능한 런이고, 안 집으면 사람의 판단을 기다리는 런이 화면에서 사라진다.
 TERMINAL_STATUS = ("done", "abandoned")
 
-# `on_success` 의 종단 센티널. team-spec §1 의 페이즈 표가 08 의 성공 시
+# `on_success` 의 종단 센티널. `08-report.md` 의 프론트매터가 성공 시
 # 다음을 `done` 이라 적는다 — 페이즈 id 가 아니라 "여기서 끝" 이라는 표식이다.
 DONE = "done"
 
@@ -67,7 +67,7 @@ COUNTERS = ("round", "repair", "review_repair")
 # 시도하기 전에** 05 에스컬레이션에 닿았는데 원장은 그것을 말하지 못했다.
 #
 # **어휘를 닫는 이유**: 호출처마다 문자열을 지어내면 집계가 불가능해지고,
-# 그러면 사유를 남기는 목적 자체가 사라진다. 늘리려면 여기와 team-spec 을
+# 그러면 사유를 남기는 목적 자체가 사라진다. 늘리려면 여기와 페이즈 파일을
 # 함께 고친다.
 COUNTER_REASONS = (
     "converged",              # 01 이 수렴해 라운드를 닫았다
@@ -172,7 +172,7 @@ class RunPaths:
 def new_run_id(now=None, seed_bytes=b""):
     """`YYYYMMDD-HHMM-xxxx` — 18자.
 
-    경로 240자 상한(team-spec E4)이 있고 런 디렉터리 이름이 모든 산출물
+    경로 240자 상한(Windows)이 있고 런 디렉터리 이름이 모든 산출물
     경로의 접두부가 되므로 짧게 유지한다.
     """
     head = (now or datetime.now(TZ)).strftime("%Y%m%d-%H%M")
@@ -189,7 +189,7 @@ def _write_json(path, data):
 def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None):
     """런을 만들고 요청을 **바이트 그대로** 동결한다.
 
-    원격도 커밋 이력도 브랜치도 건드리지 않는다 (team-spec P6).
+    원격도 커밋 이력도 브랜치도 건드리지 않는다.
     """
     root = Path(root)
     raw = Path(request_path).read_bytes()

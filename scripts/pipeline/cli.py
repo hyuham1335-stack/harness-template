@@ -7,11 +7,11 @@
 모델이 읽는 것은 봉투의 `render` 와 `next_command` 둘뿐이고, 다른 필드로
 판단하기 시작하면 이 계약이 깨진다.
 
-이 파일이 `scripts/pipeline/` 을 패키지로 만들지 않는 이유: 정본(team-spec)이
+이 파일이 `scripts/pipeline/` 을 패키지로 만들지 않는 이유: 페이즈 파일과 README 가
 `next_command` 를 `python scripts/pipeline/cli.py …` 로 문자 그대로 적어 두었다.
 봉투가 내는 명령 전문이 스펙이므로 직접 스크립트 실행이 계약이다.
 
-종료 코드는 team-spec 2.3 을 따른다:
+종료 코드는 README 의 종료 코드표를 따른다:
     0 성공 · 1 내부 오류 · 2 사용법/미해결 플레이스홀더/doctor 미통과
     3 선행조건 미충족 · 4 기계 판정 실패(예산 남음) · 5 예산 소진
     6 advance 거부(지문 stale) · 7 반복 한계·stuck · 8 제출물 위반
@@ -37,7 +37,7 @@ import verdict  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent.parent
 PHASES_REL = "harness/phases"
 
-# 프론트매터 어휘. 늘리려면 여기와 team-spec 을 함께 고친다.
+# 프론트매터 어휘. 늘리려면 여기와 페이즈 파일을 함께 고친다.
 REQUIRES_KINDS = ("file", "state", "adapter_stage")
 PRODUCES_KINDS = ("json", "markdown")
 # `produces[]` 의 키 집합도 닫는다 — `FRONT_KEYS` 가 최상위에 하는 일과 대칭이다.
@@ -64,7 +64,7 @@ LINT_SLUG = "s" * 40
 # 예고하는 것이 M36 이 이름한 결함 그 자체다.
 LOOP_ON_EXCEED = ("escalate",)
 
-# 종료 코드의 어휘. 정본은 team-spec §2.3 의 표이고 여기는 그것을 코드로
+# 종료 코드의 어휘. 정본은 README 의 종료 코드표이고 여기는 그것을 코드로
 # 내린 것이다 — 새 값을 여기서 만들지 않는다.
 EXIT_CODES = tuple(range(12))
 
@@ -914,7 +914,7 @@ def _lint_submit_checks(name, front, declared, add):
         declared.add(cid)
         if got not in EXIT_CODES:
             add(name, "submit_check_exit", "FAIL",
-                "%s 의 on_fail 이 종료 코드표 밖이다: %r (team-spec §2.3)"
+                "%s 의 on_fail 이 종료 코드표 밖이다: %r (README 종료 코드표)"
                 % (cid, got))
         elif got != spec["exit"]:
             add(name, "submit_check_exit", "FAIL",
@@ -1425,7 +1425,7 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
     # 0명 경로, cli.py 의 `_write_review05(..., slot={})`) `slot` 으로
     # 낙하한다.
     #
-    # 접는 방식이 셋 다 다르다 — 근거는 team-spec §3.5 의 표에 있다.
+    # 접는 방식이 셋 다 다르다 — 근거는 M43·M53 (DECISIONS.md) 이다.
     subs = [v for r in (node.get("rounds") or {}).values() for v in r.values()]
     subs = subs or list(slot.values())
 
@@ -3473,7 +3473,7 @@ def _drop_contract(root, paths, s, ctx):
     snap.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
     p.unlink()
     # **어디로 옮겼는지를 상태에 남긴다** (M54). 06 본문은 계약의 유닛·진입점
-    # 절을 실어야 하는데(`team-spec.md` PR 본문 매핑표), 07 수리 뒤 `pr` 을
+    # 절을 실어야 하는데(06 페이즈 파일의 PR 본문 절 목록), 07 수리 뒤 `pr` 을
     # 다시 돌리는 정상 경로에서는 원본이 이미 없다. 읽는 쪽이 파일 이름을
     # 짐작하지 않게 출처를 상태로 준다 — 새 사본은 만들지 않는다.
     # **`paths.rel` 이 아니라 리포 루트 기준이다** — 같은 노드의 `path` 와
