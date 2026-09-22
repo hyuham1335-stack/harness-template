@@ -9,8 +9,6 @@
      "must_contain": "${config.contract.sections.units}",
      "unless": "state.contract.mode == \"no_contract\""},
     {"kind": "state", "pointer": "phases.03-implement.status", "equals": "passed"},
-    {"kind": "clean_ownership", "from": "config.roles",
-     "except": "config.main_owned_paths", "claims": "${run.dir}/03_claims.json"},
     {"kind": "adapter_stage", "steps": ["compile", "lint", "check", "scoped", "full"],
      "mode": "fail"}
   ],
@@ -51,8 +49,6 @@
 
 - 계약 파일이 필수 절을 담고 있다 (`no_contract` 모드가 아닌 한)
 - 03 이 `passed` 다
-- 소유 경계가 깨끗하다 — 03 에서 이미 봤지만 여기서 다시 본다. 앞선 페이즈가
-  파일을 고치므로 사전 검사는 예측이지 보장이 아니다
 - 어댑터의 스테이지들이 실재한다 (여기서는 **차단**한다)
 
 ## 절차

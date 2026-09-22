@@ -23,12 +23,6 @@
           "enum": ["ko", "en"]
         },
         "instruction_file": {"type": "string"},
-        "rules_dir": {"type": "string"},
-        "rules_exclude": {
-          "description": "rules_dir 직속이지만 규칙이 아닌 파일 — 하네스 자신이 쓰는 산출물이다. rules_read 기대 집합이 뺀다. /log 한 번이 그 런의 모든 역할의 증명을 무효로 만들던 경로다 (미구현 백로그 23). 클론은 자기 파일을 여기 더한다.",
-          "type": "array",
-          "items": {"type": "string"}
-        },
         "secret_files": {"type": "array", "items": {"type": "string"}},
         "source_inject_max_chars": {
           "description": "steps[].sources 로 프롬프트에 실을 소스 파일 합계의 상한(문자). 접두부는 모든 turn 에 곱해지므로 상한 없는 첨부는 개선이 아니라 악화다. 기본 60000.",
@@ -89,13 +83,13 @@
       }
     },
     "roles": {
-      "description": "N인. 2인 고정이 아니다. owns 에서 excludes 를 뺀 실효 집합이 서로 겹치면 doctor 가 거부한다.",
+      "description": "작성자. 지금은 하나다 (ADR-H075) — 배열은 순차 test→impl 로 되돌릴 자리다. 둘 이상이면 owns 에서 excludes 를 뺀 실효 집합이 서로 겹칠 때 doctor 가 거부한다.",
       "type": "array",
       "minItems": 1,
       "items": {"$ref": "#/definitions/role"}
     },
     "primary_role": {
-      "description": "귀속이 ambiguous 일 때의 시작점. roles[].id 중 하나여야 한다.",
+      "description": "계약 대조 지적과 04 수리 지시가 향하는 역할. roles[].id 중 하나여야 한다.",
       "type": "string"
     },
     "main_owned_paths": {
@@ -212,11 +206,7 @@
           "pattern": "^[a-z][a-z0-9]{0,7}$"
         },
         "owns": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-        "excludes": {"type": "array", "items": {"type": "string"}},
-        "when_contract_section": {
-          "description": "이 역할은 계약의 이 절(contract.sections 의 키)에 항목이 있는 런에서만 03 에 디스패치된다. 없으면 늘 디스패치된다. 03 이 계약 파서로 정하고 제출이 다시 계산해 대조한다 (ADR-H057).",
-          "type": "string"
-        }
+        "excludes": {"type": "array", "items": {"type": "string"}}
       }
     }
   }

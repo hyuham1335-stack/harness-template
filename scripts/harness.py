@@ -682,14 +682,14 @@ def _check_ownership(config, files, report):
 
     if overlaps:
         report.add("소유 경계", "FAIL",
-                   "같은 파일을 두 역할이 소유한다 — 게이트의 clean_ownership 이 무의미해진다:\n" +
+                   "같은 파일을 두 역할이 소유한다 — 소유 경계가 뜻을 잃는다:\n" +
                    "\n".join("- " + o for o in overlaps[:20]) +
                    ("\n  … 외 %d건" % (len(overlaps) - 20) if len(overlaps) > 20 else ""))
         return
     if unowned:
         report.add("소유 경계", "WARN",
-                   "어느 역할도 소유하지 않고 메인 소유도 아닌 파일 %d건 — 워커가 손대면 "
-                   "누구의 실패인지 귀속되지 않는다:\n%s%s"
+                   "어느 역할도 소유하지 않고 메인 소유도 아닌 파일 %d건 — 워커가 손대도 "
+                   "지문이 그것을 보지 못한다:\n%s%s"
                    % (len(unowned), "\n".join("- " + p for p in unowned[:20]),
                       "\n  … 외 %d건" % (len(unowned) - 20) if len(unowned) > 20 else ""))
         return
@@ -728,10 +728,6 @@ def _check_contract_sections(root, config, report):
     sections = config["contract"]["sections"]
     missing = [(key, value) for key, value in sorted(sections.items()) if value not in headings]
     unknown_required = [k for k in config["contract"]["required"] if k not in sections]
-    # 조건부 역할이 없는 절을 가리키면 그 역할은 조용히 영영 미호출이다 (ADR-H057).
-    unknown_when = [(r["id"], r["when_contract_section"]) for r in config.get("roles") or []
-                    if r.get("when_contract_section")
-                    and r["when_contract_section"] not in sections]
 
     problems = []
     if missing:
@@ -740,8 +736,6 @@ def _check_contract_sections(root, config, report):
     if unknown_required:
         problems.extend("contract.required 의 %r 가 sections 에 정의되지 않았다" % k
                         for k in unknown_required)
-    problems.extend("roles[%s].when_contract_section 의 %r 가 sections 에 정의되지 않았다"
-                    % (rid, key) for rid, key in unknown_when)
     if problems:
         report.add("계약 절 ↔ 템플릿", "FAIL",
                    "한쪽만 고치면 계약 추적이 아무것도 못 찾고 조용히 통과한다:\n" +
