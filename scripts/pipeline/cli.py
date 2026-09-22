@@ -1707,9 +1707,10 @@ def run_record(root, phase, file, reviewer=None, round_=None, run_id=None,
     if st.phase_status(s, pid) == "passed":
         return st.envelope(
             "record", False, 3, s, {"phase": pid},
-            "`%s` 는 이미 통과했다. **record 는 멱등이 아니다** — 재작업은 "
-            "`retry --phase %s --counter <이름> --reason <사유>` 로만 한다."
-            % (pid, pid.split("-")[0]), None)
+            "`%s` 는 이미 통과했다. **record 는 멱등이 아니다** — "
+            "`next --run-id %s` 로 현재 페이즈의 지시를 본다."
+            % (pid, s["run_id"]),
+            "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
 
     phase_item = loaded[pid]
     ctx = build_context(root, paths, s)
@@ -2081,10 +2082,11 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
     subs = [dict(v, code=k) for k, v in slot.items()]
     ok, reason = verdict.converged(subs, blocking)
 
-    conv = front.get("converge") or {}
     profile = (s.get("profile") or {}).get("name") or "normal"
-    max_rounds = (conv.get("max_by_profile") or {}).get(profile) or 5
-    if profile != "normal" and (conv.get("max_by_profile") or {}).get(profile):
+    # 선언이 없으면 exit 2 다 — `or 5` 폴백은 곧 새 하드코딩이다 (M36).
+    max_rounds = _loop_max(front, profile)
+    if profile != "normal" and \
+            ((front.get("loop") or {}).get("max_by_profile") or {}).get(profile):
         # 라운드 상한이 레인의 양보다 — 선언이 빗나가면 gap 이름에 들어간다.
         _note_applied(s, "01:max_rounds=%d" % max_rounds)
 
@@ -2119,7 +2121,7 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
     next_keys = ["01:r%d:%s" % (used, code) for code in planned]
     st.count_instructions(s, "01-plan", next_keys)
     st.save(paths, s)
-    focus = conv.get("focus_round_2") or ""
+    focus = (front.get("converge") or {}).get("focus_round_2") or ""
     env = st.envelope(
         "record", True, 0, s,
         {"round": used + 1, "reason": reason, "planned": planned},
@@ -2485,9 +2487,9 @@ def _record_05_failed(root, paths, s, phase_item, ctx, reviewer, round_, reason)
     if guard is not None:
         return guard
 
+    # 제출 파일은 라운드와 무관하게 하나다 — 페이즈 파일이 그렇게 말하고, 원문과
+    # findings 는 `record` 가 슬롯에 옮기므로 다음 회차가 덮어써도 잃지 않는다.
     f = paths.run_dir / ("05_review_%s.json" % reviewer)
-    if round_ > 1:
-        f = paths.run_dir / ("05_review_%s_r%d.json" % (reviewer, round_))
     if f.exists():
         return st.envelope(
             "record", False, 8, s, {"submission": paths.rel(f)},
@@ -2580,7 +2582,7 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             {"blocking": len(blocking), "findings": blocking,
              "review05": s["review05"], "delta_reviewer": delta},
             _review_repair_render(blocking, used + 1, delta, prev_open),
-            "python scripts/pipeline/cli.py gate --phase 04 --stage scoped "
+            "python scripts/pipeline/cli.py gate --phase 05 --stage loop "
             "--run-id %s" % s["run_id"])
 
     return _advance_to_next(root, paths, s, phase_item, ctx)
@@ -2623,10 +2625,10 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
                   "(`resolved_from_previous` · `reraised_from_previous`) 메인이 "
                   "그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·"
                   "severity 는 여전히 손대지 않는다 (ADR-H052).",
-              "", "고친 뒤 `gate --phase 04 --stage scoped` 로 재게이트하고, "
-                  "델타 재리뷰 1명을 돌린 다음 다시 제출한다.",
-              "**수리하면 지문이 바뀌어 영수증이 낡는다** — 06 이 자동으로 막으므로 "
-              "재게이트를 잊을 수 없다."]
+              "", "고친 뒤 `gate --phase 05 --stage loop` 로 재게이트하고, "
+                  "`next` 로 델타 지시를 받아 재리뷰 1명을 돌린 다음 다시 제출한다.",
+              "**수리하면 지문이 바뀌어 영수증이 낡는다** — `next`·`record`·`approve` 가 "
+              "자동으로 막으므로 재게이트를 잊을 수 없다."]
     return "\n".join(lines)
 
 
@@ -2809,6 +2811,18 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
         return st.envelope("gate", False, 2, s, {}, "알 수 없는 페이즈: %r" % phase, None)
     phase_item = loaded[pid]
     ctx = build_context(root, paths, s)
+
+    # **페이즈 전이는 04 의 전체 게이트만 한다.** `gate --phase 05` 를 `--stage`
+    # 없이 치면 05 체인이 돌고 04 리포트를 덮어쓴 뒤 05 가 passed 로 올라갔다 —
+    # precheck·contract-trace·리뷰 없이 05 통과다. 04 도 04 에 있을 때만 전체를 돈다.
+    if not only_stage and (pid != "04-gate" or s.get("phase") != pid):
+        return st.envelope(
+            "gate", False, 2, s, {"phase": pid, "current": s.get("phase")},
+            "`gate --phase %s` 는 `--stage` 가 필요하다 — 전체 게이트로 페이즈를 "
+            "닫는 것은 `04-gate` 에서 `gate --phase 04` 뿐이다(지금 페이즈: `%s`).\n\n"
+            "- 수리 뒤 재게이트: `gate --phase 05 --stage loop`\n"
+            "- 06 진입 전 전체 회귀: `gate --phase 05 --stage full`"
+            % (pid.split("-")[0], s.get("phase")), None)
 
     if not only_stage:
         checks = check_requires(root, phase_item["front"].get("requires"), ctx, s)
@@ -3600,7 +3614,8 @@ def run_contract_trace(root, contract=None, run_id=None):
     exit_ = 8 if got.get("blocking") else 0
     return st.envelope("contract-trace", exit_ == 0, exit_, s, got,
                        _trace_render(got, rel),
-                       None if exit_ else
+                       "python scripts/pipeline/cli.py gate --phase 05 --stage loop "
+                       "--run-id %s" % s["run_id"] if exit_ else
                        "python scripts/pipeline/cli.py record --phase 05 "
                        "--file <리뷰 json> --reviewer <code> --run-id %s" % s["run_id"])
 
@@ -3624,7 +3639,7 @@ def _trace_render(got, rel):
         for f in blocking:
             lines.append("- `%s` → **%s**: %s"
                          % (f["code"], f["target_role"], f["title"]))
-        lines += ["", "고친 뒤 `gate --phase 04 --stage scoped` 로 재게이트하고 "
+        lines += ["", "고친 뒤 `gate --phase 05 --stage loop` 로 재게이트하고 "
                       "이 명령을 다시 친다."]
     else:
         lines += ["", "Critical 0건. 리뷰어 라우팅으로 넘어간다."]
