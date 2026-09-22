@@ -39,12 +39,6 @@ PHASES_DIR_REL = "harness/phases"
 # harness 를 import 하므로 역방향은 안 된다.
 RUNS_REL = "_workspace/runs"
 
-# 어댑터 `attribution` 의 규칙 이름 = 어댑터 필드명. 승격 판정이 **선언**과
-# **관측**을 같은 어휘로 대조한다 (ADR-H069). 관측을 내는 쪽은
-# `pipeline/attribution.py` 의 `rules_fired` 다 — 그 모듈이 이 모듈을 부르므로
-# 어휘의 집은 여기다.
-ADAPTER_RULE_NAMES = ("compile_error_regex", "symbol_not_found_patterns",
-                      "app_frame_prefixes", "test_file_globs")
 PROFILE_DIR_REL = "harness/profiles"
 
 # 경로 240자 상한 — 한글 식별자가 흔한 리포에서 이게 깨지면 원장이 조용히 오염된다
@@ -682,14 +676,14 @@ def _check_ownership(config, files, report):
 
     if overlaps:
         report.add("소유 경계", "FAIL",
-                   "같은 파일을 두 역할이 소유한다 — 게이트의 clean_ownership 이 무의미해진다:\n" +
+                   "같은 파일을 두 역할이 소유한다 — 소유 경계가 뜻을 잃는다:\n" +
                    "\n".join("- " + o for o in overlaps[:20]) +
                    ("\n  … 외 %d건" % (len(overlaps) - 20) if len(overlaps) > 20 else ""))
         return
     if unowned:
         report.add("소유 경계", "WARN",
-                   "어느 역할도 소유하지 않고 메인 소유도 아닌 파일 %d건 — 워커가 손대면 "
-                   "누구의 실패인지 귀속되지 않는다:\n%s%s"
+                   "어느 역할도 소유하지 않고 메인 소유도 아닌 파일 %d건 — 워커가 손대도 "
+                   "지문이 그것을 보지 못한다:\n%s%s"
                    % (len(unowned), "\n".join("- " + p for p in unowned[:20]),
                       "\n  … 외 %d건" % (len(unowned) - 20) if len(unowned) > 20 else ""))
         return
@@ -728,10 +722,6 @@ def _check_contract_sections(root, config, report):
     sections = config["contract"]["sections"]
     missing = [(key, value) for key, value in sorted(sections.items()) if value not in headings]
     unknown_required = [k for k in config["contract"]["required"] if k not in sections]
-    # 조건부 역할이 없는 절을 가리키면 그 역할은 조용히 영영 미호출이다 (ADR-H057).
-    unknown_when = [(r["id"], r["when_contract_section"]) for r in config.get("roles") or []
-                    if r.get("when_contract_section")
-                    and r["when_contract_section"] not in sections]
 
     problems = []
     if missing:
@@ -740,8 +730,6 @@ def _check_contract_sections(root, config, report):
     if unknown_required:
         problems.extend("contract.required 의 %r 가 sections 에 정의되지 않았다" % k
                         for k in unknown_required)
-    problems.extend("roles[%s].when_contract_section 의 %r 가 sections 에 정의되지 않았다"
-                    % (rid, key) for rid, key in unknown_when)
     if problems:
         report.add("계약 절 ↔ 템플릿", "FAIL",
                    "한쪽만 고치면 계약 추적이 아무것도 못 찾고 조용히 통과한다:\n" +
@@ -887,7 +875,7 @@ def parse_test_report(root, adapter, report_root=None):
     두고 코어는 이 함수만 부른다.
 
     `matched: False` 는 "리포트를 못 찾았다"이지 "테스트가 0개다"가 아니다.
-    둘을 같은 칸에 넣으면 경로 설정 오류가 초록불로 통과한다 (team-spec P1).
+    둘을 같은 칸에 넣으면 경로 설정 오류가 초록불로 통과한다 (04 페이즈 파일의 「테스트 0개」 행).
     """
     fmt = (adapter.get("test_report") or {}).get("format")
     if fmt == "junit-xml":
@@ -935,7 +923,7 @@ def _junit_failed_units(root_el):
 
     `detail` 은 스택 원문 그대로다 — 프레임 추출은 여기서 하지 않는다.
     어느 토큰이 진짜 파일인지는 리포의 파일 목록을 알아야 판정할 수 있고,
-    그 판정은 귀속 계층의 몫이다.
+    그 판정은 하지 않는다 — 작성자가 원문을 읽는다 (ADR-H075).
     """
     out = []
     for case in root_el.iter("testcase"):

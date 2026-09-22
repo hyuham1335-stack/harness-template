@@ -15,12 +15,11 @@ phases/*/RUNNING.tmp
 .env*.local
 
 # 하네스 테스트 리포트 (harness/adapters/nextjs-ts.json 의 test_report.glob).
-# 루트에 앵커한다 — 앵커 없는 reports/ 는 어느 깊이에서든 매칭해서
-# scripts/fixtures/**/reports/junit/*.xml (게이트 replay 픽스처) 를 조용히 삼킨다.
+# 루트에 앵커한다 — 앵커 없는 reports/ 는 어느 깊이에서든 매칭한다.
 /reports/
 
 # 파이프라인 런 작업 공간 — 원시 텔레메트리와 계약 파일.
-# 보고서만 docs/harness/pipeline/runs/ 로 tracked 된다 (team-spec 3.8).
+# 보고서만 docs/harness/pipeline/runs/ 로 tracked 된다 (08 페이즈 파일).
 _workspace/
 
 # python 바이트코드

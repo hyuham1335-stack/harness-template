@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""05 의 리뷰어 라우팅과 판정.
+"""05 의 리뷰어 판정.
 
-**라우팅은 결정론이다.** `config.reviewers[].when` glob 이 변경 파일에 걸리면
-그 리뷰어가 켜지고, 우선순위는 배열 순서다. 모델이 "누구를 부를까"를 판단하지
-않는다 — 판단하면 같은 diff 가 런마다 다른 리뷰를 받는다.
+**리뷰어는 하나다** (`config.reviewers[0]`, ADR-H075). 소스 변경이 있으면 계획되고
+모델이 "누구를 부를까"를 판단하지 않는다 — 판단하면 같은 diff 가 런마다 다른
+리뷰를 받는다. 라우팅·레인별 상한·`merged` 모드는 덜어내기 Wave 4 에서 지웠다.
 
 여기서 막는 것 둘:
 
@@ -31,21 +31,9 @@ import verdict  # noqa: E402
 
 SKILLS_REL = ".claude/skills"
 
-# **`profile_caps` 에 기본값을 두지 않는다** (ADR-H025 · ADR-H073). 예전에는
-# `DEFAULT_CAPS = {"fix":1,"small":1,"normal":3}` 이 있었고 `config.json` 은
-# `{"docs":1,"fix":1,"small":2,"normal":4}` 였다 — 두 출처가 어긋난 채로,
-# config 가 이겨서 **무해했기 때문에** 아무도 눈치채지 못했다. 그것이 M36 의
-# 모양 그대로다. 폴백이 곧 새 하드코딩이라 지웠고, 빠진 선언은 `validate` 가
-# 기동 전에 잡는다 (lint-phases · doctor 양쪽에 배선돼 있다).
-CAP_LANES = ("docs", "fix", "normal")
-DEFAULT_MERGE_BELOW = 150
 DEFAULT_FINDINGS_MAX = 50
 
-# 심각도의 순서. 라운드를 가로지른 재상정(`cli._severity_raised`)이 이것으로 비교한다.
-SEVERITY_RANK = {"minor": 0, "major": 1, "critical": 2}
-
-# 05 가 산출하는 리뷰 파일의 이름. `code` 축약을 쓰는 것은 경로 240자 상한
-# 때문이고(§E4), 리뷰어가 다섯이면 이름이 길 때 실제로 닿는다.
+# 05 가 산출하는 리뷰 파일의 이름. `code` 축약을 쓰는 것은 경로 240자 상한 때문이다.
 REVIEW_FILE = "05_review_%s.json"
 
 
@@ -61,14 +49,6 @@ def validate(root, config):
     런 중간에 알게 되면 앞 페이즈에 쓴 시간이 이미 낭비된 뒤다 (§E10 첫 행).
     """
     errors = []
-    # **리뷰어가 0개여도 이것은 본다** — `_cap` 은 라우팅이 비어도 불린다.
-    caps = (config.get("review") or {}).get("profile_caps") or {}
-    missing = [lane for lane in CAP_LANES if lane not in caps]
-    if missing:
-        errors.append("config.review.profile_caps 에 레인이 빠졌다: %s — "
-                      "기본값으로 낙하하지 않는다 (ADR-H025 · ADR-H073)"
-                      % ", ".join(missing))
-
     reviewers = config.get("reviewers") or []
     if not reviewers:
         # 리뷰어가 0개인 것은 설정 오류일 수도, 의도일 수도 있다. 막지 않고
@@ -76,17 +56,12 @@ def validate(root, config):
         return errors
 
     authors = {r.get("agent") for r in config.get("roles") or []}
-    seen_code, seen_priority = {}, {}
+    seen_code = {}
     for r in reviewers:
         code, skill = r.get("code"), r.get("skill")
         if code in seen_code:
             errors.append("리뷰어 code 가 유니크하지 않다: %r" % code)
         seen_code[code] = skill
-        pri = r.get("priority")
-        if pri is not None and pri in seen_priority:
-            errors.append("리뷰어 priority %r 가 %s 와 겹친다 — 순서가 "
-                          "결정론이 아니게 된다" % (pri, seen_priority[pri]))
-        seen_priority[pri] = code
 
         if skill in authors:
             errors.append(
@@ -95,72 +70,7 @@ def validate(root, config):
         if not skill_path(root, skill).is_file():
             errors.append("리뷰어 %r 의 스킬 파일이 없다: %s/%s/SKILL.md — "
                           "기동 전에 잡는다" % (code, SKILLS_REL, skill))
-        if not (r.get("when") or []) and not r.get("when_role_owned"):
-            errors.append("리뷰어 %r 에 when glob 도 when_role_owned 도 없다 — "
-                          "영원히 켜지지 않는다" % code)
     return errors
-
-
-# --------------------------------------------------------------------- 라우팅
-
-def route(config, changed, profile="normal", source_globs=None):
-    """변경 파일 → 켜질 리뷰어. 결정론이다.
-
-    반환: {"reviewers":[...], "dropped":[...], "capped":bool, "cap":n,
-           "profile":..., "source_changed":bool}
-
-    `dropped` 는 **매칭됐지만 상한에 걸려 빠진** 리뷰어다. 조용히 버리면
-    "그 관점은 볼 게 없었다"와 "예산이 없었다"가 같은 침묵이 된다.
-    """
-    changed = [c.replace("\\", "/") for c in (changed or [])]
-    reviewers = sorted(config.get("reviewers") or [],
-                       key=lambda r: (r.get("priority") if r.get("priority")
-                                      is not None else 999))
-    source_changed = _source_changed(config, changed, source_globs)
-
-    matched = []
-    roles = config.get("roles") or []
-    for r in reviewers:
-        if r.get("only_when_no_source_change") and source_changed:
-            continue
-        hits = [c for c in changed if harness.glob_any(r.get("when") or [], c)]
-        if r.get("when_role_owned"):
-            # **glob 이 아니라 역할 소유로 켠다** (ADR-H043). 소유 판정은
-            # `_source_changed` 와 같은 술어다 — 프로젝트가 `roles[].owns` 를
-            # 다른 레이아웃으로 바꿔도 따라간다. 07 이 깨끗한 런을 생략하는
-            # 근거가 "05 의 gen 이 봤다" 이므로, 소스 변경이 있는데 gen 이
-            # 안 켜지는 경로가 있으면 그 근거가 무너진다.
-            hits += [c for c in changed if c not in hits
-                     and any(harness.owns_file(role, c) for role in roles)]
-        if hits:
-            matched.append(dict(r, matched_paths=hits[:20],
-                                matched_count=len(hits)))
-
-    cap = _cap(config, profile)
-    kept, dropped = matched[:cap], matched[cap:]
-    return {
-        "reviewers": kept,
-        "dropped": [{"code": d["code"], "skill": d["skill"],
-                     "why": "프로파일 %s 의 상한 %d 를 넘었다" % (profile, cap)}
-                    for d in dropped],
-        "capped": bool(dropped),
-        "cap": cap,
-        "profile": profile,
-        "source_changed": source_changed,
-    }
-
-
-def _cap(config, profile):
-    """레인별 리뷰어 상한. **선언을 읽고, 없으면 멈춘다** (ADR-H025).
-
-    `validate` 가 기동 전에 같은 것을 보므로 여기까지 오는 일은 없어야 한다.
-    """
-    caps = (config.get("review") or {}).get("profile_caps") or {}
-    if profile not in caps:
-        raise ValueError(
-            "config.review.profile_caps 에 %r 이 없다 — 기본값으로 낙하하지 "
-            "않는다. 폴백을 두면 그 폴백이 곧 새 하드코딩이다 (ADR-H025)" % profile)
-    return caps[profile]
 
 
 def _source_changed(config, changed, source_globs=None):
@@ -177,23 +87,12 @@ def _source_changed(config, changed, source_globs=None):
                for c in changed)
 
 
-def mode(config, diff_lines):
-    """`merged` 또는 `fanout`.
-
-    작은 diff 는 단일 에이전트가 체크리스트를 순차 적용한다 — 같은 diff 를
-    관점 수만큼 다시 보내는 것이 그 크기에서는 손해이기 때문이다.
-    """
-    limit = ((config.get("review") or {}).get("merge_below_diff_lines")
-             or DEFAULT_MERGE_BELOW)
-    return "merged" if (diff_lines or 0) <= limit else "fanout"
-
-
 def status(planned, ok):
     """`review05.status` — **findings 개수와 분리한다** (§E1).
 
     리뷰어가 전부 실패해도 findings 는 0건이다. 그 0을 "지적이 없다"로 읽으면
     아무도 리뷰하지 않은 코드가 통과한다. 그래서 "리뷰가 수행됐는가"를 별도
-    신호로 만든다. **계획된 리뷰어가 0개인 것도 `failed` 다** — 라우팅이 아무도
+    신호로 만든다. **계획된 리뷰어가 0개인 것도 `failed` 다** — 계획이 아무도
     부르지 않은 것은 통과가 아니라 미수행이다.
     """
     if not planned or not ok:
@@ -316,10 +215,8 @@ def _fail(errors):
 
 
 def merge(submissions):
-    """여러 리뷰어의 findings 를 합친다.
-
-    **2인 이상이 지적한 항목은 severity 를 한 단계 올린다** — 독립 관측의
-    합치는 한 관측보다 강한 증거다.
+    """제출들의 findings 를 `finding_key` 로 접는다 — 같은 키는 하나이고 `reported_by`
+    에 누가 냈는지 남는다. 2인 합치 상승은 리뷰어가 하나가 되며 지웠다 (ADR-H075).
     """
     ladder = ["minor", "major", "critical"]
     by_key = {}
@@ -335,13 +232,6 @@ def merge(submissions):
         f = slot["finding"]
         f["reported_by"] = slot["by"]
         f["finding_key"] = key
-        if len(slot["by"]) > 1:
-            i = ladder.index(f.get("severity")) if f.get("severity") in ladder else 0
-            if i < len(ladder) - 1:
-                f["severity_raised_from"] = f.get("severity")
-                f["severity"] = ladder[i + 1]
-                f["why_raised"] = ("독립 리뷰어 %d명이 같은 것을 지적했다 — "
-                                   "합치는 한 관측보다 강한 증거다" % len(slot["by"]))
         out.append(f)
     out.sort(key=lambda f: -ladder.index(f.get("severity"))
              if f.get("severity") in ladder else 0)
@@ -364,18 +254,14 @@ def open_findings(rounds):
 
     접는 규칙 셋은 필드의 뜻이 정한다:
 
-    - **라운드마다 따로 `merge` 한다.** 가로질러 한 번에 합치면 상승 규칙의
-      전제인 "독립 관측"이 거짓이 된다 — 델타 리뷰어는 이전 회차의 열린 목록을
-      프롬프트로 받고 그것을 회계하도록 **강제받는다.** 강제된 재진술은 두 번째
-      관측이 아니다. 게다가 보고 표면에서만 오른 심각도는 원장·`review05.major`
-      와 갈린다
+    - **라운드마다 따로 `merge` 한다.** 델타 리뷰어는 이전 회차의 열린 목록을
+      프롬프트로 받고 그것을 회계하도록 **강제받는다** — 라운드를 가로질러
+      합치면 강제된 재진술이 두 번째 관측으로 세어진다
     - **같은 키는 첫 등장이 이긴다** (M30)
     - **닫힌 것은 전 라운드 `closed` 의 합집합으로 뺀다.** 그 값은 자진 신고가
       아니라 단조성 검사가 이미 검증한 것이다 (M29)
 
-    severity 는 **그 회차의 병합 판정값**이다. 같은 라운드에서 둘이 minor 로 낸
-    키는 원장에 major 로 적혀 있고, 제출 원본값을 쓰면 원장이 major 라 부르는
-    것을 본문이 「미해결 Minor」에 싣는다.
+    severity 는 **그 회차의 판정값**이다.
     """
     by_key, closed = {}, set()
     for rn in sorted(rounds or {}, key=int):

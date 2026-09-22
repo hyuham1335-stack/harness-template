@@ -23,12 +23,11 @@
 | 가드레일 | `CLAUDE.md` — `## 작업 원칙` 넷만 채워져 있고 나머지는 플레이스홀더다. **8페이즈 코어는 이 파일을 자동 주입하지 않는다** (§4) |
 | **계약 계층** | `harness/config.json` · `config.schema.json` · `adapters/{self-python,nextjs-ts,_template}.json` + `adapter.schema.json` · `profiles/nextjs-ts/` · `templates/contract.md`. 프로필은 템플릿 config 와 키가 같고 `reviewers` · `review` 는 값까지 같다 — 스키마가 둘을 필수로 요구한다 ([ADR-H063](DECISIONS.md)) |
 | 실행기 | `scripts/harness.py` — `init` · `doctor`. `scripts/runtime.py` — 시각·트랜스크립트 읽기·출력 인코딩의 공유 원시요소 ([ADR-H037](DECISIONS.md)) |
-| **파이프라인 코어** | `scripts/pipeline/{cli,state,adapters,attribution,verdict,contract,gate,trace_contract,review,precheck,mask,pr,report}.py` — 8페이즈 실행기. `doctor` · `init --feature` · `next` · `record` · `gate` · `resume` · `status` · `lint-phases` · `precheck` · `contract-trace` · `approve` · `pr` · `report`. **stdout 은 언제나 단일 JSON 봉투 하나**. 모듈명이 `trace.py` 가 아닌 것은 stdlib `trace` 를 가리기 때문이다 |
+| **파이프라인 코어** | `scripts/pipeline/{cli,state,adapters,verdict,contract,gate,trace_contract,review,precheck,mask,pr,report}.py` — 8페이즈 실행기. `doctor` · `init --feature` · `next` · `record` · `gate` · `resume` · `status` · `lint-phases` · `precheck` · `contract-trace` · `approve` · `pr` · `report`. **stdout 은 언제나 단일 JSON 봉투 하나**. 모듈명이 `trace.py` 가 아닌 것은 stdlib `trace` 를 가리기 때문이다 |
 | **페이즈 파일** | `harness/phases/{01-plan,03-implement,04-gate,05-code-review,06-pr,07-pr-review,08-report}.md` — `---` 로 감싼 JSON 프론트매터. 레인(`docs`·`fix`·`normal`)은 `init --profile` 로 사용자가 선언하고 기본은 `normal` 이다 — `docs` 선언이 빗나가면 03·05 가 `lane_miss` 로 드러낸다 (ADR-H044 · H053). `lint-phases` 의 FUTURE 전이는 0건이다 |
-| **리뷰어** | `.claude/skills/{general,data-layer,security,architecture,test-quality,docs}-reviewer/SKILL.md` — 스택 비종속 관점 6종. `general` 은 소스 변경이 있으면 항상 켜진다 (ADR-H043). 레인별 호출 상한을 넘으면 우선순위 `gen · data · sec · test · arch · docs` 의 뒤쪽부터 빠진다 (ADR-H062). 각 파일의 `## 프로젝트 보강` 절은 **비운 채로** 배포한다(그 절이 비어 갈수록 하네스가 성숙한 것이다). |
-| **진입점** | `.claude/commands/feature.md` (`/feature` — 01~08 전부. push 는 실행기가 하고 **PR 생성·코멘트 게시는 메인 세션이 forge 도구로** 한다. **머지는 범위 밖**) · `.claude/agents/{impl-writer,test-writer,ui-writer,plan-reviewer}.md` (각 3KB 이하 — 소유 경계·제출 형식·금지만 담고 규약은 담지 않는다) |
+| **리뷰어** | `.claude/skills/general-reviewer/SKILL.md` — 하나다. 소스 변경이 있으면 켜지고 `diff+refs` 로 본다. 델타 재리뷰도 같은 리뷰어다. `docs` 런에서는 문서↔요청 정합을 본다 ([ADR-H075](DECISIONS.md)) |
+| **진입점** | `.claude/commands/feature.md` (`/feature` — 01~08 전부. push 는 실행기가 하고 **PR 생성·코멘트 게시는 메인 세션이 forge 도구로** 한다. **머지는 범위 밖**) · `.claude/agents/{impl-writer,plan-reviewer}.md` (각 3KB 이하 — 소유 경계·제출 형식·금지만 담고 규약은 담지 않는다) |
 | 테스트 | `scripts/test_harness.py` · `scripts/test_pipeline.py` · `scripts/test_runtime.py` — `python -m pytest scripts/` |
-| **파이프라인 명세** | `docs/harness/pipeline/team-spec.md` — **8페이즈의 정본.** 페이즈 01~08 · 종료 코드표 · 실패 3분류·매트릭스 · 수렴 판정 · 귀속 규칙 · 승격 임계값 · §E1~E14 · §P1~P6 |
 
 `python scripts/pipeline/cli.py doctor` 가 하는 일: python 런타임 · config·어댑터
 스키마 · 어댑터 전제조건 · 러너 바이너리 · 스테이지 명령의 실물 존재 · 역할과 소유
@@ -151,128 +150,38 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 ## 6. 검증된 것과 아직 아닌 것
 
 **이 절이 이 문서에서 가장 중요하다.** 둘을 같은 칸에 넣지 않는 것이 이 리포의 규율이다.
+덜어내기 4웨이브([ADR-H075](DECISIONS.md)) 뒤 **남은 장치** 기준이다.
 
 | 항목 | 상태 |
 |---|---|
-| 8페이즈 01~08 실물 완주 | **검증됨** — 한 파일럿에서 파이프라인 런 8회 |
-| `doctor` 의 거부 8종 | **검증됨** — 일부러 깨뜨린 config 를 전부 거부한다 |
+| 8페이즈 01~08 실물 완주 | **검증됨** — 한 파일럿에서 파이프라인 런 8회, 클론 4런 |
+| `doctor` 의 거부 | **검증됨** — 일부러 깨뜨린 config 를 전부 거부한다 |
 | 스택 교체 시 코어 무변경 | **검증됨** — 어댑터를 갈아도 코어는 0줄이다 ([ADR-H038](DECISIONS.md)) |
-| **어댑터 `verified`** | **`false` 다.** 동봉 어댑터가 셋 다 `false` 이고, 그것이 정직한 값이다. 2차 파일럿이 `nextjs-ts` 로 15런을 완주했지만 그 값은 파일럿 리포의 것이다 — 클론은 `python scripts/harness.py verify-adapter` 로 올린다 — 완주 런 ≥ 3 **그리고** 어댑터가 선언한 귀속 규칙이 **전부 실물 실패에서 판정을 낸** 뒤에야 `true` 다 ([ADR-H069](DECISIONS.md)가 [ADR-H047](DECISIONS.md) 결정 3 을 강화했다 — 완주 횟수는 실패 경로의 근거가 아니다). `verified: false` 는 이제 등급을 깎지 않는다. 측정 뒤 완주 런이 5 이상 쌓이면 `precheck` 가 `calibration_stale` 로 재측정을 권한다(등급 X) |
-| **`calibration.json`** | **템플릿은 영구 미측정** ([ADR-H039](DECISIONS.md)). 클론이 첫 `calibrate` 로 채우고, 그 뒤로는 `promote --flush` 가 런마다 `tests_ran_floor` 를 올린다 ([ADR-H047](DECISIONS.md)) — 2차 파일럿은 1회 측정값(14)이 652개 시점까지 고정돼 급감 감지가 꺼져 있었다 |
-| **승격 자체 게이트** | **코드만 있다** ([ADR-H065](DECISIONS.md)). `promote --apply` 가 어댑터의 `lint` · `check` 를 돌리지만 실제 `applied` 승격은 아직 0건이다. 이 리포의 `self-python` 은 두 명령이 `null` 이라 여기서는 언제나 gap `promotion_selfgate_unverified` 다 |
-| **`risk_undeclared`** | **관측만. 템플릿 표본 0** ([ADR-H067](DECISIONS.md)). 05 가 01 의 `risk` 신고와 켜진 리뷰어를 대조해 기록한다. 등급 · gap · exit 는 건드리지 않는다. **클론 표본 2/4런** — 클론 리포 `banana-island-ops` 의 4런(`20260919-2342-9258` · `-2343-d42d` · `-2343-1c04` · `20260920-0107-4265`, 2026-09-20) 에서 둘 다 `{reviewers:["data"]}` 였고 그 `data` 가 실제 지적을 냈다(minor 2 · major 1). §7-7 의 기준 5런에는 아직 못 미친다. 숫자는 그 리포의 `docs/harness/PILOT-LOG.md` 가 정본이다 |
-| **`files_max` 는 소스만 센다** | **템플릿 미실측** ([ADR-H066](DECISIONS.md)). 2차 파일럿 exit 9 여섯 번 중 몇 번이 이 규칙으로 통과했을지 재지 않았다. **클론 실측: 4런 중 3런이 그래도 exit 9**(클론 리포 `banana-island-ops` 의 4런(`20260919-2342-9258` · `-2343-d42d` · `-2343-1c04` · `20260920-0107-4265`, 2026-09-20), `at_05` 파일 12·13·13 · `at_06` 13·14·14). 테스트를 뺀 뒤에도 `files_max` 10 을 넘는다 — **값을 바꾸든 예측을 바꾸든 3/4런이 넘는 상한은 상한이 아니다.** 값은 여기서 정하지 않는다 ([ADR-H007](DECISIONS.md)) |
-| **`findings.jsonl` · 승격 임계** | **템플릿 표본 0.** 2차 파일럿 표본(15런 · 140행 · 판정 13회 전부 skip)은 [ADR-H051](DECISIONS.md) · [ADR-H054](DECISIONS.md) 에 근거로만 남겼다. **클론 원장 236행 / 17런** — `resolution: deferred` 71%, 최다 `rule_slug` 는 `nothing_locked` 37건. `THRESHOLDS` 여섯 숫자는 **여전히 바꾸지 않는다** — 남의 원장으로 자기 임계를 정하지 않는 것이 [ADR-H039](DECISIONS.md) 다. 시한 뒤 skip 은 이제 gap 이다 |
+| 계약 대조 5종 | **둘은 실측** — `untested_entrypoint`·`untested_error_symbol` 은 14/14 검출·오탐 0 ([ADR-H058](DECISIONS.md)). 나머지 셋(`missing_*`)은 비용 0 이라 그대로 |
+| **04 테스트 수 하한(직전 완주 런 × 0.9)** | **미실측** — 클론의 첫 런은 완주 런이 없어 하한이 없다(알려진 한계) |
+| **03 단일 작성자** | **미실측** — ADR-H075 예측 4·5·8 이 잰다 |
+| **05 `gen` 단독 + 델타 1** | **미실측** — 예측 6·8. 「gen 이 data·sec 의 critical 을 전부 같이 잡았다」는 4인 체제의 관측이다 |
+| **07 `/code-review` 1회 · `dup_05` escaped 계수** | **미실측** — 예측 7. 초기 15런 escaped 16 은 4인 체제의 값이라 기준선이 아니다 |
+| **precheck 예산 정보 행** | **미실측** — exit 9 는 브랜치·base 둘뿐이다. 3/4런 통행료였던 `files_max` 가 정보 행이 된 뒤 사람 대기(기준선 8.5분)가 주는지 |
 
 > **이 표에 클론의 숫자가 들어올 때는 어느 리포의 몇 런인지를 적는다.** 값을 상속하지
 > 않기 위해서다 ([ADR-H039](DECISIONS.md)) — 템플릿의 상수는 그 숫자로 바뀌지 않고,
 > 바뀌는 것은 「재봤나 아직인가」뿐이다.
 
-**어댑터 `verified: true` 를 기다리지 않기로 했다.** 승격 조건은 *"`attribution` 의
-실패 경로가 실물 러너 출력에서 돈다"* 인데, 파일럿에서 일곱 런 연속 자연 실패가 오지
-않았다. **일부러 실패를 만들어 통과시키는 것은 검증이 아니라 결과를 만들어 내는
-것**이라 하지 않았다. 클론한 프로젝트에서 자연 실패가 오면 그때 올린다.
-
-[ADR-H069](DECISIONS.md)가 그 조건을 기계가 판정하게 만들었다 — 04 가 어느 규칙이
-**판정을 냈는지** 런에 적고, `verify-adapter` 가 그 합집합을 선언과 대조한다.
-원칙은 그대로다: 보관된 실물 출력을 `--replay` 로 되먹이는 것은 지어낸 실패가
-아니지만, 없는 실패를 만들어 내는 것은 여전히 하지 않는다.
-
 ---
 
 ## 7. 이어서 볼 열린 질문
 
-> **「클론 4런」** 은 아래 전체에서 한 가지를 가리킨다 — 리포 `banana-island-ops` 의 `20260919-2342-9258` · `-2343-d42d` ·
-> `-2343-1c04` · `20260920-0107-4265` (2026-09-20). 숫자의 정본은 **그 리포의** `docs/harness/PILOT-LOG.md` 이고,
-> 여기에는 값이 아니라 「재봤나 아직인가」만 올린다 ([ADR-H039](DECISIONS.md)).
+파일럿이 답을 못 낸 채 넘긴 일곱 중 여섯은 덜어내기로 대상이 사라졌거나
+[ADR-H075](DECISIONS.md) 의 **예측표 8개**(런 wall · 모델 호출 · `format_reject` ·
+03+04 분/줄 · 04 수리 횟수 · gen 의 Critical · 07 escaped · 테스트 품질 findings)가
+첫 실물런에서 답한다. 남는 것은 하나다.
 
-파일럿이 답을 못 낸 채 넘긴 것들이다. **값을 지금 정하지 않는다** — 재지 않은 것을
-근거로 상수를 정하지 않는 것이 [ADR-H007](DECISIONS.md) 의 규율이다.
-
-1. **접두부 예산의 단위.** 접두부 총량과 비용의 상관은 파일럿에서 흔들렸고, 더 강한
-   축은 **세션이 끌어온 양**과 **접두부 × turn** 이었다. 상한을 어디에 걸지는 미정이다
-2. **`instruction_slot_budget` 의 값.** 소비자는 생겼다 — 08 이 지시문 파일의
-   최상위 불릿 수를 재고 초과를 비강등 gap 으로 적는다 ([ADR-H056](DECISIONS.md) 추기).
-   값 12 는 미검증 상속값이고 이 템플릿의 `CLAUDE.md` 도 넘는다. **첫 검토 런들의
-   `used/budget` 을 본 뒤에** 값을 정한다. **클론 실측이 왔다** — **클론 4런** 이
-   **4/4 런 모두 `used 17 / budget 12`** 로 `instruction_slot_over_budget` 을 달았다.
-   즉 이 gap 은 런 내용과 무관한 상수다. **다만 이 gap 은 등급을 깎지 않는다** —
-   `instruction_slot_over_budget` 은 [ADR-H056](DECISIONS.md) 부터 `NON_DEMOTING_GAPS`
-   에 있었고, 그것이 백로그 22 를 여는 자리에서 잘못 적혔다 ([ADR-H072](DECISIONS.md)
-   가 정정했다). **값 자체는 여전히 미정이다** — 올릴지 규칙을 줄일지는 이 표시가 몇 런을
-   더 따라다니는지를 보고 정한다.
-   **다만 값보다 계측이 먼저다** (2026-09-21 · 백로그 33 → 34). 셋을 실측했다:
-   ⑴ 예산이 `instruction_file` **하나만** 세고 `rules_dir` 직속 `*.md` 는 **워커가 전원
-   매번 읽고 sha256 증명까지 하는데** 안 센다 — 규칙을 `docs/` 로 옮기면 gap 이 사라지는
-   **착시**가 성립한다(계기판을 끄는 것이지 압력을 낮추는 것이 아니다).
-   ⑵ 정규식 `^[-*+]\s+` 가 번호 목록을 안 세어 이 리포 `CLAUDE.md` 의 「작업 원칙」
-   **4개가 통째로 빠진다** — 파일 자신이 *"넷 다 기계가 안 잡는 산문"* 이라 적은 **가장
-   비싼 규칙**이다(세어진 13 + 안 세어진 4). ⑶ 4/4런 같은 값이라 **런 내용과 무관한
-   상수**이고, 매 런 울리는 경보는 경보가 아니다.
-   **세는 범위와 방식이 틀린 상태에서 값을 정하면 틀린 숫자에 맞추는 것**이 된다.
-   **계측은 닫혔다** (2026-09-21 · [ADR-H074](DECISIONS.md), 백로그 33) — 재는 집합이
-   `rules_read` 증명 대상 전체가 됐고, 번호 목록도 한 칸이며(이 템플릿 **13 → 17**),
-   파일별 수가 `per_file` 로 남고, 초과는 gap 이 아니라 관측이다.
-   **값은 여전히 미정이다**(백로그 34) — 이제 클론 런의 **파일별 분포**를 보고 정한다.
-   다만 `docs/` 가 빈 골격인 동안은 이 숫자가 `CLAUDE.md` 하나에서만 나온다.
-   **백로그 22 는 닫혔다** (2026-09-21 · [ADR-H072](DECISIONS.md) 결정 1) — 다만
-   「등급이 매 런 같다」를 고친 것이 아니라 **다시 정의했다**: 4/4 런의 유일한 강등
-   원인은 `stage_absent:e2e` 였고, 그것은 어댑터가 아직 비었다는 **정확한 신호**이지
-   등급 산정의 결함이 아니다. 구조적 부재(`self-python` 의 compile·build·e2e)만
-   `stage_na` 로 올려 gap 이 뜻을 갖게 했고, 실제 닫힘은 어댑터를 채우는 쪽이다
-   (백로그 17 · `self-python` 의 lint·check)
-3. **승격 임계 여섯 숫자.** 승격 축이 `rule_key` 로 바뀐 뒤([ADR-H034](DECISIONS.md))
-   3런에 판정하기로 했는데, 그 3런은 클론한 프로젝트에서 돈다
-4. **리뷰어 호출 고정비.** 실행기의 계수가 형식 교정 왕복과 07 내장 리뷰를 안 세서
-   실측과 갈렸다. 원장이 쌓이면 답이 나온다. **01 의 2라운드 이후·전이가 바로 내는
-   다음 페이즈 지시·05 `merged`·승격 판정이 계수 밖이던 것은 닫혔다**
-   ([ADR-H042](DECISIONS.md)). 05 수리 작성자도 이제 `05:r{n}:repair:{role}` 키로 센다 — 전에는
-   03 재제출에 섞였다 ([ADR-H064](DECISIONS.md)). 남은 것은 형식 교정 왕복이다 —
-   **클론 실측 4회** (**클론 4런** — 02 `format_reject` 2 · 03 `format_reject` 2).
-   그런데 넷 다 모델의 실수가 아니었다: 02 는 프롬프트와 검사기가 서로 다른 문서를 가리켜서,
-   03 은 `rules_read` 대조가 병렬 런을 상정하지 않아서였다 (미구현 백로그 21 · 23).
-   **왕복을 세기 전에 왕복을 만드는 쪽을 고쳐야 계수가 뜻을 갖는다**.
-   **둘 다 닫았다** (2026-09-20 · [ADR-H070](DECISIONS.md), 백로그 21 · 23) — 그러니
-   **이 계수는 클론의 다음 런부터 다시 잰다.** 그 전 왕복은 모델이 아니라 하네스가 만든 것이라
-   계수에 섞으면 고정비가 실제보다 커 보인다.
-   **왕복이 하나 늘 수 있다** (2026-09-21 · [ADR-H073](DECISIONS.md)) — 07 이 선언·산문으로만
-   약속하고 **실제로는 안 하던** `source_quote_substring` 을 이제 한다. 봇이 켜진 런에서
-   `external` 출처 finding 의 quote 가 거부되면 그것은 새 마찰이 아니라 **원래 있었어야 할
-   검사가 처음 무는 것**이다. 다만 그 왕복은 계수에 섞는다 — 모델의 옮겨 적기가 원인이면
-   진짜 고정비이고, 정규화의 한계가 원인이면 그때 하네스 쪽을 고친다
-5. **트리아지 임계값 셋과 모델 등급 표.** `config.triage` 의 `small_max_paths` ·
-   `normal_min_chars` · `model_call_when_undecided` 와 `config.models` 의 슬롯별
-   등급은 실측 없이 고른 초기값이다 ([ADR-H044](DECISIONS.md)). 첫 세 런의
-   `00_triage.json` 과 `triage_miss` 이벤트가 검사한다 — miss 가 docs 예측에서만
-   나면 docs 규칙이 헐거운 것이고, 모델 호출이 매 런 나면 규칙이 너무 좁은 것이다.
-   **2차 파일럿 15런의 값은 [ADR-H054](DECISIONS.md) 에 있다** — `small` 2런, `triage_miss` 0.
-   **클론에서 첫 miss 가 났다** (**클론 4런** 중 1런): `small → normal`,
-   계약 units 4 가 `profile.small_max_units` 3 을 넘었다. 벌칙이 `triage_miss:01:max_rounds=2`
-   gap 하나로 끝나지 않는다는 것도 같이 드러났다 — 그 miss 가 `review07.py` 에서 07 을
-   `effort: "medium"` 으로 **강제**해 빈손일 것이 보장된 페이즈를 한 번 더 불렀다.
-   **닫혔다** (2026-09-21 · [ADR-H072](DECISIONS.md) 결정 2, 백로그 25) — 벌칙이 생략
-   판정 **뒤**로 내려가 생략된 런은 그대로 생략되고 돌게 된 런의 effort 만 올라간다.
-   그러니 **트리아지 오판정의 대가는 클론의 다음 런부터 다시 잰다** — 그 전 벌칙은
-   임계값이 아니라 07 의 분기 순서가 만든 것이라, 임계값 판단에 섞으면 오판정이
-   실제보다 비싸 보인다.
-   등급표는 [ADR-H061](DECISIONS.md) 로 1차 개정했다 (작성자 sonnet · 검사자 normal opus ·
-   effort 는 에이전트 프론트매터) — 여전히 실측 0 이다. 05 수리 작성자는 04 수리와 같은 `roles`
-   슬롯이다 ([ADR-H064](DECISIONS.md))
-6. **파이프라인 우회를 어떻게 재는가.** 2차 파일럿은 마지막 Must 머지 뒤 1h25m 동안 PR 일곱
+1. **파이프라인 우회를 어떻게 재는가.** 2차 파일럿은 마지막 Must 머지 뒤 1h25m 동안 PR 일곱
    건을 파이프라인 없이 머지했다 — 1기능 평균 1h42m 인 파이프라인이 작은 수정에 비싸서다. 08 은
-   파이프라인 밖을 셀 수 없다. `fix` 레인은 [ADR-H053](DECISIONS.md) 대로 2026-09-19 에 구현됐다
-   (사람·모델만 고른다 — 실물 런은 아직 0) — 우회가 줄었는지는 클론 리포의 `git log --merges` 대비
-   `_workspace/runs/` 수로 대조하는 것이 지금 유일한 방법이다
-7. **`risk_undeclared` 를 게이트로 올릴 것인가.** 지금은 관측만 한다([ADR-H067](DECISIONS.md)).
-   클론의 첫 5런에서 이것이 난 런에 05·07 이 그 관점의 지적을 냈으면 게이트(02 강제 또는 gap)로
-   올리고, 없었으면 매핑을 좁힌다. 비슷하게 첫 3런의 `routing.dropped` 에 `arch` 가 얼마나 자주
-   오르는지, 그 런에 구조 지적이 새어 나갔는지 본다 — `test` 를 앞세운 대가가 구조 리뷰 누락이고,
-   새면 상한을 4→5 로 올린다 ([ADR-H062](DECISIONS.md)).
-   **클론 4런의 답**: `risk_undeclared` 는 **2런**에서 났고 둘 다
-   지목된 `data` 가 실제 지적을 냈다(minor 2 · major 1) — 신호는 있으나 **5런 기준 미달이라
-   게이트로 올리지 않는다.** `arch` 는 **3/4런에서 dropped**, 돈 1런의 수확은 **minor 4 · major 0**
-   이었다 — **상한을 4→5 로 올릴 근거는 이 표본에 없다.** 구조 지적이 새어 나간 증거가
-   없기 때문이다. [ADR-H062](DECISIONS.md) 는 그대로 둔다
+   파이프라인 밖을 셀 수 없다. `fix` 레인은 [ADR-H053](DECISIONS.md) 대로 있다(실물 런은 아직 0)
+   — 우회가 줄었는지는 클론 리포의 `git log --merges` 대비 `_workspace/runs/` 수로 대조하는 것이
+   지금 유일한 방법이다. 덜어낸 뒤 1런 wall 이 예측 1(≤ 40분)대로 내려오면 우회의 이유 하나가 준다
 
 ---
 
@@ -285,5 +194,5 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
   승격하고, 실측 없는 상수를 상속하지 않는다**
 - 런별 실측은 [PILOT-LOG.md](PILOT-LOG.md) 에 남긴다. **추정치를 적지 않는다 —
   재보지 않은 것은 「미측정」으로 남긴다**
-- 8페이즈의 정본은 [pipeline/team-spec.md](pipeline/team-spec.md) 다. 계약을 바꾸면
-  거기를 **먼저** 고친다
+- 8페이즈의 정본은 `harness/phases/*.md` 와 README 의 표다. 동작을 바꾸면
+  페이즈 파일을 **먼저** 고친다 ([ADR-H075](DECISIONS.md))

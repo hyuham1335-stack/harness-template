@@ -7,11 +7,11 @@
 모델이 읽는 것은 봉투의 `render` 와 `next_command` 둘뿐이고, 다른 필드로
 판단하기 시작하면 이 계약이 깨진다.
 
-이 파일이 `scripts/pipeline/` 을 패키지로 만들지 않는 이유: 정본(team-spec)이
+이 파일이 `scripts/pipeline/` 을 패키지로 만들지 않는 이유: 페이즈 파일과 README 가
 `next_command` 를 `python scripts/pipeline/cli.py …` 로 문자 그대로 적어 두었다.
 봉투가 내는 명령 전문이 스펙이므로 직접 스크립트 실행이 계약이다.
 
-종료 코드는 team-spec 2.3 을 따른다:
+종료 코드는 README 의 종료 코드표를 따른다:
     0 성공 · 1 내부 오류 · 2 사용법/미해결 플레이스홀더/doctor 미통과
     3 선행조건 미충족 · 4 기계 판정 실패(예산 남음) · 5 예산 소진
     6 advance 거부(지문 stale) · 7 반복 한계·stuck · 8 제출물 위반
@@ -37,8 +37,8 @@ import verdict  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent.parent
 PHASES_REL = "harness/phases"
 
-# 프론트매터 어휘. 늘리려면 여기와 team-spec 을 함께 고친다.
-REQUIRES_KINDS = ("file", "state", "clean_ownership", "adapter_stage")
+# 프론트매터 어휘. 늘리려면 여기와 페이즈 파일을 함께 고친다.
+REQUIRES_KINDS = ("file", "state", "adapter_stage")
 PRODUCES_KINDS = ("json", "markdown")
 # `produces[]` 의 키 집합도 닫는다 — `FRONT_KEYS` 가 최상위에 하는 일과 대칭이다.
 # 한때 여기 `schema` 가 열 곳에 있었는데 읽는 코드도 그 이름의 아티팩트도
@@ -64,7 +64,7 @@ LINT_SLUG = "s" * 40
 # 예고하는 것이 M36 이 이름한 결함 그 자체다.
 LOOP_ON_EXCEED = ("escalate",)
 
-# 종료 코드의 어휘. 정본은 team-spec §2.3 의 표이고 여기는 그것을 코드로
+# 종료 코드의 어휘. 정본은 README 의 종료 코드표이고 여기는 그것을 코드로
 # 내린 것이다 — 새 값을 여기서 만들지 않는다.
 EXIT_CODES = tuple(range(12))
 
@@ -106,23 +106,9 @@ SUBMIT_CHECKS = {
         "exit": 8, "impl": ("cli:_record_01_review",),
         "why": "메인이 리뷰어의 지적을 기각하려면 findings 안의 id · 사유 · 리포에 실재하는 "
                "경로를 근거로 대야 한다 — 기록 없는 기각은 지적의 증발이다"},
-    "dispatched_roles": {
-        "exit": 8, "impl": ("cli:_dispatch_problem",),
-        "why": "계약의 절이 부르는 역할이 전부 디스패치됐는가"},
-    "rules_read_sha": {
-        "exit": 8, "impl": ("cli:_check_rules_read",),
-        "why": "워커가 규칙 파일을 열었다는 증명. 해시 일치는 \"읽었다\" 가 아니지만 "
-               "\"열어 보지도 않았다\" 는 가른다 (ADR-H055)"},
-    "clean_ownership": {
-        "exit": 8, "impl": ("attribution:clean_ownership",),
-        "why": "역할이 남의 경로를 건드리지 않았는가 · 고아 변경이 없는가"},
     "tests_required": {
         "exit": 8, "impl": ("cli:_tests_required",),
-        "why": "계약의 유닛·인가 항목에 대응하는 테스트가 있는가"},
-    "journeys_runnable": {
-        "exit": 8, "impl": ("contract:journey_problems",),
-        "why": "여정의 단계가 진입점 절의 `METHOD /path` 로 이어지는가 — 러너 없는 "
-               "여정을 스펙까지 쓴 뒤에 거부하면 그 스펙이 조용히 PR 에 실린다"},
+        "why": "계약의 유닛·진입점·오류 어휘에 대응하는 테스트가 있는가"},
     "pr_number_is_int": {
         "exit": 8, "impl": ("cli:_record_06",),
         "why": "PR 번호가 정수인가 — 문자열 번호는 뒤에서 조용히 안 맞는다"},
@@ -490,36 +476,10 @@ def _req_adapter_stage(root, req, ctx, state):
     return _bad("adapter_stage", msg)
 
 
-def _req_clean_ownership(root, req, ctx, state):
-    import attribution
-    verdict = attribution.clean_ownership(root, _config_of(ctx), _claims_of(root, req, ctx))
-    if verdict["ok"]:
-        return _ok("clean_ownership")
-    return dict(_bad("clean_ownership", verdict["message"]), detail=verdict)
-
-
-def _config_of(ctx):
-    return ctx["config"]
-
-
-def _claims_of(root, req, ctx):
-    path = req.get("claims")
-    if not path:
-        return None
-    p = Path(root) / resolve(path, ctx)
-    if not p.exists():
-        return None
-    try:
-        return harness._read_json(p)
-    except (OSError, ValueError):
-        return None
-
-
 _REQUIRE_HANDLERS = {
     "file": _req_file,
     "state": _req_state,
     "adapter_stage": _req_adapter_stage,
-    "clean_ownership": _req_clean_ownership,
 }
 
 
@@ -568,8 +528,8 @@ def _pipeline_checks(root):
     """계약 계층이 보지 않는 것 셋. 전부 /feature 진입 **전에** 값싸게 잡힌다."""
     out = []
 
-    # ① 작업 공간이 무시되는가. 아니면 03 의 clean_ownership 이 계약 파일을
-    #    orphan 으로 잡아 exit 8 로 죽는다.
+    # ① 작업 공간이 무시되는가. 아니면 런 폴더·계약 파일이 변경 집합과 지문에
+    #    섞여 05 라우팅과 06 지문 대조가 어긋난다.
     r = harness._git(root, "check-ignore", "-q", "%s/probe" % st.WORKSPACE_REL)
     if r is None:
         out.append({"name": "작업 공간 무시", "status": "SKIP",
@@ -578,8 +538,8 @@ def _pipeline_checks(root):
         out.append({"name": "작업 공간 무시", "status": "PASS"})
     else:
         out.append({"name": "작업 공간 무시", "status": "FAIL",
-                    "message": "%s/ 가 VCS 무시 목록에 없다. 계약 파일이 추적되는 "
-                               "orphan 이 되어 03 이 exit 8 로 죽는다."
+                    "message": "%s/ 가 VCS 무시 목록에 없다. 런 폴더와 계약 파일이 "
+                               "변경 집합·지문에 섞여 05 라우팅과 06 지문 대조가 어긋난다."
                                % st.WORKSPACE_REL})
 
     # ② 역할 에이전트 정의. 계약 계층에서는 경고지만 여기서는 차단이다 —
@@ -954,7 +914,7 @@ def _lint_submit_checks(name, front, declared, add):
         declared.add(cid)
         if got not in EXIT_CODES:
             add(name, "submit_check_exit", "FAIL",
-                "%s 의 on_fail 이 종료 코드표 밖이다: %r (team-spec §2.3)"
+                "%s 의 on_fail 이 종료 코드표 밖이다: %r (README 종료 코드표)"
                 % (cid, got))
         elif got != spec["exit"]:
             add(name, "submit_check_exit", "FAIL",
@@ -1196,8 +1156,7 @@ def run_next(root, run_id=None):
         return st.envelope(
             "next", False, 3, s, {"requires_report": checks},
             "## %s 진입 거부\n\n선행 조건이 채워지지 않았다.\n\n%s%s"
-            % (pid, "\n".join("- %s" % c["message"] for c in failed),
-               _journey_hint(root, s) if pid == "03-implement" else ""),
+            % (pid, "\n".join("- %s" % c["message"] for c in failed), ""),
             None)
 
     st.set_phase_status(s, pid, "running")
@@ -1222,15 +1181,9 @@ def run_next(root, run_id=None):
                 "커밋된 변경:\n%s"
                 % (len(files), "\n".join("- `%s`" % f for f in files[:20])),
                 "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
-    if pid == "03-implement":
-        refused = _contract_precheck_refuse(root, paths, s, ctx, "next")
-        if refused is not None:
-            return refused
-        _store_dispatch(root, ctx, s, phase["front"])
     # **지시를 낸 자리에서 센다** (M26). `next` 는 같은 페이즈에서 여러 번
     # 불릴 수 있으므로 키로 멱등을 만든다.
-    _t, _m, exhausted = st.count_instructions(
-        s, pid, _instruction_keys(s, pid, ctx, phase["front"]))
+    st.count_instructions(s, pid, _instruction_keys(s, pid, ctx, phase["front"]))
     st.save(paths, s)
 
     render, next_cmd = render_packet(root, phase, ctx, s, checks)
@@ -1241,7 +1194,7 @@ def run_next(root, run_id=None):
                        # 런 전체의 사전 검사는 **첫 페이즈**에서 한 번.
                        "prescan": _prescan(root, loaded, ctx, s) if pid == "01-plan" else []},
                       render, next_cmd)
-    return _budget_stop(paths, env) if exhausted else env
+    return env
 
 
 def _note_applied(s, tag):
@@ -1273,17 +1226,17 @@ def _docs_lane_source_check(root, paths, s, ctx, where, source_changed=None,
                             cmd="record"):
     """docs 레인을 선언했는데 소스가 바뀌었는가. 반환: miss 가 났으면 True.
 
-    docs 레인은 계약이 없어 03(claims 제출)과 05(라우팅) 두 자리가 따로 묻는다.
-    술어는 05 의 라우팅과 같은 `review._source_changed` 다.
+    docs 레인은 계약이 없어 03(claims 제출)과 05(리뷰 계획) 두 자리가 따로 묻는다.
+    술어는 05 의 리뷰 계획과 같은 `review._source_changed` 다.
     """
-    import attribution
+    import precheck as pc
     import review as review_mod
 
     prof = s.get("profile") or {}
     if prof.get("name") != "docs":
         return False
     if source_changed is None:
-        changed = attribution._changed_paths(root)
+        changed = pc.changed_files(root, "worktree")
         source_changed = bool(changed) and review_mod._source_changed(
             ctx["config"], changed)
     if not source_changed:
@@ -1324,109 +1277,56 @@ def _roles_for(front, ctx, s):
     return list((ctx["config"].get("roles") or []) if ctx else [])
 
 
-def _dispatched_roles(root, ctx, s, front):
-    """03 이 이 런에 **실제로 부르는** 역할 id 와 걸러진 역할 (ADR-H057).
-
-    `when_contract_section` 이 있는 역할은 계약의 그 절에 항목이 있을 때만 부른다.
-    자진신고가 아니라 계약 파서가 정한다 — 03 의 `requires` 가 계약 파일을
-    요구하므로 패킷을 낼 때 계약은 있고, 03 제출이 같은 계산을 다시 해 대조한다.
-    반환: (ids, [{"id", "heading"}])
-    """
-    import contract as contract_mod
-
-    roles = _roles_for(front, ctx, s)
-    if not any(r.get("when_contract_section") for r in roles):
-        return [r["id"] for r in roles], []
-    parsed = {}
-    full = Path(root) / resolve("${run.contract_file}", ctx)
-    if ((s.get("contract") or {}).get("mode")) != "no_contract" and full.exists():
-        parsed = contract_mod.parse(full.read_text(encoding="utf-8"), ctx["config"])
-    sections = (ctx["config"].get("contract") or {}).get("sections") or {}
-    ids, omitted = [], []
-    for r in roles:
-        key = r.get("when_contract_section")
-        if key and not parsed.get(key):
-            omitted.append({"id": r["id"], "heading": sections.get(key) or key})
-        else:
-            ids.append(r["id"])
-    return ids, omitted
-
-
-def _store_dispatch(root, ctx, s, front):
-    """03 패킷을 내는 두 자리(`next`·전이)가 부른다. 귀속 사다리와 03 제출이 읽는다."""
-    ids, _omitted = _dispatched_roles(root, ctx, s, front)
-    s.setdefault("phases", {}).setdefault("03-implement", {})["dispatched_roles"] = ids
-
-
-def _dispatch_render(root, ctx, s, front):
-    """03 패킷 — 이 런에 부르는 역할과 걸러진 역할. 조건부 역할이 없으면 빈 문자열."""
-    ids, omitted = _dispatched_roles(root, ctx, s, front)
-    if not omitted and not any(r.get("when_contract_section")
-                               for r in _roles_for(front, ctx, s)):
-        return ""
-    lines = ["## 이 런에 부르는 역할", "",
-             "계약이 정한다 — 이 목록 전부를 한 메시지에서 부르고, `03_claims.json` 의 "
-             "역할도 정확히 이 목록이어야 한다.", "",
-             "- " + " · ".join("`%s`" % i for i in ids)]
-    lines += ["- `%s` — 계약에 `%s` 항목이 없다, 미호출" % (o["id"], o["heading"])
-              for o in omitted]
-    return "\n".join(lines)
-
-
 def _plan_05_review(root, paths, s, ctx):
-    """05 진입 시 **누가 리뷰할지를 여기서 확정한다.**
+    """05 진입 시 **누가 리뷰할지를 여기서 확정한다.** 리뷰어는 하나다 (ADR-H075).
 
-    모델이 정하지 않는다. `when` glob 이 정하는 결정론이고, 모델이 정하면 같은
-    diff 가 런마다 다른 리뷰를 받는다.
+    모델이 정하지 않는다. `config.reviewers` 의 하나(`gen`)를 소스 변경이 있으면
+    계획하고(docs 레인은 문서 변경만으로도), 없으면 0명이다 — 0명은 `review05.status`
+    가 `failed` 다. 워킹트리에 소스 변경이 없는데 커밋에는 있으면 라우팅 실패가
+    아니라 절차 오류라 exit 3 으로 되돌린다.
     """
     import precheck as pc
     import review as review_mod
 
     # 04 수리 중 계약 델타가 적용됐을 수 있다 — 해시와 버려진 줄을 다시 적는다.
     noted = _note_contract(root, s, ctx)
-    # **라우팅은 `worktree` 다** (M40 · ADR-H028). 예산은 PR 전체를 재지만
-    # 라우팅까지 넓히면 05 가 브랜치의 앞선 커밋(캘리브레이션·문서 등)까지
-    # 리뷰어 매칭에 넣는다. 그것은 근거가 따로 필요한 별개 결정이다.
+    # **변경 집합은 `worktree` 다** (M40 · ADR-H028). 예산은 PR 전체를 재지만
+    # 여기까지 넓히면 05 가 브랜치의 앞선 커밋까지 리뷰 대상에 넣는다.
     changed = pc.changed_files(root, "worktree", ctx["config"])
     profile = (s.get("profile") or {}).get("name") or "normal"
-    routed = review_mod.route(ctx["config"], changed, profile)
-    if routed["source_changed"] and profile == "docs":
+    source_changed = review_mod._source_changed(ctx["config"], changed)
+    if source_changed and profile == "docs":
         # docs 선언인데 소스가 바뀌었다. 03 이 못 잡은 경로(예: 04 수리 중
-        # 메인이 소스를 고쳤다)를 라우팅 직전에 한 번 더 묻는다 (ADR-H044).
+        # 메인이 소스를 고쳤다)를 계획 직전에 한 번 더 묻는다 (ADR-H044).
         if _docs_lane_source_check(root, paths, s, ctx, "05-code-review",
                                    source_changed=True, cmd="next"):
             profile = "normal"
-            routed = review_mod.route(ctx["config"], changed, profile)
+    reviewers = [{"code": r["code"], "skill": r["skill"]}
+                 for r in ctx["config"].get("reviewers") or []]
+    # 메인 소유 파일(`harness/**`·`.claude/**`)만 더러운 워킹트리에서 gen 을
+    # 계획하면 「커밋만 있으면 exit 3」 거부 경로가 죽는다 — 소스 변경으로 판정한다.
+    planned = ([r["code"] for r in reviewers]
+               if (source_changed or (profile == "docs" and changed)) else [])
     node = s.setdefault("phases", {}).setdefault("05-code-review", {})
     # **계획된 리뷰어는 줄지 않는다.** `next --phase 05` 는 여러 번 불릴 수
     # 있고 그때마다 변경 집합을 다시 읽는다. 줄어든 집합으로 덮으면 계획이
-    # 조용히 작아진다 — `review05` 가
-    # "런 안에서 좋아지지 않는다" 를 지키는 것과 같은 규율이다.
-    kept = [c for c in (node.get("planned") or [])
-            if c not in [r["code"] for r in routed["reviewers"]]]
-    node["planned"] = [r["code"] for r in routed["reviewers"]] + kept
-    node["routing"] = routed
+    # 조용히 작아진다 — `review05` 가 "런 안에서 좋아지지 않는다" 를 지키는 것과
+    # 같은 규율이다.
+    kept = [c for c in (node.get("planned") or []) if c not in planned]
+    node["planned"] = planned + kept
+    node["reviewers"] = reviewers
     node["contract_dropped"] = noted.get("dropped") or []
-    node["mode"] = review_mod.mode(ctx["config"],
-                                   pc._changed_lines(root, changed))
-    # **리뷰 범위도 레인이 정한다** (ADR-H059). FR-007 의 동시성 결함은 05 가
-    # diff 만 봐서 놓쳤다 — 기존 `transition()` 과의 상호작용은 누구의
-    # 체크리스트에도 없었다. `normal` 은 계약이 참조하는 기존 파일까지 본다.
-    node["depth"] = (((ctx["config"].get("review") or {}).get("depth") or {})
-                     .get(profile) or "diff")
-    # **인라인 상한은 기계가 정한다** (ADR-H042). `review.inline_max` 는
-    # 정의만 있고 아무도 안 읽어 큰 diff 가 리뷰어 수만큼 인라인됐다.
+    # **리뷰 범위는 하나다** (ADR-H059 · ADR-H075). FR-007 의 동시성 결함은 05 가
+    # diff 만 봐서 놓쳤다 — 계약이 참조하는 기존 파일까지 본다.
+    node["depth"] = (ctx["config"].get("review") or {}).get("depth") or "diff+refs"
+    # **인라인 상한은 기계가 정한다** (ADR-H042).
     node["inline"] = review_mod.inline_budget(ctx["config"],
                                               _diff_text(root, changed))
     if not node["planned"]:
         # **커밋만 있고 워킹트리가 깨끗하면 라우팅 실패가 아니라 절차 오류다**
         # (ADR-H046). 파일럿 40dc 가 05 통과 전에 커밋해 여기서 0명이 되고
-        # `review05:failed` 가 append-only 로 박혔다 — 되돌려 4/4 리뷰를
-        # 정상 수행했는데도 gap 은 남았다. 라우팅 scope 는 그대로 worktree 다
-        # (ADR-H028); 다만 `pr` scope 에 변경이 있으면 failed 를 쓰지 않고
-        # 호출자(`run_next`)가 exit 3 을 낸다.
-        # **커밋에만 있는 변경** = pr scope − worktree scope. 워킹트리의 미커밋
-        # 파일(리뷰어 glob 밖이라 라우팅 0 이 된 것)은 여기서 상쇄된다.
+        # `review05:failed` 가 append-only 로 박혔다. `pr` scope 에 변경이 있으면
+        # failed 를 쓰지 않고 호출자(`run_next`)가 exit 3 을 낸다.
         committed = sorted(set(pc.changed_files(root, "pr", ctx["config"]))
                            - set(changed))
         if committed:
@@ -1434,8 +1334,6 @@ def _plan_05_review(root, paths, s, ctx):
             return node
         # **여기서 확정하지 않으면 아무도 확정하지 않는다.** 리뷰어가 0명이면
         # 제출도 0건이고 `_judge_05` 가 아예 안 불린다 — 05 가 조용히 지나간다.
-        # 봉투는 이 사실을 이미 산문으로 말하고 있었고, 그것을 쓰는 코드가
-        # 없다는 것이 G-4 의 절반이었다.
         _write_review05(s, node, planned=[], ok=0, merged=[], slot={})
     node.pop("routing_refused", None)
     # **지시 시점의 지문을 라운드에 남긴다** (ADR-H046). `record` 가 이것과
@@ -1527,7 +1425,7 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
     # 0명 경로, cli.py 의 `_write_review05(..., slot={})`) `slot` 으로
     # 낙하한다.
     #
-    # 접는 방식이 셋 다 다르다 — 근거는 team-spec §3.5 의 표에 있다.
+    # 접는 방식이 셋 다 다르다 — 근거는 M43·M53 (DECISIONS.md) 이다.
     subs = [v for r in (node.get("rounds") or {}).values() for v in r.values()]
     subs = subs or list(slot.values())
 
@@ -1543,7 +1441,6 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
         "reviewers_planned": max(r["planned"] for r in seen),
         "reviewers_ok": max(r["ok"] for r in seen),
         "reviewers_failed": sorted({c for r in seen for c in r["failed"]}),
-        "mode": node.get("mode") or "fanout",
         # 지시된 범위다 — 리뷰어가 실제로 참조 파일을 읽었는지는 실행기가 못 본다.
         "depth": node.get("depth"),
         "major": sum(1 for f in merged if f.get("severity") in verdict.BLOCKING),
@@ -1578,40 +1475,23 @@ def _contract_drift_lines(node, s):
 def _review_render(s):
     """봉투가 **누가 리뷰하는지와 무엇이 빠졌는지**를 말한다.
 
-    **이 라운드의 계획만 이름 짓는다** (백로그 20). 라우팅은 런 단위로
-    얼어 있고 델타 재리뷰는 그중 한 명이다 — 전원을 나열하면 봉투가 부르는
-    사람과 `_planned_guard` 가 받는 사람이 갈라져 나머지 제출이 exit 8 로
-    튕긴다. 1라운드는 `rounds_planned` 에 키가 없어 전원 폴백이다.
+    **이 라운드의 계획만 이름 짓는다** (백로그 20). 델타 재리뷰는 같은 한 명이다 —
+    봉투가 부르는 사람과 `_planned_guard` 가 받는 사람이 같아야 한다.
     """
     node = (s.get("phases") or {}).get("05-code-review") or {}
-    routed = node.get("routing")
-    if not routed:
+    if "planned" not in node:
         return ""
-    lines = ["## 리뷰어 라우팅 (결정론 — 네가 정하지 않는다)", ""]
+    lines = ["## 리뷰어 (결정론 — 네가 정하지 않는다)", ""]
     lines += _contract_drift_lines(node, s)
-    if not routed["reviewers"]:
-        lines += ["**매칭된 리뷰어가 0개다.** 그러면 `review05.status` 는 "
-                  "`failed` 이고 등급이 `PASS_WITH_GAPS` 로 떨어진다 — "
-                  "아무도 안 부른 것은 통과가 아니라 미수행이다.",
-                  "",
-                  "변경 경로가 `config.reviewers[].when` 어디에도 걸리지 않았다. "
-                  "라우팅 결함일 수 있으니 보고서에 남긴다."]
+    if not node.get("planned"):
+        lines += ["**계획된 리뷰어가 0명이다.** 소스 변경이 없다 — `review05.status` 는 "
+                  "`failed` 이고 등급이 `PASS_WITH_GAPS` 로 떨어진다. 아무도 안 부른 것은 "
+                  "통과가 아니라 미수행이다."]
         return "\n".join(lines)
-    # **이 라운드의 계획으로 좁힌다** (백로그 20). 라우팅에 없는 코드가
-    # 계획에 오르면(`next` 가 여러 번 불려 집합이 줄어든 경우) 좁히지
-    # 않는다 — 스킬 경로를 모르는 이름을 지우는 것보다 전원을 적는 쪽이 덜
-    # 나쁘고, 그 불일치는 `_planned_guard` 가 그 자리에서 말한다.
     round_ = ((s.get("counters") or {}).get("review_repair") or {}).get("used", 0) + 1
     planned = _planned_for_round(node, round_)
-    narrowed = [r for r in routed["reviewers"] if r["code"] in planned]
-    if narrowed and len(narrowed) == len(planned):
-        routed = dict(routed, reviewers=narrowed)
-    lines.append("모드: **%s** (%s)"
-                 % (node.get("mode"),
-                    "단일 에이전트가 체크리스트를 순차 적용한다"
-                    if node.get("mode") == "merged" else
-                    "관점별 병렬 fan-out"))
-    depth = node.get("depth") or "diff"
+    by_code = {r.get("code"): r for r in node.get("reviewers") or []}
+    depth = node.get("depth") or "diff+refs"
     if depth == "diff+refs":
         lines.append("리뷰 범위: **diff+refs** — 계약 `## 유닛` 이 참조하는 **기존** "
                      "파일을 리뷰어 패킷에 경로로 넣어라. diff 밖 상호작용(낙관적 "
@@ -1621,36 +1501,16 @@ def _review_render(s):
         lines.append("리뷰 범위: **%s** — 인라인 diff · 계약 · `05_trace.json` 만. "
                      "그 밖의 파일은 패킷에 넣지 않는다." % depth)
     lines.append("")
-    if node.get("mode") == "merged":
-        # **M37.** 봉투가 `merged` 만 적으면 "제출도 하나" 로 읽힌다. 기계는
-        # 그렇지 않다 — `_planned_guard` 가 라우팅에 없는 제출자를 exit 8 로
-        # 되돌리고, `merged` 는 라우팅된 코드가 아니다. P5 가 제출 1회를
-        # 여기서 잃었다.
-        lines += ["**`merged` 는 실행 방식이지 제출 형태가 아니다.** 한 "
-                  "에이전트가 관점을 순차로 적용하되 **제출은 라우팅된 코드 "
-                  "수만큼 그대로 갈라진다** — `05_review_{code}.json` 과 "
-                  "`.raw.md` 한 쌍씩이다. `record` 는 `--reviewer merged` 를 "
-                  "받지 않는다:", ""]
-        lines += ["```"]
-        lines += ["python scripts/pipeline/cli.py record --phase 05 "
-                  "--file <...>/05_review_%s.json --reviewer %s --round 1"
-                  % (r["code"], r["code"]) for r in routed["reviewers"]]
-        lines += ["```", ""]
-    for r in routed["reviewers"]:
-        lines.append("- `%s` → `.claude/skills/%s/SKILL.md` (매칭 %d개)"
-                     % (r["code"], r["skill"], r.get("matched_count", 0)))
-    if routed.get("dropped"):
-        lines += ["", "**상한으로 빠진 리뷰어**: %s — 조용히 사라진 것이 아니라 "
-                      "예산 때문이고, 보고서에 남는다."
-                  % ", ".join("`%s`" % d["code"] for d in routed["dropped"])]
-    lines += ["", "프롬프트 첫 줄은 **스킬 파일을 읽으라는 지시**다. "
-                  "본문을 복사하지 마라 — 리뷰어 수만큼 고정비가 곱해진다."]
+    for code in planned:
+        skill = (by_code.get(code) or {}).get("skill") or code
+        lines.append("- `%s` → `.claude/skills/%s/SKILL.md`" % (code, skill))
+    lines += ["", "프롬프트 첫 줄은 **스킬 파일을 읽으라는 지시**다. 본문을 복사하지 마라."]
     inline = node.get("inline") or {}
     if inline and not inline.get("inline"):
         lines += ["", "**diff 를 인라인하지 마라 — 경로로 전달한다.** 인라인 "
                       "상한(`review.inline_max`)을 넘었다: %s. 리뷰어 패킷의 "
                       "`## 변경` 절에 diff 대신 변경 파일 경로 목록을 싣고, "
-                      "리뷰어가 그 파일만 읽게 한다. 이 사실은 원장에 남는다."
+                      "리뷰어가 그 파일만 읽게 한다. 이 사실은 상태에 남는다."
                   % " · ".join(inline.get("over") or [])]
     return "\n".join(lines)
 
@@ -1679,7 +1539,6 @@ def render_packet(root, phase, ctx, s, checks=None):
     elif role_tpl:
         parts.append(role_tpl)
         if pid == "03-implement":
-            parts.append(_dispatch_render(root, ctx, s, front))
             parts.append(_tests_required_render(root, ctx, s))
     parts.append(_section(body, "## 제출 형식"))
     parts.append(_section(body, "## 금지"))
@@ -1716,7 +1575,6 @@ def _tests_required_render(root, ctx, s):
     계약 파일을 요구하므로 이 패킷이 렌더될 때 계약은 이미 있다.
     """
     import contract as contract_mod
-    import trace_contract
 
     if ((s.get("contract") or {}).get("mode")) == "no_contract":
         return ""
@@ -1725,104 +1583,18 @@ def _tests_required_render(root, ctx, s):
         return ""
     parsed = contract_mod.parse(full.read_text(encoding="utf-8"), ctx["config"])
     eps, errors = parsed.get("entrypoints") or [], parsed.get("errors") or []
-    journeys = parsed.get("journeys") or []
-    if not eps and not errors and not journeys:
+    if not eps and not errors:
         return ""
-    test_role = trace_contract._test_role(ctx["config"])
-    lines = ["## 게이트가 세는 테스트 — `%s` 역할" % test_role, "",
+    role = ctx["config"].get("primary_role") or "impl"
+    lines = ["## 게이트가 세는 테스트 — `%s` 역할" % role, "",
              "계약에서 기계로 뽑은 목록이다. 03 제출과 05 계약 대조가 **같은 목록**을 "
              "센다 — 빠지면 03 제출이 거부된다.", ""]
     for ep in eps:
-        need = "성공 경로"
-        if ep.get("tags"):
-            need += " + **거부 경로**(%s)" % ", ".join("`%s`" % t for t in ep["tags"])
         lines.append("- 진입점 `%s` — 그 진입점 파일 옆의 같은 이름 테스트, 또는 그 "
-                     "파일을 import 하는 테스트에 %s" % (ep.get("raw"), need))
+                     "파일을 import 하는 테스트" % ep.get("raw"))
     for name in errors:
         lines.append("- 오류 어휘 `%s` — 이 상수를 단언하는 테스트" % name)
-    for j in journeys:
-        lines.append("- 여정 `%s` — `%s` 에 이 슬러그를 최상위 describe 문자열이나 "
-                     "`export const` 이름으로" % (j["symbol"], j["container"]))
     return "\n".join(lines)
-
-
-def _e2e_absent_reason(adapter):
-    """어댑터에 e2e 가 없으면 그 이유 문장, 있으면 None. 거부와 힌트가 같이 쓴다."""
-    state = adapters.stage_state(adapter, "e2e")
-    if state == "present":
-        return None
-    if state == "na":
-        return "이 스택은 e2e 가 해당 없음이라 여정을 적을 수 없다"
-    return "어댑터에 e2e 가 없다 — 도입은 ADR 로 한다"
-
-
-def _journey_hint(root, s):
-    """계약을 쓰라는 봉투에 붙는 한 줄 (ADR-H058 추기). 해당 없으면 빈 문자열.
-
-    메인은 03 패킷보다 **먼저** 계약을 쓴다 — 03 `requires` 가 계약 파일이다.
-    그 시점에 어댑터의 e2e 여부를 봉투가 말하지 않으면 메인이 추론해야 하고,
-    틀리면 `_contract_precheck_03` 에 튕긴다. e2e 가 있으면 말하지 않는다 —
-    절차 문장이 이미 조건을 말하고, 되풀이하면 여정을 과하게 쓰게 부추긴다.
-    """
-    if ((s.get("contract") or {}).get("mode")) == "no_contract":
-        return ""
-    _config, adapter = adapters.load(root)
-    why = _e2e_absent_reason(adapter)
-    if why is None:
-        return ""
-    return "\n\n%s. 계약의 `## 여정` 은 \"없음\" 으로 둔다." % why
-
-
-def _contract_precheck_refuse(root, paths, s, ctx, cmd):
-    """`next`·전이가 03 패킷을 내기 전의 거부 봉투. 통과면 None — 지시를 세기 전이다."""
-    refused = _contract_precheck_03(root, ctx, s)
-    if refused is None:
-        return None
-    st.append_event(paths, "check_fail", cmd=cmd, phase="03-implement",
-                    **refused["data"])
-    st.save(paths, s)
-    return st.envelope(cmd, False, 8, s, refused["data"], refused["render"],
-                       "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
-
-
-def _contract_precheck_03(root, ctx, s):
-    """03 패킷을 내기 **전에** 계약을 본다 (ADR-H058 추기). 문제가 없으면 None.
-
-    러너 없는 여정을 워커가 스펙까지 쓴 뒤에 거부하면 그 스펙이 test 소유·claimed
-    로 `clean_ownership` 을 지나 PR 에 조용히 실린다. 그래서 디스패치 전에 막는다.
-    03 의 `requires` 가 계약 파일을 요구하므로 여기 올 때 계약은 있다.
-    반환: {"render": str, "data": dict}
-    """
-    import contract as contract_mod
-
-    if ((s.get("contract") or {}).get("mode")) == "no_contract":
-        return None
-    full = Path(root) / resolve("${run.contract_file}", ctx)
-    if not full.exists():
-        return None
-    parsed = contract_mod.parse(full.read_text(encoding="utf-8"), ctx["config"])
-    if not parsed.get("journeys") and not parsed.get("journeys_dropped"):
-        return None
-    _config, adapter = adapters.load(root)
-    state = adapters.stage_state(adapter, "e2e")
-    why = _e2e_absent_reason(adapter)
-    if why is not None:
-        files = harness.list_files_with_untracked(root)
-        written = [src for src in (contract_mod._source_for_container(
-                       j.get("container"), files) for j in parsed["journeys"]) if src]
-        tail = ("\n\n이미 쓴 스펙은 지운다 — 러너 없는 스펙은 test 소유라 소유 "
-                "검사를 지나 PR 에 조용히 실린다:\n%s"
-                % "\n".join("- `%s`" % w for w in written)) if written else ""
-        return {"data": {"journeys": "e2e_" + state, "written": written},
-                "render": "## 러너 없는 여정\n\n%s. 계약의 `## 여정` 을 \"없음\" 으로 "
-                          "되돌리고 `next` 를 다시 친다.%s" % (why, tail)}
-    problems = contract_mod.journey_problems(parsed)
-    if problems:
-        return {"data": {"journeys": "invalid", "problems": problems},
-                "render": "## 여정을 디스패치할 수 없다\n\n%s\n\n단계는 「진입점」 절의 "
-                          "`METHOD /path` 를 글자 그대로 `→` 로 잇는다."
-                          % "\n".join("- %s" % p for p in problems)}
-    return None
 
 
 def render_header(config, s):
@@ -2018,44 +1790,17 @@ def _instruction_keys(s, pid, ctx, front=None):
         return ["01:r%d:%s" % (r, code) for code in _reviewers_for(front, s)]
     if pid == "03-implement":
         r = used("repair")
-        # 디스패치는 계약이 정하고 03 패킷을 내는 자리가 저장한다 (ADR-H057).
-        # 기록이 없으면(옛 런) 조건부 역할을 빼고 센다.
-        ids = ((s.get("phases") or {}).get("03-implement") or {}).get("dispatched_roles")
-        if ids is None:
-            ids = [role.get("id") for role in _roles_for(front, ctx, s)
-                   if not role.get("when_contract_section")]
-        return ["03:r%d:%s" % (r, i) for i in ids]
+        return ["03:r%d:%s" % (r, role.get("id")) for role in _roles_for(front, ctx, s)]
     if pid == "05-code-review":
         node = (s.get("phases") or {}).get("05-code-review") or {}
         r = used("review_repair") + 1
         planned = _planned_for_round(node, r)
-        # `merged` 는 한 에이전트가 관점을 순차 적용한다 — 기동 지시도 하나다.
-        # 제출은 M37 대로 리뷰어 수만큼 갈라지지만 그것은 계수가 아니다.
-        if r == 1 and node.get("mode") == "merged" and len(planned) > 1:
-            return ["05:r1:merged"]
         return ["05:r%d:%s" % (r, c) for c in planned]
     if pid == "07-pr-review":
         # `/code-review` 1회. 스킬 호출이라 `record --reviewer` 를 남기지 않는다 —
         # 지시 기준으로 세야 표본에 들어온다 (M26).
         return ["07:code-review"]
     return []
-
-
-def _budget_stop(paths, env):
-    """제출은 살리고 다음 호출만 막는다 — exit 5 는 소진이지 거부가 아니다."""
-    if not env.get("ok") or env.get("exit") not in (0, 11):
-        return env
-    env["ok"] = False
-    env["exit"] = 5
-    env["next_command"] = None
-    env["render"] = (
-        "## 모델 호출 예산이 소진됐다\n\n"
-        "이번 제출은 기록됐다. 다음 호출을 요구하지 않고 여기서 멈춘다.\n"
-        "계속하려면 사람이 `budget.model_calls_max` 를 올리거나 범위를 줄인다.\n\n"
-        "직전 지시문:\n\n%s" % env.get("render", ""))
-    st.append_event(paths, "check_fail", cmd="record", exit=5,
-                    reason="model_call_budget")
-    return env
 
 
 def _normalize_phase(phase, loaded):
@@ -2114,24 +1859,17 @@ def _advance_to_next(root, paths, s, phase_item, ctx, cmd="record"):
                            "`%s` 통과. 다음은 `%s` 이고 아직 선행 조건이 남았다:\n\n%s%s"
                            % (pid, nxt,
                               "\n".join("- %s" % c["message"]
-                                        for c in nxt_checks if not c["ok"]),
-                              _journey_hint(root, s) if nxt == "03-implement" else ""),
+                                        for c in nxt_checks if not c["ok"]), ""),
                            "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
     st.set_phase_status(s, nxt, "running")
     st.append_event(paths, "phase_enter", cmd=cmd, phase=nxt)
-    if nxt == "03-implement":
-        refused = _contract_precheck_refuse(root, paths, s, ctx, cmd)
-        if refused is not None:
-            return refused
-        _store_dispatch(root, ctx, s, nxt_item["front"])
     # **지시를 낸 자리에서 센다.** 전이가 다음 패킷을 바로 내므로 `next` 의
     # 계수를 지나친다 (ADR-H042).
-    _t, _m, exhausted = st.count_instructions(
-        s, nxt, _instruction_keys(s, nxt, ctx, nxt_item["front"]))
+    st.count_instructions(s, nxt, _instruction_keys(s, nxt, ctx, nxt_item["front"]))
     st.save(paths, s)
     render, next_cmd = render_packet(root, nxt_item, ctx, s, nxt_checks)
     env = st.envelope(cmd, True, 0, s, {"next_phase": nxt}, render, next_cmd)
-    return _budget_stop(paths, env) if exhausted else env
+    return env
 
 
 # ------------------------------------------------------- 01 제출 처리
@@ -2379,7 +2117,7 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
     # **지시를 낸 자리에서 센다.** 01 의 루프는 `record → record` 라 `next`
     # 의 계수를 지나쳤고, 다섯 라운드 열 번을 불러도 예산은 2 였다 (ADR-H042).
     next_keys = ["01:r%d:%s" % (used, code) for code in planned]
-    _t, _m, exhausted = st.count_instructions(s, "01-plan", next_keys)
+    st.count_instructions(s, "01-plan", next_keys)
     st.save(paths, s)
     focus = conv.get("focus_round_2") or ""
     env = st.envelope(
@@ -2396,7 +2134,7 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
         "python scripts/pipeline/cli.py record --phase 01 --file <리뷰 json> "
         "--reviewer %s --round %d --run-id %s"
         % (planned[0], used + 1, s["run_id"]))
-    return _budget_stop(paths, env) if exhausted else env
+    return env
 
 
 def _same_command(s, phase):
@@ -2407,7 +2145,6 @@ def _same_command(s, phase):
 # ------------------------------------------------------- 03 제출 처리
 
 def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
-    import attribution
     import contract as contract_mod
 
     if not file.exists():
@@ -2423,8 +2160,8 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
         # **계약 파일이 있는데 유닛이 0 이면 형식 문제다** (ADR-H049). `requires`
         # 는 크기와 절 제목만 본다 — 파일럿 40dc 의 계약이 `## 유닛` 을 `### `
         # 헤딩으로 적어 units=0 으로 게이트를 지났고, 그 결과 계약에 서술된
-        # 심볼이 전부 `out_of_contract` 로 잡히고 scoped 는 `no_selector` 로
-        # 스킵됐다. 여기서 막으면 그 둘이 뒤에서 안 난다.
+        # 심볼이 전부 대조 밖으로 빠지고 scoped 는 `no_selector` 로 스킵됐다.
+        # 여기서 막으면 그 둘이 뒤에서 안 난다.
         st.set_phase_status(s, "03-implement", "failed")
         st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
                         contract_units=0)
@@ -2441,45 +2178,11 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
                "\n".join("- `%s` — %s" % (d.get("raw"), d.get("reason"))
                          for d in zero["dropped"][:10]) or "- (없음 — 불릿이 한 줄도 없다)"),
             _same_command(s, "03"))
-    refused = _contract_precheck_03(root, ctx, s)
-    if refused is not None:
-        # 백스톱이다 — 패킷 뒤에 메인이 계약에 여정을 넣은 경우 (ADR-H058 추기).
-        st.set_phase_status(s, "03-implement", "failed")
-        st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
-                        **refused["data"])
-        st.save(paths, s)
-        return st.envelope("record", False, 8, s, refused["data"], refused["render"],
-                           _same_command(s, "03"))
-    bad_rules = _check_rules_read(claims, _rules_read_expected(root, ctx["config"]))
-    if bad_rules:
-        # **워커의 규칙 읽기를 게이트가 묻는다** (ADR-H055). `CLAUDE.md` 는
-        # 자동 주입되지 않고 「읽을 곳」이 가리키기만 한다 — 열었는지는 아무
-        # 기록도 없었다. 해시 일치는 "읽었다" 의 증명이 아니지만 "열어 보지도
-        # 않고 지켰다고 보고" 는 여기서 막힌다. 봉투에는 **경로와 상태만**
-        # 싣는다 — 해시를 주면 안 열고도 맞춘다.
-        st.set_phase_status(s, "03-implement", "failed")
-        st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
-                        rules_read=[{"role": r, "path": p, "status": why}
-                                    for r, p, why in bad_rules])
-        st.save(paths, s)
-        return st.envelope(
-            "record", False, 8, s,
-            {"rules_read": [{"role": r, "path": p, "status": why}
-                            for r, p, why in bad_rules]},
-            "## 규칙 읽기 증명이 없다 — `rules_read`\n\n각 역할의 제출에 "
-            "`rules_read: [{path, sha256}]` 가 있어야 하고, 아래 파일 전부의 "
-            "**현재** sha256 과 같아야 한다 (ADR-H055). 해시는 워커가 파일을 읽어 "
-            "직접 계산한다 — 봉투는 답을 주지 않는다.\n\n%s\n\n규칙 파일이 런 "
-            "중에 바뀌었으면 바뀐 것을 안 본 제출이다 — 다시 읽고 다시 낸다."
-            % "\n".join("- `%s` · `%s` — %s" % (r, p, why) for r, p, why in bad_rules),
-            _same_command(s, "03"))
     if not _roles_for(phase_item["front"], ctx, s):
         # 역할 0명은 이 페이즈가 적용한 양보다 — miss 검사보다 **먼저** 적어야
         # 빗나갔을 때 gap 이름에 들어간다.
         _note_applied(s, "03:roles=0")
-    # docs 레인인데 역할 소유 경로가 바뀌었다 — 계약이 없어 여기서 묻는다.
-    # 안 잡으면 `clean_ownership` 이 orphan exit 8 을 내고 메인은 역할 없이
-    # 고칠 길이 없다 (ADR-H044).
+    # docs 레인인데 역할 소유 경로가 바뀌었다 — 계약이 없어 여기서 묻는다 (ADR-H044).
     if _docs_lane_source_check(root, paths, s, ctx, "03-implement"):
         st.set_phase_status(s, "03-implement", "running")
         st.save(paths, s)
@@ -2490,33 +2193,8 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
             "소유 경로가 바뀌었다. 프로파일을 `normal` 로 올렸고 `lane_miss` "
             "가 gap 으로 남았다 — 01 리뷰어·역할을 건너뛴 채 여기까지 왔기 "
             "때문이다.\n\n계약 파일을 쓰고 `next` 로 역할 패킷을 받는다. "
-            "이미 고친 소스는 그 역할이 claim 한다." + _journey_hint(root, s),
+            "이미 고친 소스는 그 역할이 claim 한다.",
             "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
-
-    bad = _dispatch_problem(root, ctx, s, phase_item["front"], claims)
-    if bad is not None:
-        st.set_phase_status(s, "03-implement", "failed")
-        st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
-                        **bad["data"])
-        st.save(paths, s)
-        return st.envelope("record", False, 8, s, bad["data"], bad["render"],
-                           bad["next"] or _same_command(s, "03"))
-
-    got = attribution.clean_ownership(root, ctx["config"], claims)
-    if not got["ok"]:
-        st.set_phase_status(s, "03-implement", "failed")
-        st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
-                        findings=len(got["findings"]))
-        st.save(paths, s)
-        return st.envelope(
-            "record", False, 8, s,
-            {"findings": got["findings"], "rollback": got["rollback"]},
-            "## 소유 경계 위반\n\n%s\n\n되돌릴 것:\n%s"
-            % ("\n".join("- `%s` — %s" % (f["path"], f["message"])
-                         for f in got["findings"]),
-               "\n".join("- `%s` → %s" % (r["path"], r["by"])
-                         for r in got["rollback"]) or "- (없음)"),
-            _same_command(s, "03"))
 
     _config, adapter = adapters.load(root)
     if adapters.stage_state(adapter, "compile") == "present":
@@ -2547,52 +2225,14 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
             "테스트」 목록이다. 해당 역할이 테스트를 더하고 같은 명령을 다시 친다. "
             "계약이 틀렸다고 판단되면 `CONTRACT_DEFECT` 로 보고한다.\n\n"
             "**테스트는 있는데 못 찾은 것이면 틀린 지적이다** — 어댑터 "
-            "`attribution.import_aliases`(import 경로 별칭) · `authz_denied_pattern`"
-            "(거부 단언 모양)을 고친다. 테스트에 이름만 적어 통과시키지 마라."
+            "`attribution.import_aliases`(import 경로 별칭)를 고친다. 테스트에 이름만 "
+            "적어 통과시키지 마라."
             % _findings_lines(req["findings"]),
             _same_command(s, "03"))
 
     st.set_phase_status(s, "03-implement", "passed",
                         claims=file.name)
     return _advance_to_next(root, paths, s, phase_item, ctx)
-
-
-def _dispatch_problem(root, ctx, s, front, claims):
-    """03 제출이 **디스패치된 역할 전부의** 것인가 (ADR-H057). 문제가 없으면 None.
-
-    필터를 다시 계산해 패킷을 낼 때 저장한 값과 대조한다 — 다르면 패킷 뒤에
-    메인이 계약의 조건부 절을 고친 것이고, 그 제출은 옛 패킷을 따른 것이다.
-    저장값이 없는 옛 런은 다시 계산한 값을 쓰고 그 사실을 state 에 남긴다.
-    반환: {"data", "render", "next"}
-    """
-    ids, _omitted = _dispatched_roles(root, ctx, s, front)
-    node = s.setdefault("phases", {}).setdefault("03-implement", {})
-    stored = node.get("dispatched_roles")
-    if stored is None:
-        node["dispatched_roles"] = ids
-        node["dispatch_record"] = "recomputed_at_record"
-    elif stored != ids:
-        return {"data": {"dispatch": "contract_changed", "packet": stored,
-                         "contract": ids},
-                "render": "## 계약이 바뀌었다 — `next` 로 패킷을 다시 받아라\n\n패킷은 "
-                          "%s 를 불렀는데 지금 계약으로는 %s 다. 패킷을 낸 뒤 계약의 "
-                          "조건부 절(예: 화면)을 고쳤다 — 그 제출은 옛 패킷을 따른 것이다."
-                          % (" · ".join("`%s`" % i for i in stored) or "(없음)",
-                             " · ".join("`%s`" % i for i in ids) or "(없음)"),
-                "next": "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"]}
-    got = [r.get("role") for r in (claims or {}).get("roles") or []]
-    missing = [i for i in ids if i not in got]
-    extra = [g for g in got if g not in ids]
-    if not missing and not extra:
-        return None
-    lines = ["- `%s` — 디스패치됐는데 claims 에 없다" % i for i in missing]
-    lines += ["- `%s` — 이 런에 부르지 않은 역할인데 claims 에 있다" % g for g in extra]
-    return {"data": {"dispatch": "claims_mismatch", "missing": missing, "extra": extra},
-            "render": "## claims 의 역할이 디스패치 목록과 다르다\n\n%s\n\n`03_claims.json` "
-                      "의 역할은 패킷의 「이 런에 부르는 역할」과 정확히 같아야 한다 "
-                      "(ADR-H057). 빠진 역할을 불러 제출을 합치거나, 부르지 않은 역할의 "
-                      "변경을 되돌린다." % "\n".join(lines),
-            "next": None}
 
 
 def _tests_required(root, s, ctx, adapter):
@@ -2610,70 +2250,6 @@ def _tests_required(root, s, ctx, adapter):
 def _findings_lines(findings):
     return "\n".join("- `%s` → **%s**: %s" % (f["code"], f["target_role"], f["title"])
                      for f in findings)
-
-
-def _rules_excluded(config):
-    """규칙이 **아닌** 파일의 경로 집합 — `config.project.rules_exclude`.
-
-    `rules_read` 집합과 지시문 목적지 판정이 **이것만** 공유한다 (백로그 23).
-    두 판정의 나머지는 의도적으로 다르다 — 하나는 존재로, 하나는 경로로 가른다.
-    """
-    return {Path(p).as_posix()
-            for p in ((config.get("project") or {}).get("rules_exclude") or [])}
-
-
-def _rules_read_expected(root, config):
-    """워커가 읽었어야 할 규칙 파일 → 현재 sha256 (ADR-H055).
-
-    `config.project.instruction_file` 과 `rules_dir` **직속** `*.md` 다. 재귀가
-    아니다 — `docs/harness/**` 는 ADR 2600줄·원장·런 보고서이고 그것을 읽으라는
-    뜻이 아니다. 없는 파일은 항목을 만들지 않는다.
-
-    **하네스 자신이 쓰는 파일은 뺀다** (`rules_exclude`, 백로그 23). `/log` 가
-    `docs/PIPELINE-LOG.md` 를 한 번 쓰면 그 런의 모든 역할이 이미 낸 증명을
-    잃었다 — 규칙이 바뀐 것이 아니라 하네스가 자기 산출물을 쓴 것이다.
-    """
-    root = Path(root)
-    proj = config.get("project") or {}
-    skip = _rules_excluded(config)
-    out = {}
-    inst = proj.get("instruction_file")
-    if inst and Path(inst).as_posix() not in skip:
-        sha = st._sha256_file(root / inst)
-        if sha:
-            out[Path(inst).as_posix()] = sha
-    rules_dir = proj.get("rules_dir")
-    if rules_dir and (root / rules_dir).is_dir():
-        for p in sorted((root / rules_dir).glob("*.md")):
-            rel = p.relative_to(root).as_posix()
-            if rel in skip:
-                continue
-            sha = st._sha256_file(p)
-            if sha:
-                out[rel] = sha
-    return out
-
-
-def _check_rules_read(claims, expected):
-    """[(role, path, 상태)] — 비어 있으면 통과. 역할 0명(docs 레인)은 대상이 없다."""
-    bad = []
-    for role in (claims or {}).get("roles") or []:
-        name = role.get("role") or role.get("agent") or "?"
-        got = role.get("rules_read")
-        if not isinstance(got, list):
-            for p in sorted(expected):
-                bad.append((name, p, "rules_read 없음"))
-            continue
-        seen = {}
-        for item in got:
-            if isinstance(item, dict) and item.get("path"):
-                seen[str(item["path"]).replace("\\", "/")] = item.get("sha256")
-        for p in sorted(expected):
-            if p not in seen:
-                bad.append((name, p, "누락"))
-            elif seen[p] != expected[p]:
-                bad.append((name, p, "불일치 — 지금 파일과 해시가 다르다"))
-    return bad
 
 
 def _contract_units_zero(root, s, ctx):
@@ -2808,8 +2384,7 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
             errors=got["errors"])
 
     slot = rounds.setdefault(str(round_), {})
-    slot[reviewer] = {"mode": payload.get("mode") or "primary",
-                      "keys": got["keys"], "blocking": got["blocking"],
+    slot[reviewer] = {"keys": got["keys"], "blocking": got["blocking"],
                       "closed": got["closed"], "findings": got["findings"],
                       "truncated": got["truncated"],
                       "need_more_context": payload.get("need_more_context") or []}
@@ -2836,18 +2411,6 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
 # 규약 위반 제출을 몇 번까지 되돌려 보내는가. 페이즈 파일의 "재제출 1회 →
 # 2회 실패 시 스킵 + degrade" 를 숫자로 옮긴 것이다.
 REVIEW_SUBMIT_TRIES = 2
-
-
-# 05 수리 상한 초과의 선택지 (백로그 30). **가장 자주 나오는 답이 메뉴에 있어야
-# 한다** — 클론 4런의 에스컬레이션 2런 모두 사람이 「기타」를 골랐고 그 답은 둘 다
-# 「좁게 보강하고 진행」 계열이었다. 분기하는 코드는 없고 사람이 읽는 문자열이다.
-REVIEW_ESCALATION_OPTIONS = (
-    "계약 결함을 먼저 의심한다 — 같은 지적이 반복되면 코드가 아니라 "
-    "계약이 틀렸을 수 있다",
-    "좁게 보강하고 진행한다 — 남은 지적 중 좁은 것만 고치고 나머지는 안고 간다",
-    "이대로 진행한다(미해결 지적을 안고 간다)",
-    "중단한다",
-)
 
 
 def _dispatch_fingerprint_stale(root, ctx, node, round_):
@@ -2942,7 +2505,7 @@ def _record_05_failure_slot(root, paths, s, phase_item, ctx, node, reviewer,
     """실패를 슬롯에 **데이터로** 남기고 대기·판정 흐름을 잇는다."""
     rounds = node.setdefault("rounds", {})
     slot = rounds.setdefault(str(round_), {})
-    slot[reviewer] = {"mode": "primary", "keys": None, "blocking": 0,
+    slot[reviewer] = {"keys": None, "blocking": 0,
                       "closed": [], "findings": [], "status": "failed",
                       "reason": reason, "errors": list(errors or []),
                       "truncated": False,
@@ -2965,7 +2528,7 @@ def _record_05_failure_slot(root, paths, s, phase_item, ctx, node, reviewer,
 
 
 def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
-    """전원이 모였다. 병합 → 원장 → 수리 판정."""
+    """제출이 모였다. 접기 → 영수증 → 수리 판정."""
     import review as review_mod
 
     subs = [dict(v, reviewer=code) for code, v in slot.items()
@@ -2989,32 +2552,18 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
     if blocking:
         front = phase_item["front"]
         max_decl = _loop_max(front)
-        # **재상정 승격은 지급이다** (ADR-H048). 같은 `finding_key` 가 이전
-        # 라운드보다 높은 심각도로 다시 오면 리뷰어가 처음에 낮게 본 것이지
-        # 수리자의 잘못이 아니다 — 그 비용을 수리자의 예산에서 빼지 않는다.
-        # 런당 1회다. 새 키가 major 로 나는 것은 새 지적이라 지급이 아니다.
-        raised = _severity_raised(node.get("rounds") or {}, round_, blocking)
-        if raised and "severity_raised_grant" not in node:
-            st.counter_grant(s, _loop_counter(front), 1, "severity_raised")
-            st.append_event(paths, "counter_grant", cmd="record",
-                            phase="05-code-review", counter=_loop_counter(front),
-                            extra=1, reason="severity_raised")
-            node["severity_raised_grant"] = {"round": round_, "keys": raised}
         used, _max, exceeded = st.counter_inc(s, _loop_counter(front), max_decl,
                                               "review_blocking", paths=paths)
         # **다음 라운드의 델타는 에스컬레이션 여부보다 앞에서 정한다** (백로그 20).
-        # 전에는 이 두 줄이 `if exceeded:` 뒤에 있어 에스컬레이션 경로가 키를
-        # 안 세우고 return 했고, 재개된 라운드가 `_planned_for_round` 의
-        # 폴백(전원)을 받아 **리뷰어 전원이 다시 돌았다.** 사람이 「이대로
-        # 진행한다」를 골라 돌아와도 수리 대상은 같으므로 델타도 같다.
-        delta = _delta_reviewer(blocking, planned, slot)
+        # 리뷰어가 하나라 델타도 그 하나다 — 재개된 라운드가 같은 한 명을 받는다.
+        delta = planned[0] if planned else None
         node.setdefault("rounds_planned", {})[str(round_ + 1)] = [delta]
         if exceeded:
             _loop_on_exceed(front)
             st.escalate(paths, s,
-                        "05 의 Critical/Major %d건이 %d회 안에 해소되지 않았다"
+                        "05 의 Critical/Major %d건이 %d회 안에 해소되지 않았다 — "
+                        "같은 지적이 반복되면 코드가 아니라 계약이 틀렸을 수 있다"
                         % (len(blocking), max_decl),
-                        list(REVIEW_ESCALATION_OPTIONS),
                         phase="05-code-review")
             return _escalation_envelope("record", paths, s)
         # 다음 회차에 델타가 회계해야 할 목록이다. `record` 가 같은 인자로
@@ -3030,76 +2579,20 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             "record", False, 4, s,
             {"blocking": len(blocking), "findings": blocking,
              "review05": s["review05"], "delta_reviewer": delta},
-            _review_repair_render(blocking, used + 1, delta, prev_open,
-                                  raised=raised if node.get(
-                                      "severity_raised_grant", {}).get(
-                                      "round") == round_ else None),
+            _review_repair_render(blocking, used + 1, delta, prev_open),
             "python scripts/pipeline/cli.py gate --phase 04 --stage scoped "
             "--run-id %s" % s["run_id"])
 
     return _advance_to_next(root, paths, s, phase_item, ctx)
 
 
-def _severity_raised(rounds, round_, blocking):
-    """이전 라운드보다 심각도가 오른 blocking 지적의 `finding_key` 목록.
-
-    비교 재료는 `rounds[r][code].keys[] = {key, severity}` 다 — 같은 라운드
-    안의 2인 합치 상승(`review.merge` 의 `severity_raised_from`)은 대상이
-    아니다. 그것은 라운드를 가로지른 재상정이 아니다.
-    """
-    import review as review_mod
-    rank = review_mod.SEVERITY_RANK
-    best = {}
-    for rn, subs in rounds.items():
-        if int(rn) >= round_:
-            continue
-        for sub in subs.values():
-            for k in sub.get("keys") or []:
-                r = rank.get(k.get("severity"), -1)
-                if r > best.get(k["key"], -1):
-                    best[k["key"]] = r
-    out = []
-    for f in blocking:
-        key = verdict.finding_key(f)
-        if key in best and rank.get(f.get("severity"), -1) > best[key]:
-            out.append(key)
-    return out
-
-
-def _delta_reviewer(blocking, planned, slot):
-    """델타 재리뷰를 맡을 **한 명**. 결정론이다 — 모델이 고르지 않는다.
-
-    막은 지적을 가장 많이 낸 리뷰어이고, 동률이면 `planned` 순서다. 모델이
-    고르면 라우팅 결정론(§3.5)이 델타 라운드에서만 무너진다.
-
-    성공한 리뷰어만 후보다 — 실패한 리뷰어를 다시 지목하면 그 라운드가
-    구조적으로 또 실패한다.
-    """
-    alive = [c for c in planned if (slot.get(c) or {}).get("keys") is not None]
-    if not alive:
-        alive = list(planned)
-    scores = {}
-    for f in blocking:
-        for c in f.get("reported_by") or []:
-            if c in alive:
-                scores[c] = scores.get(c, 0) + 1
-    return max(alive, key=lambda c: (scores.get(c, 0), -alive.index(c)))
-
-
-def _review_repair_render(blocking, round_no, delta=None, previous_open=None,
-                          raised=None):
+def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
     lines = ["## 수리가 필요하다 (%d회차)" % round_no, "",
-             "Critical/Major %d건. **Minor 는 고치지 않는다** — 원장에 쌓이고 "
-             "보고서로 간다." % len(blocking), ""]
-    if raised:
-        lines += ["이전 라운드의 지적 %d건이 더 높은 심각도로 재상정됐다 — "
-                  "`review_repair` 를 **1 지급했다** (`severity_raised`, 런당 "
-                  "1회). 리뷰어가 처음에 낮게 본 비용을 수리자의 예산에서 빼지 "
-                  "않는다 (ADR-H048)." % len(raised), ""]
+             "Critical/Major %d건. **Minor 는 고치지 않는다** — 보고서로 간다."
+             % len(blocking), ""]
     if delta:
-        lines += ["수리 뒤 **델타 재리뷰는 `%s` 한 명**이다. 전원을 다시 "
-                  "부르지 않는다 — 그리고 그 한 명이 깨끗해도 앞선 라운드의 "
-                  "`degraded`·`failed` 는 지워지지 않는다." % delta, ""]
+        lines += ["수리 뒤 **델타 재리뷰는 `%s` 한 명**이다 — 그 한 명이 깨끗해도 "
+                  "앞선 라운드의 `degraded`·`failed` 는 지워지지 않는다." % delta, ""]
     # **M38.** 수리 면제와 회계 면제는 다르다. `verdict.check_review` 는
     # 심각도를 가리지 않고 열린 지적 전부를 회계하라 요구하고, 하나라도 빠지면
     # "조용히 증발했다" 로 exit 8 을 낸다. 봉투가 그 의무를 안 적어 P5 가
@@ -3119,12 +2612,8 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None,
                   for f in previous_open]
         lines += [""]
     for f in blocking:
-        raised = (" *(2인 합치로 %s → %s)*"
-                  % (f["severity_raised_from"], f["severity"])
-                  if f.get("severity_raised_from") else "")
-        lines.append("- **%s** → `%s`: %s%s"
-                     % (f.get("severity"), f.get("target_role"),
-                        f.get("title"), raised))
+        lines.append("- **%s** → `%s`: %s"
+                     % (f.get("severity"), f.get("target_role"), f.get("title")))
     contract_defect = [f for f in blocking
                        if f.get("category") == "CONTRACT_DEFECT"]
     if contract_defect:
@@ -3132,7 +2621,7 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None,
                       "에스컬레이션이다 — 계약은 메인 단독 소유다."]
     lines += ["", "제출이 **내용은 그대로이고 회계 필드만** 틀려 exit 8 로 되돌아오면 "
                   "(`resolved_from_previous` · `reraised_from_previous`) 메인이 "
-                  "`local_repair` 로 그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·"
+                  "그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·"
                   "severity 는 여전히 손대지 않는다 (ADR-H052).",
               "", "고친 뒤 `gate --phase 04 --stage scoped` 로 재게이트하고, "
                   "델타 재리뷰 1명을 돌린 다음 다시 제출한다.",
@@ -3292,19 +2781,19 @@ _RECORD_HANDLERS = {"01-plan": _record_01,
 # ------------------------------------------------------------------------ gate
 
 def cmd_gate(root, args):
-    return st.emit(run_gate_cmd(root, args.phase, args.stage, args.replay,
-                                args.run_id))
+    return st.emit(run_gate_cmd(root, args.phase, args.stage, args.run_id))
 
 
-def run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
+def run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
+    """`runner` 는 테스트의 스텁 주입 통로다 — CLI 는 주지 않는다."""
     try:
-        return _run_gate_cmd(root, phase, only_stage, replay, run_id)
+        return _run_gate_cmd(root, phase, only_stage, run_id, runner)
     except ConfigDeclarationError as exc:
         _paths, s = st.load(Path(root), run_id)
         return _declaration_envelope("gate", s, exc)
 
 
-def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
+def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
     import gate as gate_mod
 
     root = Path(root)
@@ -3339,7 +2828,7 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
     st.append_event(paths, "stage_start", cmd="gate", phase=pid, round=round_no)
     report = gate_mod.run_gate(root, config, adapter, s,
                                phase_item["front"], paths.run_dir,
-                               only_stage=only_stage, replay=replay,
+                               only_stage=only_stage, runner=runner,
                                log_path=log_path)
     report["at"] = st.stamp()
     report["run_id"] = s["run_id"]
@@ -3385,25 +2874,6 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
     log_text = ""
     if log_path.exists():
         log_text = log_path.read_text(encoding="utf-8", errors="replace")
-    dispatch = gate_mod.attribute(
-        root, config, adapter, report, s, replay=replay, log_text=log_text,
-        stuck_after=((phase_item["front"].get("loop") or {})
-                     .get("stuck_after_identical") or 2))
-
-    # 어느 귀속 규칙이 **판정을 냈는가**를 판정이 일어난 자리에서 적는다
-    # (ADR-H069). 나중에 런들을 긁지 않는 이유: `--replay` 가 이 경로를 그대로
-    # 지나므로 보관된 실물 출력을 되먹이면 관측이 공짜로 따라온다. 두 분기가
-    # 모두 지나는 유일한 자리라 여기서 한 번만 적는다.
-    import attribution
-    _failures = (dispatch or {}).get("failures") or []
-    _node = s.setdefault("phases", {}).setdefault(pid, {})
-    _node["attribution_rules"] = sorted(
-        set(_node.get("attribution_rules") or [])
-        | attribution.rules_fired(adapter, _failures))
-    # 실패는 났는데 항목을 하나도 못 읽었다 — 규칙이 실물 출력에 안 맞는다는
-    # 뜻이고, 지금까지 이 사실에는 아무 표시가 없었다. 비강등이 아니다.
-    if any(f.get("kind") == "stage" for f in _failures):
-        st.demote(s, st.GRADES[1], "attribution_unparsed")
 
     if report.get("tests"):
         s["tests"] = report["tests"]
@@ -3411,55 +2881,36 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
         if gap not in s.setdefault("gaps", []):
             s["gaps"].append(gap)
 
-    if dispatch is None:
-        shrank = (report.get("tests") or {}).get("status") == "shrank"
-        if shrank:
-            return _gate_fail(root, paths, s, phase_item, ctx, report,
-                              {"owner": None, "stuck": False,
-                               "reason": "테스트 수가 하한 아래로 떨어졌다"},
-                              round_no)
+    if report.get("failed") is None:
+        if (report.get("tests") or {}).get("status") == "shrank":
+            return _gate_fail(root, paths, s, phase_item, ctx, adapter, report,
+                              round_no, log_text, reason="테스트 수가 하한 아래로 떨어졌다")
         st.demote(s, report.get("grade") or st.GRADES[1])
         s["fingerprint"] = st.fingerprint(root, config)
-        # 실패가 없어도 회차를 남긴다 — "귀속을 안 했다"와 "귀속할 실패가
-        # 없었다"는 다른 사실이고, 빈 파일이 후자를 말한다.
-        _write_attribution(paths, report,
-                           {"by_owner": {}, "failures": [], "deferred": [],
-                            "owner": None, "stuck": False}, round_no)
         st.append_event(paths, "stage_done", cmd="gate", phase=pid,
                         grade=s["grade"])
         st.save(paths, s)
         return _advance_to_next(root, paths, s, phase_item, ctx, cmd="gate")
 
-    return _gate_fail(root, paths, s, phase_item, ctx, report, dispatch, round_no)
+    return _gate_fail(root, paths, s, phase_item, ctx, adapter, report, round_no,
+                      log_text)
 
 
-def _gate_fail(root, paths, s, phase_item, ctx, report, dispatch, round_no):
-    import gate as gate_mod   # noqa: F401  — 대칭을 위해 남긴다
+def _gate_fail(root, paths, s, phase_item, ctx, adapter, report, round_no, log_text,
+               reason=None):
+    """실패를 **작성자에게 그대로** 되돌린다 — 귀속하지 않는다 (ADR-H075).
 
-    _write_attribution(paths, report, dispatch, round_no)
-    st.append_event(paths, "attribution", cmd="gate", phase="04-gate",
-                    owner=dispatch.get("owner"), stuck=dispatch.get("stuck"))
-
-    if dispatch.get("owner") == "infra":
-        # **카운터를 소모하지 않는다.** 외부 의존 미기동이 구현 역할의 실패로
+    인프라 매칭이면 카운터를 소모하지 않고 에스컬레이션한다. 아니면 `repair` 를
+    하나 쓰고, 상한이면 에스컬레이션, 아니면 실패 스테이지의 출력 브리프를 봉투에
+    싣는다. 작성자가 하나라 누구의 실패인지 물을 것이 없다.
+    """
+    failed = report.get("failed") or {}
+    text = log_text or failed.get("output") or ""
+    infra = adapters.infra_match(adapter, failed.get("exit", 1), text) if failed else None
+    if infra:
+        # **카운터를 소모하지 않는다.** 외부 의존 미기동이 작성자의 실패로
         # 오분류되면 예산을 태운다.
-        st.escalate(paths, s,
-                    "외부 의존 실패로 보인다 (패턴: %s)" % dispatch.get("infra"),
-                    ["의존을 띄우고 `gate` 를 다시 돌린다",
-                     "이 스테이지를 건너뛰고 진행한다(등급에 남는다)", "중단한다"],
-                    phase="04-gate")
-        return _escalation_envelope("gate", paths, s)
-
-    if dispatch.get("stuck"):
-        # **소유자를 이름으로 적는다.** "같은 실패가 두 번" 만으로는 누구에게
-        # 두 번 보냈는지가 안 보이고, 그것이 다음 판단(계약을 고칠 것인가
-        # 범위를 줄일 것인가)에 필요한 사실이다.
-        st.escalate(paths, s,
-                    "같은 실패를 같은 소유자(%s)에게 되풀이해 보냈다 — "
-                    "예산이 남아도 멈춘다 (%s)"
-                    % (dispatch.get("owner") or "?",
-                       ", ".join(dispatch.get("pairs") or [])[:200]),
-                    ["계약을 고쳐 다시 돌린다", "범위를 줄인다", "중단한다"],
+        st.escalate(paths, s, "외부 의존 실패로 보인다 (패턴: %s)" % infra,
                     phase="04-gate")
         return _escalation_envelope("gate", paths, s)
 
@@ -3467,91 +2918,52 @@ def _gate_fail(root, paths, s, phase_item, ctx, report, dispatch, round_no):
                                           _loop_counter(phase_item["front"]),
                                           _loop_max(phase_item["front"]),
                                           "gate_failure", paths=paths)
-    # **쌍을 쌓는다** — `owner|sig`. 시그니처만 쌓으면 flip 이 배정한 다음 역할이
-    # 지시를 받기 전에 정체 감지가 먼저 멈춘다 (M33).
-    s.setdefault("sig_chain", []).extend(dispatch.get("pairs") or [])
     st.set_phase_status(s, "04-gate", "failed")
     st.save(paths, s)
 
     if exceeded:
         _loop_on_exceed(phase_item["front"])
-        st.escalate(paths, s, "수리 예산 %d회를 소진했다" % max_,
-                    ["계약을 고쳐 다시 돌린다", "범위를 줄인다", "중단한다"],
-                    phase="04-gate")
+        st.escalate(paths, s, "수리 예산 %d회를 소진했다" % max_, phase="04-gate")
         return st.envelope("gate", False, 5, s, {"report": report["gaps"]},
                            "## 예산 소진 — 에스컬레이션\n\n`ESCALATION.md` 를 본다.",
                            "python scripts/pipeline/cli.py resume --ack "
                            "--answer-file <경로>")
 
-    brief = _dispatch_brief(dispatch, paths, round_no)
-    # 수리 배정도 기동 지시다. 제출 기준에서는 03 의 재제출로만 잡혀
-    # **어느 페이즈가 태웠는지가 04 에서 03 으로 옮겨 보였다.**
-    repair_keys = ["04:r%d:%s" % (used, dispatch.get("owner"))]
-    st.count_instructions(s, "04-gate", repair_keys)
-    st.append_event(paths, "dispatch", cmd="gate", phase="04-gate",
-                    owner=dispatch.get("owner"))
+    owner = ctx["config"].get("primary_role") or "impl"
+    brief = _gate_brief(report, round_no, owner, text, reason)
+    # 수리 배정도 기동 지시다 (ADR-H064).
+    st.count_instructions(s, "04-gate", ["04:r%d:%s" % (used, owner)])
+    st.append_event(paths, "dispatch", cmd="gate", phase="04-gate", owner=owner)
+    st.save(paths, s)
     return st.envelope("gate", False, 4, s,
                        {"repair_dispatch": brief, "gaps": report.get("gaps")},
-                       _repair_render(dispatch, brief),
+                       _repair_render(brief),
                        "python scripts/pipeline/cli.py gate --phase 04 --run-id %s"
                        % s["run_id"])
 
 
-def _write_attribution(paths, report, dispatch, round_no):
-    path = paths.run_dir / "attribution.json"
-    data = {"schema": 1, "run_id": report.get("run_id"), "rounds": []}
-    if path.exists():
-        try:
-            data = harness._read_json(path)
-        except (OSError, ValueError):
-            pass
-    data.setdefault("rounds", []).append({
-        "round": round_no,
-        "stage": (report.get("failed") or {}).get("id"),
-        "stage_exit": (report.get("failed") or {}).get("exit"),
-        "failures": dispatch.get("failures") or [],
-        "by_owner": {k: [f["id"] for f in v]
-                     for k, v in (dispatch.get("by_owner") or {}).items()},
-        "infra": dispatch.get("owner") == "infra",
-        "deferred": dispatch.get("deferred") or [],
-        "rules_inactive": report.get("rules_inactive") or [],
-    })
-    _write_json(path, data)
-    _write_json(paths.gates / ("gr-%d.dispatch.json" % round_no), dispatch)
-
-
-def _dispatch_brief(dispatch, paths, round_no):
-    """봉투에는 **실패당 60줄 상한**의 브리프만. 전문은 파일에 있다."""
-    owner = dispatch.get("owner")
-    items = (dispatch.get("by_owner") or {}).get(owner) or []
-    brief = []
-    for f in items:
-        lines = (f.get("message") or "").splitlines()[:60]
-        brief.append({"id": f.get("id"), "unit": f.get("unit"),
-                      "file": f.get("file"), "frames": f.get("frames"),
-                      "lines": lines})
+def _gate_brief(report, round_no, owner, text, reason=None):
+    """봉투에는 **출력 끝 60줄 · 4,000자**의 브리프만. 전문은 로그 파일에 있다."""
+    failed = report.get("failed") or {}
+    tail = [ln for ln in (text or "").splitlines() if ln.strip()][-60:]
     return {"round": round_no, "owner": owner,
-            "reason": (items[0].get("owner_reason") if items else None),
-            "failure_count": len(items),
-            "file": "gates/gr-%d.dispatch.json" % round_no,
-            "brief": brief, "deferred": dispatch.get("deferred") or []}
+            "stage": failed.get("id"), "exit": failed.get("exit"),
+            "reason": reason, "output": "\n".join(tail)[-4000:],
+            "log": report.get("log")}
 
 
-def _repair_render(dispatch, brief):
-    lines = ["## 04 게이트 실패 — 수리 지시", "",
-             "**`%s` 에게만** 보낸다. 배정 근거: %s"
-             % (brief["owner"], brief.get("reason") or "-"), ""]
-    for f in brief["brief"]:
-        lines.append("- `%s` %s" % (f["id"], f.get("unit") or ""))
-        if f.get("file"):
-            lines.append("  - 파일: `%s`" % f["file"])
-        for l in (f.get("lines") or [])[:6]:
-            lines.append("  - %s" % l)
-    if brief.get("deferred"):
-        lines += ["", "미룬 것 (동시 배정 금지):"]
-        lines += ["- %s (%d건) — %s" % (d["owner"], d["failure_count"], d["reason"])
-                  for d in brief["deferred"]]
-    lines += ["", "**실패를 다시 분류하지 마라.** 배정은 끝났다.",
+def _repair_render(brief):
+    head = ("스테이지 `%s` 가 exit %s 로 실패했다" % (brief["stage"], brief["exit"])
+            if brief.get("stage") else (brief.get("reason") or "게이트 실패"))
+    lines = ["## 04 게이트 실패 — 수리 지시 (%d회차)" % brief["round"], "",
+             "**`%s` 에게** 되돌린다. %s." % (brief["owner"], head), ""]
+    if brief.get("reason") and brief.get("stage"):
+        lines += [brief["reason"], ""]
+    if brief.get("output"):
+        lines += ["```", brief["output"], "```", ""]
+    lines += ["전문은 `%s` 에 있다." % (brief.get("log") or "gates/"), "",
+              "**출력을 요약해 없애지 마라** — 작성자가 실패 출력을 그대로 받는다. "
+              "계약이 틀렸다고 판단되면 고치지 말고 `CONTRACT_DEFECT` 로 보고한다.",
               "고친 뒤 `gate` 를 다시 돌린다."]
     return "\n".join(lines)
 
@@ -3575,11 +2987,10 @@ def _write_json(path, data):
 
 def cmd_precheck(root, args):
     return st.emit(run_precheck(root, args.scope, args.run_id,
-                               getattr(args, "phase", "05"),
-                               ack_policy=getattr(args, "ack_policy", False)))
+                               getattr(args, "phase", "05")))
 
 
-def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
+def run_precheck(root, scope="pr", run_id=None, phase="05"):
     """05 진입과 06 에서 각 1회, 그리고 **재개마다** 다시 돈다 (§E13).
 
     런 없이도 돈다 — 무료 검사의 요점이 "시작하기 전에 안다"이므로 런을
@@ -3596,9 +3007,6 @@ def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
     got = pc.run(root, scope=scope)
 
     if s is not None:
-        # **사람이 이미 고른 것을 다시 묻지 않는다** (백로그 26). 기록과 판정이
-        # 아래 모든 것(슬롯·gap·이벤트·봉투)보다 앞이다 — exit 를 바꾸기 때문이다.
-        _apply_policy_override(paths, s, got, pid, ack_policy)
         # 명세의 state 스키마가 `precheck.at_05` 와 `at_06` 을 나란히 둔다 —
         # 같은 검사가 두 시점에 돌고 **그 사이에 값이 변하기 때문**이다 (§E13).
         # 한 칸에 덮어쓰면 06 이 05 의 예산을 지우고, 무엇이 언제 참이었는지
@@ -3621,7 +3029,7 @@ def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
         st.append_event(paths, "check_fail" if got["exit"] else "stage_done",
                         cmd="precheck", phase=pid, exit=got["exit"])
         if got["exit"] == 9:
-            # 예산·브랜치·divergence 는 사람이 판단한다 — 그 대기가 여기서
+            # 브랜치·divergence 는 사람이 판단한다 — 그 대기가 여기서
             # 시작된다 (ADR-H052). `check_fail` 은 "무엇이" 이고 이것은 "언제부터" 다.
             st.append_event(paths, "waiting_human", cmd="precheck", phase=pid,
                             reason="precheck_policy")
@@ -3644,38 +3052,6 @@ def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
 
 _PRECHECK_PHASE = {"05": "05-code-review", "06": "06-pr"}
 
-# 사람이 정책 exit 9 를 「그대로 간다」로 정한 사실. **면제는 통과가 아니다** —
-# 비강등 목록에 넣지 않아 등급이 그 사실을 치른다 (ADR-H027 · ADR-H071).
-PRECHECK_OVERRIDE_GAP = "precheck_policy_override"
-
-
-def _apply_policy_override(paths, s, got, pid, ack_policy):
-    """사람이 못박은 정책 판단을 적고, 덮이는 실패는 다시 묻지 않는다 (백로그 26).
-
-    exit 9 는 상태를 잠그지도 카운터를 쓰지도 않아 **사람이 「그대로 간다」를 고른
-    사실이 어디에도 남지 않았다.** 그래서 §E13 의 재개 재검사가 06 에서 같은 것을
-    다시 물었다 — 클론 4런에서 사람 대기의 30% 가 그것이었다.
-
-    **검사는 그대로 돈다.** 바뀌는 것은 「같은 사유·같은 값이면 묻지 않는다」뿐이고,
-    넘어간 사실은 gap 으로 남는다.
-    """
-    import precheck as pc
-
-    node = s.setdefault("precheck", {})
-    fresh = got.get("policy_fingerprint")
-    if ack_policy and got["exit"] == 9 and fresh:
-        node["policy_override"] = {"fingerprint": fresh, "phase": pid,
-                                   "at": st.stamp()}
-        st.append_event(paths, "policy_acked", cmd="precheck", phase=pid,
-                        reasons=fresh["reasons"])
-    saved = (node.get("policy_override") or {}).get("fingerprint")
-    if got["exit"] != 9 or not pc.override_covers(saved, fresh):
-        return
-    got["exit"] = 0
-    got["classification"] = None
-    got["policy_override"] = dict(node["policy_override"])
-    got.setdefault("gaps", []).append(PRECHECK_OVERRIDE_GAP)
-
 
 def _base_behind(got):
     """divergence 검사가 센 behind 수. 검사가 안 돌았으면 0 이 아니라 None 이다."""
@@ -3694,20 +3070,11 @@ def _precheck_next(pid, s):
 
 def _precheck_render(got):
     if got["exit"] == 0:
-        lines = ["`precheck` 통과. 파일 %d · 줄 %d 로 예산 안이고 브랜치·base·"
-                 "인프라가 전부 맞다."
+        lines = ["`precheck` 통과. 파일 %d · 줄 %d — 브랜치·base·인프라가 전부 맞다."
                  % (got["budget"]["files"], got["budget"]["lines"])]
         # **면제를 조용히 넘기지 않는다** (M44). "전부 맞다" 로만 적으면
         # 면제가 통과와 구분되지 않는다.
         for gap in got.get("gaps") or []:
-            if gap == PRECHECK_OVERRIDE_GAP:
-                fp = (got.get("policy_override") or {}).get("fingerprint") or {}
-                lines += ["", "**정책 실패를 사람이 넘기기로 한 상태다: `%s`.** "
-                              "통과가 아니라 넘어간 것이다 — 등급이 "
-                              "`PASS_WITH_GAPS` 로 내려가고 보고서·PR 본문에 "
-                              "이름으로 남는다. 사유·값이 커지면 다시 묻는다."
-                          % ", ".join(fp.get("reasons") or [])]
-                continue
             lines += ["", "**면제된 프로브가 있다: `%s`.** 통과가 아니라 "
                           "미검증이다 — 등급이 `PASS_WITH_GAPS` 로 내려가고 "
                           "보고서·PR 본문에 이름으로 남는다." % gap]
@@ -3724,11 +3091,8 @@ def _precheck_render(got):
                   "이대로 회귀를 돌리면 전부 빨간불이 되고, 그것을 코드 문제로 "
                   "읽게 된다."]
     else:
-        lines += ["", "**자동으로 쪼개거나 리베이스하지 않는다.** 무엇을 할지 "
-                      "정하고 다시 부른다.",
-                  "사람이 **이대로 간다**고 정했으면 같은 명령에 `--ack-policy` 를 "
-                  "붙여 그 판단을 못박는다 — 그래야 06 이 같은 것을 다시 묻지 "
-                  "않는다 (백로그 26). 넘어간 사실은 gap 으로 남는다."]
+        lines += ["", "**자동으로 리베이스하지 않는다.** 브랜치를 옮기거나 "
+                      "리베이스한 뒤 같은 명령을 다시 부른다."]
     return "\n".join(lines)
 
 
@@ -3975,9 +3339,9 @@ def run_pr(root, run_id=None):
     # 2-b. 닫힌 런(`done`)의 `pr` 는 08 이 쓴 런 기록을 기능 PR 에 싣는 재push 다 —
     # 흐름 노트를 다시 묻지 않고 06 record 로 이어지지 않는다 (ADR-H052).
     closed_run = s.get("run_status") == st.DONE
-    # 2-a. 흐름 노트 (ADR-H058 추기). PR 본문의 「핵심 흐름」은 모델이 쓰고 `refs`
-    # 로 계약에 묶인다 — 열린 런은 첫 `pr` 부터 요구한다. 닫힌 런의 재실행은
-    # 이미 통과한 파일을 렌더만 한다(런 기록 갱신 경로에 새 exit 8 을 두지 않는다).
+    # 2-a. 흐름 노트 (ADR-H058 추기). PR 본문의 「핵심 흐름」은 모델이 쓴다 —
+    # 열린 런은 첫 `pr` 부터 요구한다. 닫힌 런의 재실행은 이미 통과한 파일을
+    # 렌더만 한다(런 기록 갱신 경로에 새 exit 8 을 두지 않는다).
     if not closed_run and (s.get("contract") or {}).get("mode") != "no_contract":
         _notes, problems = pr_mod.check_notes(root, paths, s, config)
         if problems:
@@ -3985,9 +3349,8 @@ def run_pr(root, run_id=None):
             return st.envelope(
                 "pr", False, 8, s, data,
                 "## 흐름 노트 `%s` 가 없거나 틀렸다\n\n%s\n\n`pr` 전에 네가 쓴다. "
-                "형식:\n\n```json\n%s\n```\n\n`refs` 는 계약이 이름 붙인 것만 받는다 — "
-                "유닛·화면 심볼, 오류 어휘, 데이터 형태, 진입점(`METHOD /path`), 컨테이너 "
-                "경로. `step` 산문은 검사하지 않는다 (ADR-H058)."
+                "형식:\n\n```json\n%s\n```\n\n`step` 은 한 줄 이상, `verify` 는 하나 "
+                "이상이다. `refs` 는 선택이고 검사하지 않는다 — 있으면 본문에 그대로 싣는다."
                 % (pr_mod.NOTES_FILE, "\n".join("- %s" % p for p in problems),
                    pr_mod.NOTES_EXAMPLE),
                 "python scripts/pipeline/cli.py pr --run-id %s" % s["run_id"])
@@ -4040,7 +3403,7 @@ def run_pr(root, run_id=None):
     data["body_file"] = paths.rel(body_path)
 
     # 6. push → 계약 삭제 → 요청서.
-    # **삭제는 push 가 성공한 뒤다** (G-7). 04 귀속과 05 대조가 계약을 계속
+    # **삭제는 push 가 성공한 뒤다** (G-7). 04 의 선택자와 05 의 대조가 계약을 계속
     # 읽으므로 최대한 늦추는 것이 §E13 의 근거인데, push 앞은 충분히 늦지
     # 않다 — push 는 실패할 수 있고, 실패하면 05 의 `requires` 가 안 채워져
     # **재개가 불가능해진다.** 계약은 `_workspace/` 아래 untracked 라 삭제
@@ -4110,7 +3473,7 @@ def _drop_contract(root, paths, s, ctx):
     snap.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
     p.unlink()
     # **어디로 옮겼는지를 상태에 남긴다** (M54). 06 본문은 계약의 유닛·진입점
-    # 절을 실어야 하는데(`team-spec.md` PR 본문 매핑표), 07 수리 뒤 `pr` 을
+    # 절을 실어야 하는데(06 페이즈 파일의 PR 본문 절 목록), 07 수리 뒤 `pr` 을
     # 다시 돌리는 정상 경로에서는 원본이 이미 없다. 읽는 쪽이 파일 이름을
     # 짐작하지 않게 출처를 상태로 준다 — 새 사본은 만들지 않는다.
     # **`paths.rel` 이 아니라 리포 루트 기준이다** — 같은 노드의 `path` 와
@@ -4150,7 +3513,7 @@ def _approval_prompt(root, s, rs, branch, config):
         % (rs["remote"], branch,
            (config.get("vcs") or {}).get("base_branch") or "main",
            b["files"], b["lines"],
-           "예산 내" if got["exit"] == 0 else "**예산 밖**"),
+           "precheck 통과" if got["exit"] == 0 else "**precheck 미통과**"),
         "게이트: 스킵된 스테이지 %s" % ", ".join(skipped),
         "05: 리뷰어 %s/%s · Major %s"
         % (r05.get("reviewers_ok", "?"), r05.get("reviewers_planned", "?"),
@@ -4255,12 +3618,7 @@ def _trace_render(got, rel):
         lines.append("**건너뛴 검사** — 통과가 아니라 미수행이다: %s"
                      % " · ".join("`%s` (%s)" % (s, reasons.get(s, "사유 미기재"))
                                   for s in got["skipped"]))
-    warn_only = [f for f in got["findings"] if f.get("resolution") == "warn_only"]
-    if warn_only:
-        lines.append("`warn_only` %d건 — 오탐 이력이 있는 검사라 지적으로 올리지 않는다. "
-                     "보고서에는 남는다." % len(warn_only))
-    blocking = [f for f in got["findings"]
-                if f["severity"] == "critical" and f.get("resolution") != "warn_only"]
+    blocking = [f for f in got["findings"] if f["severity"] == "critical"]
     if blocking:
         lines += ["", "### 리뷰어를 부르기 전에 고칠 것 (Critical %d건)" % len(blocking)]
         for f in blocking:
@@ -4382,7 +3740,6 @@ def build_parser():
     sp = sub.add_parser("gate", add_help=False)
     sp.add_argument("--phase", dest="phase", default="04")
     sp.add_argument("--stage", dest="stage", default=None)
-    sp.add_argument("--replay", dest="replay", default=None)
     sp.add_argument("--run-id", dest="run_id", default=None)
 
     sp = sub.add_parser("report", add_help=False)
@@ -4402,7 +3759,6 @@ def build_parser():
     sp.add_argument("--scope", dest="scope", default="pr",
                     choices=["pr", "worktree"])
     sp.add_argument("--phase", dest="phase", default="05", choices=["05", "06"])
-    sp.add_argument("--ack-policy", dest="ack_policy", action="store_true")
     sp.add_argument("--run-id", dest="run_id", default=None)
 
     sp = sub.add_parser("contract-trace", add_help=False)

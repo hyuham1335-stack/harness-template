@@ -28,14 +28,13 @@ _SYMBOL = re.compile(r"[A-Za-z_][\w$]*")
 #
 # 이 절은 산문이 섞여 있어 백틱 안에 필드명(`retryAfterSeconds`)·내장
 # (`map`·`any`·`globalThis`)·경로(`src/lib/env.ts`)가 함께 온다. 형태로 거르지
-# 않고 다 모으면 `symbols()` 가 넓어져 **오탐 대신 미탐**이 생긴다 — 흔한 낱말이
+# 않고 다 모으면 이름 집합이 넓어져 **오탐 대신 미탐**이 생긴다 — 흔한 낱말이
 # 계약 산문에 있다는 이유로 진짜 위반이 조용히 통과한다.
 #
 # `_errors` 가 `.isupper()` 로 하는 것과 같은 관용구이고, 다만 이 절은 타입도
 # 담으므로 PascalCase 를 함께 받는다.
 _DATA_SHAPE_NAME = re.compile(r"^(?:[A-Z][A-Za-z0-9]*|[A-Z][A-Z0-9_]*)$")
 _METHOD_PATH = re.compile(r"^\s*(?P<method>[A-Z]+)\s+(?P<path>/\S*)")
-_TAG = re.compile(r"\[([a-z][a-z0-9_-]*)\]")
 
 
 def section(text, heading):
@@ -63,41 +62,13 @@ def parse(text, config):
     """
     sections = (config.get("contract") or {}).get("sections") or {}
     units, dropped = _units(section(text, sections.get("units")))
-    journeys, journeys_dropped = _journeys(section(text, sections.get("journeys")))
-    # 화면은 유닛과 같은 형식이다 — 항목이 있어야 ui 역할이 디스패치된다 (ADR-H057).
-    screens, screens_dropped = _units(section(text, sections.get("screens")))
     return {
         "units": units,
         "dropped": dropped,
-        "screens": screens,
-        "screens_dropped": screens_dropped,
         "entrypoints": _entrypoints(section(text, sections.get("entrypoints"))),
         "errors": _errors(section(text, sections.get("errors"))),
         "data_shapes": _data_shapes(section(text, sections.get("data_shapes"))),
-        "journeys": journeys,
-        "journeys_dropped": journeys_dropped,
     }
-
-
-def symbols(parsed):
-    """계약이 이름 붙인 것 전부. 귀속의 `in_contract` 판정이 쓴다.
-
-    **「데이터 형태」도 여기 들어온다** (M57). 그 절이 빠져 있어서 계약이 이름
-    붙인 타입·상수가 전부 `out_of_contract` 로 잡혔고, P8 의 지적 6/6 이 그
-    구조적 오탐이었다. 한 곳만 고치면 소비자 둘(`trace_contract` 의
-    `out_of_contract` · `gate` 의 실패 귀속)이 함께 낫는다.
-    """
-    out = set()
-    for u in (parsed.get("units") or []) + (parsed.get("screens") or []):
-        if u.get("symbol"):
-            out.add(u["symbol"])
-    for e in parsed.get("errors") or []:
-        out.add(e)
-    for d in parsed.get("data_shapes") or []:
-        out.add(d)
-    for j in parsed.get("journeys") or []:
-        out.add(j["symbol"])
-    return out
 
 
 def _units(block):
@@ -127,59 +98,6 @@ def _units(block):
     return out, dropped
 
 
-_STEP_ARROW = re.compile(r"→|->")
-
-
-def _journeys(block):
-    """(여정, 버려진 것). 형식은 유닛과 같다 — `스펙 파일 · 여정 슬러그` (ADR-H058 추기).
-
-    유닛과 달리 **들여쓴 줄을 읽는다.** 그 줄이 여정의 진입점 순서이고, `→`·`->`
-    로 나눈 조각마다 `METHOD /path` 를 뽑아 `steps` 에 둔다. 백틱은 있어도 없어도 된다.
-    """
-    out, dropped, current = [], [], None
-    for line in block.splitlines():
-        if line.startswith("-"):
-            current = None
-            spans = _BACKTICK.findall(line)
-            if not spans:
-                continue
-            container, symbol = _split(spans[0])
-            item = {"container": container, "symbol": symbol, "raw": spans[0],
-                    "steps": []}
-            if container and symbol:
-                out.append(item)
-                current = item
-            else:
-                dropped.append(dict(item, reason="스펙 파일과 여정 슬러그 쌍이 아니다"))
-        elif current is not None and line[:1].isspace():
-            text = _BACKTICK.sub(lambda m: m.group(1), line.strip().lstrip("-*+ "))
-            for piece in _STEP_ARROW.split(text):
-                m = _METHOD_PATH.match(piece)
-                if m:
-                    current["steps"].append({"method": m.group("method"),
-                                             "path": m.group("path")})
-    return out, dropped
-
-
-def journey_problems(parsed):
-    """여정이 디스패치될 수 없는 이유들. 빈 목록이면 문제없다.
-
-    단계는 **`METHOD path` 쌍**으로 진입점 절과 대조한다 — 경로만 보면 `GET /x` 가
-    `POST /x` 로 통과한다. 표기는 진입점 절과 글자 그대로여야 한다.
-    """
-    known = {(e["method"], e["path"]) for e in parsed.get("entrypoints") or []}
-    out = ["`%s` — %s" % (d["raw"], d["reason"])
-           for d in parsed.get("journeys_dropped") or []]
-    for j in parsed.get("journeys") or []:
-        if not j["steps"]:
-            out.append("`%s` — 들여쓴 줄에 진입점 순서(`METHOD /path`)가 없다" % j["raw"])
-        for step in j["steps"]:
-            if (step["method"], step["path"]) not in known:
-                out.append("`%s` — `%s %s` 가 진입점 절에 없다"
-                           % (j["raw"], step["method"], step["path"]))
-    return out
-
-
 def _split(span):
     for sep in _SEPARATORS:
         if sep in span:
@@ -202,21 +120,9 @@ def _entrypoints(block):
             m = _METHOD_PATH.match(span)
             if m:
                 out.append({"method": m.group("method"), "path": m.group("path"),
-                            "raw": span.strip(),
-                            "tags": _tags(line, m.group("path"))})
+                            "raw": span.strip()})
                 break
     return out
-
-
-def _tags(line, path):
-    """진입점 불릿 끝의 `[역할]` 태그 (ADR-H058).
-
-    어댑터 `param_styles` 가 `[]` 라 계약 줄에 `[id]` 가 정상으로 나온다. 그래서
-    태그는 **백틱을 지운 잔여 텍스트**에서만 뽑고, 경로 세그먼트와 같은 문자열은
-    받지 않는다 — 백틱 없이 적은 줄에서 `[id]` 가 역할이 되면 안 된다.
-    """
-    segments = set(_TAG.findall(path or ""))
-    return [t for t in _TAG.findall(_BACKTICK.sub("", line)) if t not in segments]
 
 
 def _errors(block):
@@ -368,35 +274,6 @@ def _source_for_entrypoint(adapter, ep, files):
             if candidate in files:
                 return candidate
     return None
-
-
-def is_entrypoint_file(adapter, rel):
-    """이 파일이 어댑터 진입점 관례(`entrypoint_resolver.map[].file`)에 맞는가."""
-    resolver = adapter.get("entrypoint_resolver") or {}
-    for entry in resolver.get("map") or []:
-        target = entry.get("file")
-        if not target:
-            continue
-        rx = re.compile("^" + re.escape(target).replace(r"\{p\}", ".+") + "$")
-        if rx.match(rel or ""):
-            return True
-    return False
-
-
-def is_convention_file(adapter, rel):
-    """이 파일이 **스택 관례로 이름이 정해진 파일**인가 (백로그 24).
-
-    진입점 맵보다 넓다. 진입점이 아닌 관례 파일(화면·레이아웃 같은)도 스택이
-    정한 이름을 내보내는데, 어댑터의 진입점 맵은 그것을 담지 못한다 — 담게 하면
-    `missing_entrypoint` 가 계약에 없는 화면을 진입점으로 요구하게 된다.
-    그래서 `is_entrypoint_file` 의 뜻은 그대로 두고 여기서만 넓힌다.
-
-    글롭은 어댑터가 선언하고 코어는 읽기만 한다 (ADR-H031 · ADR-H038).
-    """
-    if is_entrypoint_file(adapter, rel):
-        return True
-    globs = (adapter.get("entrypoint_resolver") or {}).get("convention_globs")
-    return harness.glob_any(globs or [], rel or "")
 
 
 # scoped 가 사실상 full 이 되는 지점. 넘으면 퇴화로 표기한다.

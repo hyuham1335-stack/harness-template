@@ -27,17 +27,10 @@
   "_test_report": "pytest 는 --junitxml 을 줘야 리포트를 쓴다. 지금은 안 주므로 셀 수 없고, 그 사실이 doctor 에 드러나야 한다.",
   "test_report": {"format": "none", "glob": ["reports/junit/*.xml"]},
 
-  "attribution": {
-    "compile_error_regex": "(?P<path>[^\\s:()]+\\.py)[:(](?P<line>\\d+)[:,](?P<col>\\d+)\\)?:?\\s*-?\\s*error",
-    "app_frame_prefixes": ["scripts/"],
-    "test_file_globs": ["scripts/test_*.py"],
-    "symbol_not_found_patterns": ["has no attribute", "is not defined", "No module named", "cannot import name"]
-  },
+  "attribution": {"test_file_globs": ["scripts/test_*.py"]},
 
   "_entrypoint_resolver": "CLI 라 진입점을 파일 규약으로 유도할 수 없다. kind: none 이면 그 검사만 스킵되고 보고서에 '진입점 미검증'으로 남는다.",
   "entrypoint_resolver": {"kind": "none"},
-
-  "migration": null,
 
   "infra_preflight": [],
   "infra_failure_patterns": []

@@ -35,14 +35,8 @@ GAP_REASONS = {
                  "`not_applicable` 로 사유를 선언했다. 표시이고 등급은 "
                  "내리지 않는다 (ADR-H047 추기)"),
     "stage_not_touched": "그 스테이지가 볼 변경이 없었다",
-    "attribution_unparsed": ("스테이지가 실패했는데 귀속이 실패 항목을 하나도 "
-                             "못 읽었다 — 어댑터의 파싱 규칙이 실물 출력에 "
-                             "안 맞는다 (ADR-H069)"),
     "review05": "05 의 리뷰어가 전부 또는 일부 실패했다",
     "infra_skipped": "인프라 프로브 실패로 건너뛴 검증이 있다",
-    "precheck_policy_override": ("`precheck` 정책 실패(예산·브랜치·base)를 사람이 "
-                                 "「그대로 간다」로 정했다 — 넘어간 것이지 통과한 "
-                                 "것이 아니다 (ADR-H071)"),
     "tests_not_ran": "테스트가 한 건도 돌지 않았다",
     "pr_closed": "PR 이 닫혔다 — 수리·코멘트를 하지 않았다",
     "pr_merged": "PR 이 이미 머지됐다 — 수리·코멘트를 하지 않았다",
@@ -153,20 +147,11 @@ def _false_positive_count(state):
 
 
 def _counter_cell(node):
-    """`used / max` 와, 지급이 있었으면 그 사실까지.
-
-    지급(`counter_grant`)은 상한만 올리고 `used` 는 안 건드린다. 그래서 `used`
-    만 적으면 왕복 뒤 예산을 더 받았다는 것이 보고서에서 사라진다 (M32).
-    """
+    """`used / max` 와 무엇에 썼는지."""
     if not node:
         return None
     used, max_ = node.get("used"), node.get("max")
     cell = "%s / %s" % (used, max_) if max_ is not None else used
-    grants = node.get("grants") or []
-    if grants:
-        cell = "%s (왕복 뒤 %d 지급: %s)" % (
-            cell, sum(g.get("extra") or 0 for g in grants),
-            "; ".join(g.get("reason") or "" for g in grants))
     # **무엇에 썼는지가 드러나야 한다** (M47). `used` 만 적으면 "수리 2회로
     # 안 됐다"와 "형식으로 2회 튕겼다"가 보고서에서 같은 칸이 된다 — P6 이
     # 정확히 그랬고, 실제로는 수리를 한 번도 시도하기 전에 에스컬레이션했다.
@@ -321,8 +306,6 @@ def build(state, data, timing=None):
             "%s: %s" % (k, v)
             for k, v in sorted((budget.get("by_phase") or {}).items()))
          or None),
-        # **지급이 드러나야 한다.** `used` 만 적으면 다섯 라운드를 쓴 런과 세
-        # 라운드를 쓰고 둘을 더 받은 런이 같아 보인다 (M32).
         ("라운드", _counter_cell((state.get("counters") or {}).get("round"))),
         ("수리", _counter_cell((state.get("counters") or {}).get("repair"))),
         ("리뷰 수리",
