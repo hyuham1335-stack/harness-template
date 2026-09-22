@@ -1159,6 +1159,12 @@ def run_next(root, run_id=None):
             % (pid, "\n".join("- %s" % c["message"] for c in failed), ""),
             None)
 
+    if pid == "05-code-review":
+        # 리뷰어는 모델 호출이다 — 게이트 안 된 코드에 보내면 그 호출이 낭비다.
+        stale = _receipt_stale(root, ctx["config"], s)
+        if stale:
+            return _receipt_envelope("next", s, stale)
+
     st.set_phase_status(s, pid, "running")
     st.append_event(paths, "phase_enter", cmd="next", phase=pid)
     if pid == "05-code-review":
@@ -2358,6 +2364,11 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
             "쳐 리뷰 입력(인라인 diff·지문)을 갱신하고 그 diff 로 리뷰어를 부른다."
             % (round_, s["run_id"], round_),
             "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
+    # `next` 를 건너뛴 워커도 막는다 — 슬롯을 쓰기 전에 거부해야 재게이트 뒤
+    # 같은 제출을 다시 낼 수 있다.
+    stale = _receipt_stale(root, ctx["config"], s)
+    if stale:
+        return _receipt_envelope("record", s, stale)
     planned = _planned_for_round(node, round_)
 
     rounds = node.setdefault("rounds", {})
@@ -2413,6 +2424,48 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
 # 규약 위반 제출을 몇 번까지 되돌려 보내는가. 페이즈 파일의 "재제출 1회 →
 # 2회 실패 시 스킵 + degrade" 를 숫자로 옮긴 것이다.
 REVIEW_SUBMIT_TRIES = 2
+
+
+def _receipt_stale(root, config, s, need_full=False):
+    """게이트 영수증 vs 지금. `("loop", saved, fresh)` · `("full", …)` · None.
+
+    영수증은 둘이다 — `s["fingerprint"]` 는 loop(compile·scoped)가, `s["tests"]
+    ["fingerprint"]` 는 전체 회귀가 **이 코드에서** 돌았다는 증거다. 04 가 쓰기만
+    하고 아무도 읽지 않아 「재게이트를 잊을 수 없다」가 산문이었다 (ADR-H076).
+    **없는 영수증은 stale 이다** — 04 가 통과했으면 반드시 있다.
+    """
+    fresh = st.fingerprint(root, config)
+    if not st.fingerprint_matches(s.get("fingerprint") or {}, fresh):
+        return "loop", s.get("fingerprint"), fresh
+    if need_full:
+        saved = (s.get("tests") or {}).get("fingerprint") or {}
+        if not st.fingerprint_matches(saved, fresh):
+            return "full", saved, fresh
+    return None
+
+
+# loop 은 전이 거부(지문 stale)이고, full 은 선행 조건(전체 회귀)이다.
+_RECEIPT_EXIT = {"loop": 6, "full": 3}
+
+
+def _receipt_envelope(cmd, s, stale):
+    kind, saved, fresh = stale
+    if kind == "loop":
+        text = ("## 소스가 게이트 뒤에 바뀌었다\n\n"
+                "마지막 게이트 영수증의 지문과 지금 소유 범위 파일의 지문이 다르다 — "
+                "수리한 코드가 compile·scoped 를 안 거쳤다. 재게이트 없이는 리뷰도 "
+                "승인도 **게이트 안 된 코드**에 대한 것이 된다.")
+    else:
+        text = ("## 전체 회귀가 지금 코드에서 돌지 않았다\n\n"
+                "회귀 영수증의 지문이 지금과 다르다 — 05 수리 뒤 loop 만 다시 돌았다. "
+                "PR 본문의 「전체 회귀 실행됨」이 수리 전 코드를 증언하지 않도록 "
+                "06 전에 한 번 돈다.")
+    next_cmd = ("python scripts/pipeline/cli.py gate --phase 05 --stage %s "
+                "--run-id %s" % (kind, s["run_id"]))
+    return st.envelope(cmd, False, _RECEIPT_EXIT[kind], s,
+                       {"receipt": kind, "saved": saved, "fresh": fresh},
+                       "%s\n\n`gate --phase 05 --stage %s` 뒤에 이 명령을 다시 친다."
+                       % (text, kind), next_cmd)
 
 
 def _dispatch_fingerprint_stale(root, ctx, node, round_):
@@ -2877,11 +2930,26 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
         failed = [x for x in stages
                   if x.get("state") == "ran" and x.get("exit") != 0]
         ok = not failed
+        render = "\n".join(_stage_render(x) for x in stages)
+        if ok and (report.get("tests") or {}).get("status") == "shrank":
+            # 전체 게이트만 잡던 하한을 05 의 full 재실행이 우회하면 반만 닫힌다.
+            ok = False
+            render += ("\n\n테스트 수가 하한 아래로 떨어졌다(%s < %s) — 전체 회귀 "
+                       "영수증을 남기지 않는다."
+                       % (report["tests"].get("ran"), report["tests"].get("expected_min")))
+        if ok:
+            # **영수증은 둘이다.** loop 는 compile·scoped 가, full 은 전체 회귀가
+            # **이 코드에서** 돌았다는 증거다. `next`·`record`·`approve` 가 읽는다.
+            fresh = st.fingerprint(root, config)
+            if only_stage == "loop":
+                s["fingerprint"] = fresh
+            elif only_stage == "full":
+                s.setdefault("tests", {})["fingerprint"] = fresh
+            st.save(paths, s)
         # `stage` 는 옛 소비자용 단수 키 — 실패한 첫 스테이지, 없으면 마지막.
         stage = failed[0] if failed else stages[-1]
         return st.envelope("gate", ok, 0 if ok else 4, s,
-                           {"stage": stage, "stages": stages},
-                           "\n".join(_stage_render(x) for x in stages), None)
+                           {"stage": stage, "stages": stages}, render, None)
 
     _write_json(paths.run_dir / "04_gate_report.json", report)
 
@@ -2901,6 +2969,8 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
                               round_no, log_text, reason="테스트 수가 하한 아래로 떨어졌다")
         st.demote(s, report.get("grade") or st.GRADES[1])
         s["fingerprint"] = st.fingerprint(root, config)
+        # 전체 게이트는 full 까지 돌았다 — 회귀 영수증도 같은 지문이다.
+        s.setdefault("tests", {})["fingerprint"] = s["fingerprint"]
         st.append_event(paths, "stage_done", cmd="gate", phase=pid,
                         grade=s["grade"])
         st.save(paths, s)
@@ -3155,6 +3225,11 @@ def run_approve(root, phase="06", revoke=False, auto=False, run_id=None):
                            None)
 
     config, _adapter = adapters.load(root)
+    # 승인은 **게이트된 코드**에 대한 것이다 — loop 영수증(exit 6)과 전체 회귀
+    # 영수증(exit 3)을 여기서 본다. `pr` 은 승인 지문을 대조하므로 전이적으로 덮인다.
+    stale = _receipt_stale(root, config, s, need_full=True)
+    if stale:
+        return _receipt_envelope("approve", s, stale)
     node.update({
         "granted": True,
         "mode": "auto" if auto else "user",
