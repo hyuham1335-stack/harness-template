@@ -18,7 +18,7 @@
     "parallel": true,
     "unless": "state.profile.name == \"docs\"",
     "reviewers": [
-      {"code": "plan", "kind": "internal",
+      {"code": "plan", "agent": "plan-reviewer", "kind": "internal",
        "raw": "${run.dir}/01_review_r{n}.raw.md",
        "json": "${run.dir}/01_review_r{n}.json"}
     ]

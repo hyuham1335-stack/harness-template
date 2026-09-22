@@ -105,20 +105,20 @@
       }
     },
     "reviewers": {
-      "description": "05-code-review 의 리뷰어. 하나다 (ADR-H075) — 소스 변경이 있으면 계획된다. skill 은 .claude/skills/{skill}/SKILL.md 를 가리키며 doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치는 skill 은 거부한다: 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
+      "description": "05-code-review 의 리뷰어. 하나다 (ADR-H075) — 소스 변경이 있으면 계획된다. agent 는 .claude/agents/{agent}.md 를 가리키며(모델·effort 는 그 프론트매터, ADR-H076) doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치는 agent 는 거부한다: 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["code", "skill"],
+        "required": ["code", "agent"],
         "properties": {
           "code": {
             "description": "산출물 파일명에 쓰는 축약. 경로 240자 상한이 있어 짧게 쓴다.",
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]*$"
           },
-          "skill": {
-            "description": ".claude/skills/{skill}/SKILL.md 의 디렉터리 이름.",
+          "agent": {
+            "description": ".claude/agents/{agent}.md 의 파일 이름. Agent 호출의 subagent_type 이다.",
             "type": "string"
           }
         }

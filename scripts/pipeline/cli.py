@@ -580,7 +580,7 @@ def _pipeline_checks(root):
     #    첫 계약이 그 형태를 베끼고, 유닛이 부풀어 스코프 선택이 조용히 빗나간다.
     out.append(_check_template_parses(root, config))
 
-    # ⑤ 리뷰어. 05 가 없는 스킬을 부르면 라운드마다 헛돌고, 그것을 알게 되는
+    # ⑤ 리뷰어. 05 가 없는 에이전트를 부르면 라운드마다 헛돌고, 그것을 알게 되는
     #    시점은 리뷰어를 이미 띄운 뒤다. **기동 전에, 무료로 잡는다** (§E10).
     out.append(_check_reviewers(root, config))
 
@@ -617,7 +617,7 @@ def _check_remote(root, config):
 def _check_reviewers(root, config):
     import review as review_mod
 
-    name = "리뷰어 스킬"
+    name = "리뷰어 에이전트"
     if not config:
         return {"name": name, "status": "SKIP", "message": "config 를 읽지 못했다"}
     reviewers = config.get("reviewers") or []
@@ -1053,11 +1053,16 @@ def _lint_paths(name, front, ctx, add):
 
 
 def _lint_agents(root, name, front, config, add):
-    allow = (front.get("allow") or {}).get("agents")
-    if allow != "config.roles[].agent":
-        return
-    for role in config.get("roles") or []:
-        agent = role.get("agent")
+    """이 페이즈가 부르는 에이전트 파일의 실재 — `allow.agents` 가 가리키는 역할과
+    `review.reviewers[].agent`. 후자는 아무도 검사하지 않았다 (ADR-H076 B′)."""
+    wanted = []
+    if (front.get("allow") or {}).get("agents") == "config.roles[].agent":
+        wanted += [role.get("agent") for role in config.get("roles") or []]
+    wanted += [r.get("agent") for r in (front.get("review") or {}).get("reviewers") or []]
+    for agent in wanted:
+        if not agent:
+            add(name, "agent_file", "FAIL", "리뷰어에 agent 가 없다 — 누구를 부를지 없다")
+            continue
         path = root / ".claude" / "agents" / ("%s.md" % agent)
         if not path.exists():
             add(name, "agent_file", "FAIL",
@@ -1077,9 +1082,9 @@ def _lint_cycle(loaded, add):
 
 
 def _lint_reviewers(root, config, add):
-    """스킬 파일 실재 · 작성자 격리 · code 유니크.
+    """에이전트 파일 실재 · 작성자 격리 · code 유니크.
 
-    **기동 전에, 무료로 잡는다** (§E10 첫 행). 05 가 없는 스킬을 부르면 라운드
+    **기동 전에, 무료로 잡는다** (§E10 첫 행). 05 가 없는 에이전트를 부르면 라운드
     마다 헛돌고, 그것을 알게 되는 시점은 리뷰어를 이미 띄운 뒤다.
     """
     import review as review_mod
@@ -1310,7 +1315,7 @@ def _plan_05_review(root, paths, s, ctx):
         if _docs_lane_source_check(root, paths, s, ctx, "05-code-review",
                                    source_changed=True, cmd="next"):
             profile = "normal"
-    reviewers = [{"code": r["code"], "skill": r["skill"]}
+    reviewers = [{"code": r["code"], "agent": r["agent"]}
                  for r in ctx["config"].get("reviewers") or []]
     # 메인 소유 파일(`harness/**`·`.claude/**`)만 더러운 워킹트리에서 gen 을
     # 계획하면 「커밋만 있으면 exit 3」 거부 경로가 죽는다 — 소스 변경으로 판정한다.
@@ -1511,9 +1516,11 @@ def _review_render(s):
                      "그 밖의 파일은 패킷에 넣지 않는다." % depth)
     lines.append("")
     for code in planned:
-        skill = (by_code.get(code) or {}).get("skill") or code
-        lines.append("- `%s` → `.claude/skills/%s/SKILL.md`" % (code, skill))
-    lines += ["", "프롬프트 첫 줄은 **스킬 파일을 읽으라는 지시**다. 본문을 복사하지 마라."]
+        agent = (by_code.get(code) or {}).get("agent") or code
+        lines.append("- `%s` → Agent 호출 `subagent_type: %s` (`.claude/agents/%s.md`)"
+                     % (code, agent, agent))
+    lines += ["", "관점·제출 형식은 에이전트 정의가 든다 — 본문을 프롬프트에 복사하지 마라. "
+                  "`model` 인자를 주지 마라 — 모델·effort 는 프론트매터가 정한다 (ADR-H061)."]
     inline = node.get("inline") or {}
     if inline and not inline.get("inline"):
         lines += ["", "**diff 를 인라인하지 마라 — 경로로 전달한다.** 인라인 "

@@ -136,7 +136,8 @@ python scripts/pipeline/cli.py contract-trace --run-id <id>
 
 - **리뷰어를 늘리지 마라.** 한 명이고 봉투가 정한다 — 소스 변경이 없으면 0명이고,
   그것은 `review05:failed` gap 이다
-- 프롬프트 첫 줄은 **스킬 파일을 읽으라는 지시**다. 본문을 복사하지 마라
+- Agent 호출 `subagent_type: general-reviewer` 로 부른다 — 관점·제출 형식은 에이전트
+  정의가 든다. 본문을 복사하지 마라
 - 봉투의 **"검토 제외"** 목록과 참조 파일 경로(`diff+refs`)를 그대로 전달한다
 - 리뷰어에게 **리포 탐색을 허용하지 마라.** 부족하면 `need_more_context` 에 적게 한다
 
