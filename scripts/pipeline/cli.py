@@ -88,18 +88,6 @@ EXIT_CODES = tuple(range(12))
 # PR 번호 검사 말고도 여럿을 하므로, 이 포인터는 "이 함수 안에 있다" 이지
 # "이 함수가 그 검사다" 가 아니다.
 SUBMIT_CHECKS = {
-    "triage_profile_vocabulary": {
-        "exit": 8, "impl": ("triage:check_submission",),
-        "why": "`profile` 이 `triage.VOCAB` 안인가"},
-    "triage_paths_substring": {
-        "exit": 8, "impl": ("triage:check_submission",),
-        "why": "`expected_paths` 가 요청 원문의 부분문자열인가 — 경로를 지어내지 못하게"},
-    "triage_docs_paths_in_glob": {
-        "exit": 8, "impl": ("triage:check_submission",),
-        "why": "`docs` 예측이면 그 경로가 전부 docs glob 안인가"},
-    "triage_unclear": {
-        "exit": 9, "impl": ("cli:_record_00",),
-        "why": "레인을 못 정했으면 모델이 고르지 않고 사람을 기다린다 (상태를 안 잠근다)"},
     "reviewer_not_main": {
         "exit": 8, "impl": ("verdict:check_vocabulary",),
         "why": "작성자가 자기 글을 리뷰한 것은 독립 관측이 아니다"},
@@ -625,14 +613,6 @@ def _pipeline_checks(root):
                     "status": "FAIL" if bad else "PASS",
                     "message": "; ".join("%s: %s" % (f["file"], f["message"])
                                          for f in bad[:3])})
-
-    # ⑤ 00 이 읽을 임계값. 선언이 없으면 폴백이 곧 새 하드코딩이다 (M36).
-    if config and not config.get("triage"):
-        out.append({"name": "트리아지 선언", "status": "FAIL",
-                    "message": "config.triage 가 없다 — 00 이 읽을 임계값이 없다. "
-                               "harness/profiles/*/config.json 의 triage 블록을 본다"})
-    elif config:
-        out.append({"name": "트리아지 선언", "status": "PASS"})
 
     # ④ 계약 템플릿이 **자기 파서를 통과하는가.** 계약 계층의 "계약 절 ↔ 템플릿"
     #    은 절 제목 일치만 본다 — 템플릿이 시범 보이는 **형태**가 파서를 속이면
@@ -1243,13 +1223,6 @@ def run_next(root, run_id=None):
 
     st.set_phase_status(s, pid, "running")
     st.append_event(paths, "phase_enter", cmd="next", phase=pid)
-    if pid == "00-triage":
-        # 기계 신호로 확정되면 **모델을 부르지 않고** 같은 봉투에서 01 지시문을
-        # 낸다 (ADR-H044). 미확정이면 아래로 내려가 00 패킷(저가 모델 1회)이다.
-        decided = _plan_00_triage(root, paths, s, phase, ctx)
-        if decided is not None:
-            decided.setdefault("data", {})["prescan"] = _prescan(root, loaded, ctx, s)
-            return decided
     if pid == "05-code-review":
         node05 = _plan_05_review(root, paths, s, ctx)
         refused = node05.get("routing_refused")
@@ -1286,104 +1259,32 @@ def run_next(root, run_id=None):
                       {"produces": [resolve(p.get("path"), ctx)
                                     for p in phase["front"].get("produces") or []],
                        "requires_report": checks,
-                       # 런 전체의 사전 검사는 **첫 페이즈**에서 한 번 — 01 이
-                       # 전이로 나오는 런(00 기계 확정)에서도 빠지지 않는다.
-                       "prescan": _prescan(root, loaded, ctx, s) if pid == "00-triage" else []},
+                       # 런 전체의 사전 검사는 **첫 페이즈**에서 한 번.
+                       "prescan": _prescan(root, loaded, ctx, s) if pid == "01-plan" else []},
                       render, next_cmd)
     return _budget_stop(paths, env) if exhausted else env
 
 
-# ------------------------------------------------------------- 00 트리아지
-
-def _plan_00_triage(root, paths, s, phase_item, ctx):
-    """00 진입 — 기계가 먼저 본다. 확정되면 01 패킷을 든 봉투, 아니면 None.
-
-    None 은 "모델 1회가 필요하다" 다. `phases.00-triage.needs_model` 이 그
-    사실을 들고, `_instruction_keys` 가 그것을 읽어 `00:triage` 를 센다.
-    """
-    import triage
-
-    config = ctx["config"]
-    node = s.setdefault("phases", {}).setdefault("00-triage", {})
-    text = paths.request.read_text(encoding="utf-8")
-    sig = triage.signals(text, config)
-    node["signals"] = sig
-    prof = s.get("profile") or {}
-    if prof.get("source") == "user":
-        # 사람이 `init --profile` 로 정했다. 신호만 남기고 판정을 덮지 않는다.
-        decision = {"profile": prof.get("name"), "expected_paths": [],
-                    "touches_source": None, "reasons": ["user_profile"],
-                    "decided_by": "user"}
-    else:
-        try:
-            decision = triage.decide(sig, config)
-        except ValueError as exc:
-            return _declaration_envelope("next", s, ConfigDeclarationError(str(exc)))
-        if decision is None:
-            if (config.get("triage") or {}).get("model_call_when_undecided", True):
-                node["needs_model"] = True
-                st.save(paths, s)
-                return None
-            decision = triage.fallback_when_no_model(sig)
-    _apply_triage(paths, s, decision, sig, cmd="next")
-    _write_triage_file(paths, decision, sig)
-    st.save(paths, s)
-    return _advance_to_next(root, paths, s, phase_item, ctx, cmd="next")
-
-
-def _apply_triage(paths, s, decision, sig, cmd):
-    """예측을 `state.profile` 로 굳힌다. docs 면 계약이 없는 런이 된다."""
-    prof = s.get("profile") or {}
-    name = decision["profile"]
-    decided_by = decision.get("decided_by") or "model"
-    # 사람이 정한 것(`init --profile` · exit 9 의 답)은 자동 재판정에 안 밀린다.
-    # 기계·모델의 예측은 밀린다 — 그것이 `triage` 출처의 뜻이다.
-    source = ("user" if (prof.get("source") == "user" or decided_by == "user")
-              else "triage")
-    s["profile"] = {
-        "name": name, "source": source,
-        "predicted": {k: decision.get(k) for k in
-                      ("profile", "expected_paths", "touches_source",
-                       "reasons", "decided_by")},
-        "signals": sig, "applied": []}
-    if name == "docs":
-        # **여기가 `no_contract` 의 첫 쓰기 주체다.** 04·05·06 은 읽기만 한다.
-        s["contract"] = {"mode": "no_contract", "present": False,
-                         "reason": "docs_profile"}
-    node = s.setdefault("phases", {}).setdefault("00-triage", {})
-    node["decided_by"] = decided_by
-    node["profile"] = name
-    st.append_event(paths, "triage_decided", cmd=cmd, phase="00-triage",
-                    profile=name, decided_by=decided_by, source=source)
-
-
-def _write_triage_file(paths, decision, sig):
-    """기계 확정 경로에서는 실행기가 산출물을 쓴다 (04 의 게이트 보고서와 같다)."""
-    out = dict(decision, signals=sig)
-    (paths.run_dir / "00_triage.json").write_text(
-        json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
 def _note_applied(s, tag):
-    """프로파일이 실제로 적용한 양보를 적는다. miss 의 gap 이름이 이것으로 만들어진다."""
+    """레인이 실제로 적용한 양보를 적는다. `lane_miss` 의 gap 이름이 이것으로 만들어진다."""
     prof = s.setdefault("profile", {})
     applied = prof.setdefault("applied", [])
     if tag not in applied:
         applied.append(tag)
 
 
-def _note_triage_miss(paths, s, before, after, where, cmd="record"):
-    """예측이 **상향**으로 빗나갔다 — 앞 페이즈가 양보를 적용한 채 지나갔다.
+def _note_lane_miss(paths, s, before, after, where, cmd="record"):
+    """선언한 레인이 **상향**으로 빗나갔다 — 앞 페이즈가 양보를 적용한 채 지나갔다.
 
     gap 이름에 실제로 적용된 양보만 넣는다 (재지 않은 것을 적지 않는다).
-    반환: `profile.triage_miss` 에 넣을 dict.
+    반환: `profile.lane_miss` 에 넣을 dict.
     """
     applied = list(before.get("applied") or [])
-    gap = "triage_miss:" + (";".join(applied) if applied else "none")
+    gap = "lane_miss:" + (";".join(applied) if applied else "none")
     st.demote(s, st.GRADES[1], gap)
     miss = {"at": where, "was": before.get("name"), "became": after.get("name"),
             "applied": applied}
-    st.append_event(paths, "triage_miss", cmd=cmd, phase=where,
+    st.append_event(paths, "lane_miss", cmd=cmd, phase=where,
                     was=before.get("name"), became=after.get("name"),
                     applied=applied)
     return miss
@@ -1391,11 +1292,10 @@ def _note_triage_miss(paths, s, before, after, where, cmd="record"):
 
 def _docs_lane_source_check(root, paths, s, ctx, where, source_changed=None,
                             cmd="record"):
-    """docs 레인인데 소스가 바뀌었는가. 반환: miss 가 났으면 True.
+    """docs 레인을 선언했는데 소스가 바뀌었는가. 반환: miss 가 났으면 True.
 
-    docs 레인은 계약이 없어 `_refresh_profile` 이 조기 반환한다 — 그래서
-    03(claims 제출)과 05(라우팅) 두 자리가 따로 묻는다. 술어는 05 의 라우팅과
-    같은 `review._source_changed` 다.
+    docs 레인은 계약이 없어 03(claims 제출)과 05(라우팅) 두 자리가 따로 묻는다.
+    술어는 05 의 라우팅과 같은 `review._source_changed` 다.
     """
     import attribution
     import review as review_mod
@@ -1410,19 +1310,17 @@ def _docs_lane_source_check(root, paths, s, ctx, where, source_changed=None,
     if not source_changed:
         return False
     before = dict(prof)
-    after = {"name": "normal", "source": "auto", "units": None,
-             "entrypoints": None,
-             "reason": "docs 예측이 빗나갔다 — 역할 소유 경로가 바뀌었다",
+    after = {"name": "normal", "source": "auto",
+             "reason": "docs 레인 선언이 빗나갔다 — 역할 소유 경로가 바뀌었다",
              "previous": {k: v for k, v in before.items()
-                          if k not in ("previous", "triage_miss")},
+                          if k not in ("previous", "lane_miss")},
              "reconfirmed_at": st.stamp()}
-    for k in ("predicted", "signals", "applied"):
-        if k in before:
-            after[k] = before[k]
-    after["triage_miss"] = _note_triage_miss(paths, s, before, after, where, cmd)
+    if "applied" in before:
+        after["applied"] = before["applied"]
+    after["lane_miss"] = _note_lane_miss(paths, s, before, after, where, cmd)
     s["profile"] = after
     s["contract"] = dict(s.get("contract") or {}, mode="contract",
-                         reason="triage_miss")
+                         reason="lane_miss")
     st.append_event(paths, "profile_reconfirmed", cmd=cmd, was="docs",
                     became="normal", units=None)
     st.save(paths, s)
@@ -1503,8 +1401,6 @@ def _slot_of(key):
     승격 판정)는 None — 그것은 Agent 기동이 아니라 등급을 줄 자리가 없다."""
     parts = (key or "").split(":")
     head = parts[0]
-    if head == "00":
-        return "triage"
     if head == "01":
         return "plan"
     if head in ("03", "04"):
@@ -1568,9 +1464,8 @@ def _plan_05_review(root, paths, s, ctx):
     import precheck as pc
     import review as review_mod
 
-    # **라우팅 전에 프로파일을 다시 센다.** 04 수리 중 계약 델타가 적용됐으면
-    # 여기 오는 `profile` 이 낡은 값이고, 그 값이 곧 리뷰어 상한이다 (M34).
-    refreshed = _refresh_profile(root, paths, s, ctx)
+    # 04 수리 중 계약 델타가 적용됐을 수 있다 — 해시와 버려진 줄을 다시 적는다.
+    noted = _note_contract(root, s, ctx)
     # **라우팅은 `worktree` 다** (M40 · ADR-H028). 예산은 PR 전체를 재지만
     # 라우팅까지 넓히면 05 가 브랜치의 앞선 커밋(캘리브레이션·문서 등)까지
     # 리뷰어 매칭에 넣는다. 그것은 근거가 따로 필요한 별개 결정이다.
@@ -1578,7 +1473,7 @@ def _plan_05_review(root, paths, s, ctx):
     profile = (s.get("profile") or {}).get("name") or "normal"
     routed = review_mod.route(ctx["config"], changed, profile)
     if routed["source_changed"] and profile == "docs":
-        # docs 예측인데 소스가 바뀌었다. 03 이 못 잡은 경로(예: 04 수리 중
+        # docs 선언인데 소스가 바뀌었다. 03 이 못 잡은 경로(예: 04 수리 중
         # 메인이 소스를 고쳤다)를 라우팅 직전에 한 번 더 묻는다 (ADR-H044).
         if _docs_lane_source_check(root, paths, s, ctx, "05-code-review",
                                    source_changed=True, cmd="next"):
@@ -1593,8 +1488,7 @@ def _plan_05_review(root, paths, s, ctx):
             if c not in [r["code"] for r in routed["reviewers"]]]
     node["planned"] = [r["code"] for r in routed["reviewers"]] + kept
     node["routing"] = routed
-    node["profile_reconfirmed"] = refreshed if refreshed.get("changed") else None
-    node["contract_dropped"] = refreshed.get("dropped") or []
+    node["contract_dropped"] = noted.get("dropped") or []
     node["mode"] = review_mod.mode(ctx["config"],
                                    pc._changed_lines(root, changed))
     # **리뷰 범위도 레인이 정한다** (ADR-H059). FR-007 의 동시성 결함은 05 가
@@ -1749,25 +1643,14 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
 
 
 def _contract_drift_lines(node, s):
-    """계약이 바뀌어 프로파일이 다시 정해졌다는 것과, 파서가 흘린 줄.
-
-    둘 다 **조용하면 안 되는 사실**이다. 프로파일은 리뷰어 상한을 정하고,
-    흘린 줄은 그 프로파일과 스코프 선택을 동시에 빗나가게 한다 (M34 · D-2).
-    """
+    """파서가 흘린 계약 줄 — **조용하면 안 되는 사실**이다. 흘린 줄은 스코프
+    선택을 빗나가게 한다 (D-2)."""
     out = []
-    re_ = node.get("profile_reconfirmed")
-    if re_:
-        prev = re_.get("previous") or {}
-        prof = s.get("profile") or {}
-        out += ["**계약이 바뀌어 프로파일을 다시 셌다** — `%s`(유닛 %s) → "
-                "`%s`(유닛 %s). 리뷰어 상한이 그만큼 달라진다."
-                % (prev.get("name"), prev.get("units"),
-                   prof.get("name"), prof.get("units")), ""]
     dropped = node.get("contract_dropped") or []
     if dropped:
         out += ["**계약의 %d줄이 유닛으로 세어지지 않았다** — 파서는 "
-                "`컨테이너 · 심볼` 쌍을 요구한다. 이 줄들은 프로파일 판정에도 "
-                "스코프 선택에도 들어가지 않는다:" % len(dropped), ""]
+                "`컨테이너 · 심볼` 쌍을 요구한다. 이 줄들은 스코프 선택에 "
+                "들어가지 않는다:" % len(dropped), ""]
         out += ["- `%s` — %s" % (d.get("raw"), d.get("reason"))
                 for d in dropped[:5]]
         out += [""]
@@ -1860,8 +1743,6 @@ def render_packet(root, phase, ctx, s, checks=None):
     parts = [render_header(ctx["config"], s), ""]
     parts.append(_section(body, "## 목적"))
     parts.append(_section(body, "## 절차"))
-    if pid == "00-triage":
-        parts.append(_triage_render(ctx, s))
     if pid == "01-plan" and not _reviewers_for(front, s):
         parts.append(
             "## 리뷰어 — 0명 (%s 레인)\n\n이 런은 플랜 리뷰어를 부르지 않는다. "
@@ -1875,7 +1756,7 @@ def render_packet(root, phase, ctx, s, checks=None):
             "계약도 쓰지 않는다 (`no_contract`). **네가 직접** 문서를 고치고 "
             "`03_claims.json` 을 `{\"schema\":1,\"roles\":[]}` 로 낸다. 역할 소유 "
             "경로(소스)를 건드리면 제출이 exit 3 으로 되돌아온다 — 그때는 "
-            "예측이 빗나간 것이고 계약을 쓰고 역할 패킷을 받는다."
+            "선언이 빗나간 것이고 계약을 쓰고 역할 패킷을 받는다."
             % ((s.get("profile") or {}).get("name")))
     elif role_tpl:
         parts.append(role_tpl)
@@ -2027,25 +1908,6 @@ def _contract_precheck_03(root, ctx, s):
                           "`METHOD /path` 를 글자 그대로 `→` 로 잇는다."
                           % "\n".join("- %s" % p for p in problems)}
     return None
-
-
-def _triage_render(ctx, s):
-    """00 패킷 — 기계 신호가 무엇을 봤고 왜 못 정했는지, 원문이 어디 있는지."""
-    node = (s.get("phases") or {}).get("00-triage") or {}
-    sig = node.get("signals") or {}
-    req = resolve("${run.dir}/00_original_request.md", ctx)
-    lines = ["## 기계 신호 (판정에 못 미쳤다 — 저가 모델 1회가 예측한다)", ""]
-    lines.append("- 요청 글자 수: %s" % sig.get("request_chars"))
-    lines.append("- 역할 소유 경로: %s" % (", ".join(
-        "`%s`" % p for p in sig.get("paths_role_owned") or []) or "(없음)"))
-    lines.append("- docs 경로: %s" % (", ".join(
-        "`%s`" % p for p in sig.get("paths_docs") or []) or "(없음)"))
-    lines.append("- 미해결 경로: %s" % (", ".join(
-        "`%s`" % p for p in sig.get("paths_unresolved") or []) or "(없음)"))
-    lines += ["", "트리아지 에이전트에게 **요청 원문만** 준다: `%s`. 리포 탐색을 "
-                  "허용하지 마라. 위 신호를 함께 실어도 된다 — 원문 밖의 것은 "
-                  "그것뿐이다." % req]
-    return "\n".join(lines)
 
 
 def render_header(config, s):
@@ -2236,9 +2098,6 @@ def _instruction_keys(s, pid, ctx, front=None):
     def used(name):
         return (counters.get(name) or {}).get("used", 0)
 
-    if pid == "00-triage":
-        node = (s.get("phases") or {}).get("00-triage") or {}
-        return ["00:triage"] if node.get("needs_model") else []
     if pid == "01-plan":
         r = used("round")
         return ["01:r%d:%s" % (r, code) for code in _reviewers_for(front, s)]
@@ -2358,69 +2217,6 @@ def _advance_to_next(root, paths, s, phase_item, ctx, cmd="record"):
     render, next_cmd = render_packet(root, nxt_item, ctx, s, nxt_checks)
     env = st.envelope(cmd, True, 0, s, {"next_phase": nxt}, render, next_cmd)
     return _budget_stop(paths, env) if exhausted else env
-
-
-# ------------------------------------------------------- 00 제출 처리
-
-def _record_00(root, paths, s, phase_item, ctx, file, reviewer, round_):
-    """트리아지 에이전트의 예측을 받는다. 기계가 확인할 수 있는 것만 검사한다."""
-    import triage
-
-    if not file.exists():
-        return st.envelope("record", False, 3, s, {}, "산출물이 없다: %s" % file, None)
-    try:
-        payload = harness._read_json(file)
-    except (OSError, ValueError) as exc:
-        return st.envelope("record", False, 8, s, {}, "JSON 을 읽지 못했다: %s" % exc, None)
-
-    text = paths.request.read_text(encoding="utf-8")
-    errors = triage.check_submission(payload, text, ctx["config"])
-    if errors:
-        st.append_event(paths, "check_fail", cmd="record", phase="00-triage",
-                        errors=len(errors))
-        st.save(paths, s)
-        return st.envelope("record", False, 8, s, {"errors": errors},
-                           "## 트리아지 제출 거부\n\n" +
-                           "\n".join("- %s" % e for e in errors),
-                           _same_command(s, "00"))
-
-    node = s.setdefault("phases", {}).setdefault("00-triage", {})
-    if payload.get("profile") == "unclear":
-        options = ["docs — 문서·설정만 바뀐다 (리뷰어·역할 없이 메인이 직접 고친다)",
-                   "fix — 재현 가능한 버그 하나의 수리 (01 1라운드 · 02 생략 · "
-                   "리뷰어 1명)",
-                   "small — 역할 소유 경로 셋 이하의 작은 변경",
-                   "normal — 그 밖 전부"]
-        st.save(paths, s)
-        # 여기서부터 사람을 기다린다 — `40dc` 의 36분이 이 자리였다 (ADR-H052).
-        st.append_event(paths, "waiting_human", cmd="record", phase="00-triage",
-                        reason="triage_unclear")
-        return st.envelope(
-            "record", False, 9, s,
-            {"options": options, "signals": node.get("signals"),
-             "reasons": payload.get("reasons") or []},
-            "## 트리아지가 `unclear` 다 — 사람의 판단\n\n기계 신호도 모델도 레인을 "
-            "정하지 못했다. 아래 셋 중 하나를 사용자에게 **그대로** 제시하고, 고른 "
-            "값을 `profile` 에 넣고 `decided_by: \"user\"` 로 같은 파일을 다시 "
-            "낸다. **네가 고르지 마라.**\n\n%s"
-            % "\n".join("%d. %s" % (i + 1, o) for i, o in enumerate(options)),
-            _same_command(s, "00"))
-
-    decided_by = payload.get("decided_by")
-    if decided_by not in triage.DECIDED_BY or decided_by == "machine":
-        decided_by = "model"
-    decision = {"profile": payload["profile"],
-                "expected_paths": payload.get("expected_paths") or [],
-                "touches_source": payload.get("touches_source"),
-                "reasons": payload.get("reasons") or [],
-                "decided_by": decided_by}
-    sig = node.get("signals")
-    if sig is None:
-        sig = triage.signals(text, ctx["config"])
-        node["signals"] = sig
-    _apply_triage(paths, s, decision, sig, cmd="record")
-    st.save(paths, s)
-    return _advance_to_next(root, paths, s, phase_item, ctx)
 
 
 # ------------------------------------------------------- 01 제출 처리
@@ -2710,7 +2506,7 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
     except (OSError, ValueError) as exc:
         return st.envelope("record", False, 8, s, {}, "JSON 을 읽지 못했다: %s" % exc, None)
 
-    _refresh_profile(root, paths, s, ctx)
+    _note_contract(root, s, ctx)
     zero = _contract_units_zero(root, s, ctx)
     if zero is not None:
         # **계약 파일이 있는데 유닛이 0 이면 형식 문제다** (ADR-H049). `requires`
@@ -2770,17 +2566,17 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
         # 역할 0명은 이 페이즈가 적용한 양보다 — miss 검사보다 **먼저** 적어야
         # 빗나갔을 때 gap 이름에 들어간다.
         _note_applied(s, "03:roles=0")
-    # docs 레인인데 역할 소유 경로가 바뀌었다 — 계약이 없어 위 재판정이 못
-    # 잡는다. 여기서 안 잡으면 `clean_ownership` 이 orphan exit 8 을 내고
-    # 메인은 역할 없이 고칠 길이 없다 (ADR-H044).
+    # docs 레인인데 역할 소유 경로가 바뀌었다 — 계약이 없어 여기서 묻는다.
+    # 안 잡으면 `clean_ownership` 이 orphan exit 8 을 내고 메인은 역할 없이
+    # 고칠 길이 없다 (ADR-H044).
     if _docs_lane_source_check(root, paths, s, ctx, "03-implement"):
         st.set_phase_status(s, "03-implement", "running")
         st.save(paths, s)
         return st.envelope(
             "record", False, 3, s,
             {"profile": s.get("profile"), "contract": s.get("contract")},
-            "## docs 예측이 빗나갔다\n\n00 은 문서만 바뀐다고 예측했는데 역할 "
-            "소유 경로가 바뀌었다. 프로파일을 `normal` 로 올렸고 `triage_miss` "
+            "## docs 레인 선언이 빗나갔다\n\n문서만 바뀐다고 선언했는데 역할 "
+            "소유 경로가 바뀌었다. 프로파일을 `normal` 로 올렸고 `lane_miss` "
             "가 gap 으로 남았다 — 01 리뷰어·역할을 건너뛴 채 여기까지 왔기 "
             "때문이다.\n\n계약 파일을 쓰고 `next` 로 역할 패킷을 받는다. "
             "이미 고친 소스는 그 역할이 claim 한다." + _journey_hint(root, s),
@@ -2987,85 +2783,24 @@ def _contract_units_zero(root, s, ctx):
             "dropped": parsed.get("dropped") or []}
 
 
-def _refresh_profile(root, paths, s, ctx):
-    """계약이 바뀌었으면 프로파일을 **다시** 센다. 반환: 바뀐 내용 dict.
+def _note_contract(root, s, ctx):
+    """계약 파일의 존재·해시·버려진 줄을 상태에 적는다. 반환: {"dropped": [...]}.
 
-    예전에는 `_confirm_profile` 을 부르는 자리가 `_record_03` 하나뿐이었다.
-    `run_record` 의 멱등 가드가 통과한 03 의 재제출을 막으므로, 04 수리 중
-    메인이 계약 델타를 적용해도 프로파일은 그대로 굳었다 — P3 에서 유닛이
-    2 → 5 가 됐는데 `small` 이 남아 05 의 리뷰어가 1명이 됐다 (M34).
-
-    변화를 감지할 재료는 이미 있었다. `contract.sha256` 을 적어 두고 **읽는
-    쪽이 없었다.** 여기서 그것을 읽는다.
-
-    `dropped` 도 함께 드러낸다. 계약 파서가 `컨테이너 · 심볼` 쌍이 아닌 줄을
-    유닛으로 안 세는데, 그 사실을 읽는 곳이 doctor 의 **템플릿** 검사뿐이라
-    실제 계약이 유닛 셋을 흘렸을 때 아무도 말하지 않았다 (P3 의 델타 D-2).
+    `dropped` 는 파서가 `컨테이너 · 심볼` 쌍이 아니라서 유닛으로 안 센 줄이다 —
+    그 사실을 읽는 곳이 없으면 실제 계약이 유닛 셋을 흘려도 아무도 말하지
+    않는다 (P3 의 델타 D-2). 03 제출 · 04 수리 라운드 · 05 진입이 부른다.
+    프로파일은 건드리지 않는다 — 레인은 `init` 의 선언이다.
     """
     import contract as contract_mod
 
-    contract_path = resolve("${run.contract_file}", ctx)
-    full = root / contract_path
+    rel = resolve("${run.contract_file}", ctx)
+    full = Path(root) / rel
     if not full.exists():
-        return {"changed": False, "dropped": []}
-
-    sha = _sha256(full)
-    node = dict(s.get("contract") or {}, present=True, path=contract_path)
-    same = node.get("sha256") == sha
-    node["sha256"] = sha
-
+        return {"dropped": []}
     parsed = contract_mod.parse(full.read_text(encoding="utf-8"), ctx["config"])
-    node["dropped"] = parsed.get("dropped") or []
-    s["contract"] = node
-    if same:
-        # **매번 다시 세지 않는다.** 같은 계약을 재판정하면 판정이 흔들리고
-        # `previous` 가 뜻 없는 값으로 채워진다.
-        return {"changed": False, "dropped": node["dropped"]}
-
-    before = dict(s.get("profile") or {})
-    after = _confirm_profile(s, ctx["config"], parsed)
-    changed = after.get("name") != before.get("name")
-    if after is not s.get("profile"):
-        # 00 의 예측·신호·적용 양보는 재판정 뒤에도 남는다 — 그것이 임계값을
-        # 고칠 근거다. 이름이 같으면 예측이 맞은 것이고 출처도 그대로다.
-        for k in ("predicted", "signals", "applied", "triage_miss"):
-            if k in before and k not in after:
-                after[k] = before[k]
-        if not changed and before.get("source") == "triage":
-            after["source"] = "triage"
-            after["confirmed_at"] = s.get("phase")
-    if changed:
-        after = dict(after, previous={k: v for k, v in before.items()
-                                      if k not in ("previous", "triage_miss")},
-                     reconfirmed_at=st.stamp())
-        if paths is not None:
-            # `now` 는 `append_event` 의 타임스탬프 인자다 — 겹치면 안 된다.
-            st.append_event(paths, "profile_reconfirmed", cmd="next",
-                            was=before.get("name"), became=after.get("name"),
-                            units=after.get("units"))
-        if before.get("source") == "triage" and paths is not None:
-            import triage
-            if (triage.RANK.get(after.get("name"), 9)
-                    > triage.RANK.get(before.get("name"), 9)):
-                # **상향만 miss 다.** 하향은 관측을 더 한 것이라 비용만 더
-                # 쓴 것이고, `previous` 가 그것을 말한다.
-                after["triage_miss"] = _note_triage_miss(
-                    paths, s, before, after, s.get("phase"))
-    s["profile"] = after
-    return {"changed": changed, "previous": before if changed else None,
-            "dropped": node["dropped"]}
-
-
-def _confirm_profile(s, config, parsed):
-    """계약이 생겼으니 프로파일을 실제로 센다. 화면도 작업량이다 (ADR-H057)."""
-    n = (len(parsed.get("units") or []) + len(parsed.get("entrypoints") or [])
-         + len(parsed.get("screens") or []))
-    limit = (config.get("profile") or {}).get("small_max_units") or 3
-    if (s.get("profile") or {}).get("source") == "user":
-        return s["profile"]
-    return {"name": "small" if n <= limit else "normal", "source": "auto",
-            "units": len(parsed.get("units") or []),
-            "entrypoints": len(parsed.get("entrypoints") or [])}
+    s["contract"] = dict(s.get("contract") or {}, present=True, path=rel,
+                         sha256=_sha256(full), dropped=parsed.get("dropped") or [])
+    return {"dropped": s["contract"]["dropped"]}
 
 
 def _sha256(path):
@@ -3639,8 +3374,7 @@ def _record_06(root, paths, s, phase_item, ctx, file, reviewer, round_):
 _CLOSED_BY = {"04-gate": "gate --phase 04",
               "08-report": "report --out <경로>"}
 
-_RECORD_HANDLERS = {"00-triage": _record_00,
-                    "01-plan": _record_01,
+_RECORD_HANDLERS = {"01-plan": _record_01,
                     "03-implement": _record_03, "05-code-review": _record_05,
                     "06-pr": _record_06,
                     "07-pr-review": _record_07}
@@ -3687,11 +3421,9 @@ def _run_gate_cmd(root, phase="04", only_stage=None, replay=None, run_id=None):
                                "\n".join("- %s" % c["message"] for c in failed), None)
 
     config, adapter = adapters.load(root)
-    # **수리 라운드마다 계약을 다시 읽는다.** 메인이 여기서 계약 델타를 적용하고,
-    # 그 델타가 스코프 선택과 프로파일을 함께 바꾼다. 예전에는 스코프만 새 계약을
-    # 보고 프로파일은 03 이 정한 값으로 굳어 있었다 (M34).
+    # **수리 라운드마다 계약을 다시 읽는다.** 메인이 여기서 계약 델타를 적용한다.
     if not only_stage:
-        _refresh_profile(root, paths, s, ctx)
+        _note_contract(root, s, ctx)
     round_no = ((s.get("counters") or {}).get("repair") or {}).get("used", 0) + 1
     log_path = paths.gates / ("gr-%d.stdout.log" % round_no)
 
@@ -4729,7 +4461,7 @@ def build_parser():
     sp.add_argument("--feature", dest="feature", default=None)
     sp.add_argument("--request-file", dest="request_file", default=None)
     sp.add_argument("--profile", dest="profile", default=None,
-                    choices=["docs", "fix", "small", "normal"])
+                    choices=["docs", "fix", "normal"])
 
     sp = sub.add_parser("next", add_help=False)
     sp.add_argument("--run-id", dest="run_id", default=None)

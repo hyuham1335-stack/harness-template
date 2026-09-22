@@ -112,25 +112,6 @@
         "model_calls_max": {"type": "integer", "minimum": 1}
       }
     },
-    "triage": {
-      "description": "00 의 기계 신호 임계값. **전부 미검증 초기값이다.** 구조 신호(경로·길이·개수)만 쓰고 언어 키워드는 쓰지 않는다.",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "small_max_paths": {
-          "description": "역할 소유 경로가 이 수 이하(그리고 normal_min_chars 미만)면 small 로 예측한다.",
-          "type": "integer", "minimum": 1
-        },
-        "normal_min_chars": {
-          "description": "요청이 이 글자 수 이상이면 small 로 예측하지 않는다.",
-          "type": "integer", "minimum": 1
-        },
-        "model_call_when_undecided": {
-          "description": "기계 신호로 못 정하면 저가 모델 1회를 부른다. false 면 normal 로 낙하한다.",
-          "type": "boolean"
-        }
-      }
-    },
     "models": {
       "description": "지시 키 슬롯별 모델 등급. **전부 미검증 초기값이다.** 실행기는 실제 모델을 검증할 수 없고 봉투의 지시로만 남는다. 프로파일 키가 없으면 default 로 낙하한다.",
       "type": "object",
@@ -188,14 +169,13 @@
           "type": "integer", "minimum": 1
         },
         "profile_caps": {
-          "description": "레인별 리뷰어 상한. 네 레인이 **전부** 있어야 한다 — 코드에 기본값이 없다. 폴백을 두면 그 폴백이 곧 새 하드코딩이고 두 출처가 갈라진 날 어느 쪽이 이겼는지 볼 수 없다 (ADR-H025 · ADR-H073).",
+          "description": "레인별 리뷰어 상한. 세 레인이 **전부** 있어야 한다 — 코드에 기본값이 없다. 폴백을 두면 그 폴백이 곧 새 하드코딩이고 두 출처가 갈라진 날 어느 쪽이 이겼는지 볼 수 없다 (ADR-H025 · ADR-H073).",
           "type": "object",
           "additionalProperties": false,
-          "required": ["docs", "fix", "small", "normal"],
+          "required": ["docs", "fix", "normal"],
           "properties": {
             "docs": {"type": "integer", "minimum": 1},
             "fix": {"type": "integer", "minimum": 1},
-            "small": {"type": "integer", "minimum": 1},
             "normal": {"type": "integer", "minimum": 1}
           }
         },
@@ -206,7 +186,6 @@
           "properties": {
             "docs": {"$ref": "#/definitions/review_depth"},
             "fix": {"$ref": "#/definitions/review_depth"},
-            "small": {"$ref": "#/definitions/review_depth"},
             "normal": {"$ref": "#/definitions/review_depth"}
           }
         },

@@ -737,7 +737,7 @@ class TestWaitingHuman:
     """[[ADR-H052]] 결정 1 — 사람 대기를 페이즈 벽시계에서 분리해 잰다.
 
     `728c` 는 총 2h48m 중 1h09m(41.4%) 이 05 의 사람 대기였고, `40dc` 의
-    00-triage 36m53s 는 `triage_unclear` exit 9 로 사람을 기다린 시간이다 —
+    첫 페이즈 36m53s 는 exit 9 로 사람을 기다린 시간이다 —
     둘 다 "05 가 1h50m 걸렸다" 로 읽혔다. exit 10 은 `escalated → resumed` 로
     이미 잰다. exit 9 는 `waiting_human` → **다음 이벤트** 까지다.
     """
@@ -748,16 +748,16 @@ class TestWaitingHuman:
     def test_대기가_페이즈에_귀속되고_순_작업이_남는다(self, repo, request_file):
         paths, _ = st.create_run(repo, "demo", request_file)
         paths.events.write_text("", encoding="utf-8")
-        st.append_event(paths, "phase_enter", phase="00-triage", now=self._at(10))
-        st.append_event(paths, "waiting_human", phase="00-triage",
-                        reason="triage_unclear", now=self._at(10, 5))
-        st.append_event(paths, "submit_received", phase="00-triage",
+        st.append_event(paths, "phase_enter", phase="06-pr", now=self._at(10))
+        st.append_event(paths, "waiting_human", phase="06-pr",
+                        reason="approval", now=self._at(10, 5))
+        st.append_event(paths, "submit_received", phase="06-pr",
                         now=self._at(10, 35))
-        st.append_event(paths, "phase_pass", phase="00-triage", now=self._at(10, 40))
+        st.append_event(paths, "phase_pass", phase="06-pr", now=self._at(10, 40))
         st.append_event(paths, "phase_enter", phase="01-plan", now=self._at(10, 40))
         st.append_event(paths, "run_closed", phase="01-plan", now=self._at(11))
         t = st.phase_durations(paths)
-        cell = t["phases"]["00-triage"]
+        cell = t["phases"]["06-pr"]
         assert cell["human_wait_sec"] == 1800, cell
         assert cell["work_sec"] == 600, cell
         assert t["human_wait_sec"] == 1800, t
@@ -793,19 +793,10 @@ class TestWaitingHuman:
 
 
 class TestWaitingHumanEvents:
-    """exit 9 를 내는 세 자리가 전부 `waiting_human` 을 남긴다."""
+    """exit 9 를 내는 두 자리가 전부 `waiting_human` 을 남긴다."""
 
     def _waits(self, paths):
         return [e for e in st.read_events(paths) if e["kind"] == "waiting_human"]
-
-    def test_트리아지_unclear_가_남긴다(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT)
-        cli.run_next(repo, run_id=paths.run_id)
-        env = _submit_triage(repo, paths, {"profile": "unclear",
-                                           "expected_paths": [], "reasons": []})
-        assert env["exit"] == 9, env["render"]
-        got = self._waits(paths)
-        assert got and got[-1]["data"]["reason"] == "triage_unclear", got
 
     def test_precheck_정책_실패가_남긴다(self, repo, request_file):
         _branch(repo, "feat-x")
@@ -951,7 +942,7 @@ class TestModelCallBudget:
 # B. lint-phases — 페이즈 파일이 깨진 채로 /feature 가 시작하지 않는다
 # ---------------------------------------------------------------------------
 
-PHASE_IDS = ["00-triage", "01-plan", "03-implement", "04-gate",
+PHASE_IDS = ["01-plan", "03-implement", "04-gate",
              "05-code-review", "06-pr", "07-pr-review", "08-report"]
 
 
@@ -1185,8 +1176,8 @@ class TestLintPhases:
 
     def test_an_unknown_produces_key_fails(self, repo, phases):
         """`produces[]` 의 키 집합도 닫혀 있다 — `FRONT_KEYS` 와 대칭."""
-        _rewrite(phases / "00-triage.md",
-                 lambda f: f["produces"][0].update({"schema": "triage"}))
+        _rewrite(phases / "03-implement.md",
+                 lambda f: f["produces"][0].update({"schema": "contract"}))
         assert _fails(_lint(repo), "produces_keys")
 
     def test_no_shipped_phase_declares_a_produces_schema(self, repo, phases):
@@ -1229,10 +1220,10 @@ class TestProfileCapsHaveNoFallback:
         three = rv.route(cfg, paths, "normal")
         assert len(one["reviewers"]) == 1 and len(three["reviewers"]) == 3, (one, three)
 
-    def test_스키마가_네_레인을_전부_요구한다(self, repo):
+    def test_스키마가_세_레인을_전부_요구한다(self, repo):
         schema = harness._read_json(repo / harness.CONFIG_SCHEMA_REL)
         caps = schema["properties"]["review"]["properties"]["profile_caps"]
-        assert sorted(caps["required"]) == ["docs", "fix", "normal", "small"]
+        assert sorted(caps["required"]) == ["docs", "fix", "normal"]
 
 
 class TestSubmitCheckDeclarationsAreRead:
@@ -1274,8 +1265,8 @@ class TestSubmitCheckDeclarationsAreRead:
     def test_an_impl_pointing_at_nothing_fails_lint(self, repo, phases, monkeypatch):
         """레지스트리 자신이 검사 대상이다 — 가짜 포인터는 lint 를 통과 못 한다."""
         broken = dict(cli.SUBMIT_CHECKS)
-        broken["triage_unclear"] = dict(broken["triage_unclear"],
-                                        impl=("cli:_no_such_function",))
+        broken["pr_number_is_int"] = dict(broken["pr_number_is_int"],
+                                          impl=("cli:_no_such_function",))
         monkeypatch.setattr(cli, "SUBMIT_CHECKS", broken)
         assert _fails(_lint(repo), "submit_check_impl")
 
@@ -1287,7 +1278,7 @@ class TestSubmitCheckDeclarationsAreRead:
         assert _fails(_lint(repo), "submit_check_exit")
 
     def test_on_fail_outside_the_exit_table_fails_lint(self, repo, phases):
-        _rewrite(phases / "00-triage.md",
+        _rewrite(phases / "06-pr.md",
                  lambda f: f["submit_checks"].__setitem__(
                      0, dict(f["submit_checks"][0], on_fail=99)))
         assert _fails(_lint(repo), "submit_check_exit")
@@ -1310,19 +1301,18 @@ class TestSubmitCheckDeclarationsAreRead:
                  if f["rule"] == "submit_check_unused" and f["status"] == "WARN"]
         assert warns, findings
 
-    def test_the_registry_exit_is_the_exit_a_real_run_returns(self, repo, phases):
+    def test_the_registry_exit_is_the_exit_a_real_run_returns(self, run01):
         """**레지스트리가 두 번째 하드코딩이 되지 않게 하는 유일한 방어.**
 
-        리터럴 `9` 와 비교하지 않는다 — **레지스트리 값과** 비교한다. 그래야
-        `_record_00` 이 바뀌면 lint 가 아니라 여기가 먼저 문다. 이것이 없으면
-        레지스트리는 페이즈 파일과 **독립된 두 번째 출처**가 되고, M36 이
+        리터럴 `8` 과 비교하지 않는다 — **레지스트리 값과** 비교한다. 그래야
+        `check_vocabulary` 가 바뀌면 lint 가 아니라 여기가 먼저 문다. 이것이
+        없으면 레지스트리는 페이즈 파일과 **독립된 두 번째 출처**가 되고, M36 이
         이름한 결함이 한 층 위로 이사할 뿐이다.
         """
-        paths, _s = _init(repo, REQUEST_TEXT)
-        cli.run_next(repo, run_id=paths.run_id)
-        env = _submit_triage(repo, paths, {"profile": "unclear",
-                                           "expected_paths": [], "reasons": []})
-        assert env["exit"] == cli.SUBMIT_CHECKS["triage_unclear"]["exit"], env
+        repo, paths, s = run01
+        _submit_plan(repo, paths, _plan())
+        env = _submit_review(repo, paths, _review(reviewer="main"))
+        assert env["exit"] == cli.SUBMIT_CHECKS["reviewer_not_main"]["exit"], env
 
 
 # ---------------------------------------------------------------------------
@@ -1341,7 +1331,7 @@ class TestContractUnits:
     """M23 — 계약 파서가 중첩 불릿을 유닛으로 세고, 템플릿 자신이 그 형태다.
 
     P1 에서 이것이 유닛 19개·unmatched 15건을 만들었고 화면 층 테스트가 스코프
-    선택에서 빠졌다. 프로파일 판정(`small_max_units`)까지 함께 오염된다.
+    선택에서 빠졌다.
     """
 
     def _parse(self, repo, text):
@@ -1602,13 +1592,6 @@ def _raw(findings):
     return "\n".join(lines) + "\n"
 
 
-def _past_00(paths, s):
-    """00 을 지나 01 앞에 세운다 — 00 의 판정은 `TestPhase00Wiring` 이 따로 묻는다."""
-    st.set_phase_status(s, "00-triage", "passed")
-    s["phase"] = "01-plan"
-    st.save(paths, s)
-
-
 @pytest.fixture
 def run01(repo, phases):
     """01 지시문까지 진행된 런."""
@@ -1616,7 +1599,6 @@ def run01(repo, phases):
     req.parent.mkdir(parents=True, exist_ok=True)
     req.write_text(REQUEST_TEXT, encoding="utf-8")
     paths, s = st.create_run(repo, "sim", req)
-    _past_00(paths, s)
     st.set_phase_status(s, "01-plan", "running")
     st.save(paths, s)
     return repo, paths, s
@@ -1810,154 +1792,6 @@ FIVE_UNIT_CONTRACT = """# 계약: 제목 유사도
 
 - `MATCH_EMPTY` (400)
 """
-
-
-class TestProfileReconfirmation:
-    """M34 — 계약이 바뀌면 프로파일을 다시 센다.
-
-    P3 의 계약 델타 D-2 는 04 게이트 수리 중에 적용됐고, 유닛이 2 → 5 가 됐는데
-    프로파일은 `small` 로 남아 05 의 리뷰어가 1명이 됐다. `_confirm_profile` 을
-    부르는 자리가 `_record_03` 하나뿐이었고, `run_record` 의 멱등 가드가 통과한
-    03 의 재제출을 막으므로 그 뒤에는 재판정 경로가 없었다.
-
-    변화를 감지할 재료(`contract.sha256`)는 이미 상태에 있었고 읽는 쪽이 없었다.
-    """
-
-    def _at_05(self, repo, paths, s, profile):
-        s["profile"] = dict(profile)
-        st.set_phase_status(s, "04-gate", "passed")
-        s["phase"] = "05-code-review"
-        st.save(paths, s)
-
-    def test_a_contract_delta_reconfirms_the_profile(self, gated, phases):
-        repo, paths, s = gated
-        # 03 이 세었을 때의 계약(유닛 1개) — small
-        s["contract"]["sha256"] = hashlib.sha256(
-            (repo / "_workspace" / "contract_sim.md").read_bytes()).hexdigest()
-        self._at_05(repo, paths, s,
-                    {"name": "small", "source": "auto", "units": 1,
-                     "entrypoints": 0})
-
-        # 04 수리 중 메인이 델타를 적용한다 — 유닛이 1 → 5 가 된다
-        (repo / "_workspace" / "contract_sim.md").write_text(
-            FIVE_UNIT_CONTRACT, encoding="utf-8")
-
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        assert after["profile"]["name"] == "normal", after["profile"]
-        assert after["profile"]["units"] == 5, after["profile"]
-        assert after["profile"]["previous"]["name"] == "small", after["profile"]
-        assert after["profile"].get("reconfirmed_at"), after["profile"]
-
-    def test_the_reviewer_cap_follows_the_new_profile(self, gated, phases):
-        """재판정이 값을 내는 자리는 05 의 리뷰어 수다."""
-        repo, paths, s = gated
-        s["contract"]["sha256"] = hashlib.sha256(
-            (repo / "_workspace" / "contract_sim.md").read_bytes()).hexdigest()
-        self._at_05(repo, paths, s,
-                    {"name": "small", "source": "auto", "units": 1,
-                     "entrypoints": 0})
-        (repo / "_workspace" / "contract_sim.md").write_text(
-            FIVE_UNIT_CONTRACT, encoding="utf-8")
-
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        routed = after["phases"]["05-code-review"]["routing"]
-        assert routed["profile"] == "normal", routed
-        assert routed["cap"] > 1, routed
-
-    def test_an_unchanged_contract_reconfirms_nothing(self, gated, phases):
-        """sha 가 같으면 재판정하지 않는다 — 매번 다시 세면 판정이 흔들린다."""
-        repo, paths, s = gated
-        s["contract"]["sha256"] = hashlib.sha256(
-            (repo / "_workspace" / "contract_sim.md").read_bytes()).hexdigest()
-        self._at_05(repo, paths, s,
-                    {"name": "small", "source": "auto", "units": 1,
-                     "entrypoints": 0})
-
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        assert after["profile"]["name"] == "small", after["profile"]
-        assert "previous" not in after["profile"], after["profile"]
-
-    def test_a_user_profile_survives_the_refresh(self, gated, phases):
-        """`--profile` 로 준 값은 사람이 정한 것이다 — 자동 판정이 못 이긴다."""
-        repo, paths, s = gated
-        s["contract"]["sha256"] = "낡은값"
-        self._at_05(repo, paths, s, {"name": "small", "source": "user"})
-        (repo / "_workspace" / "contract_sim.md").write_text(
-            FIVE_UNIT_CONTRACT, encoding="utf-8")
-
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        assert after["profile"]["name"] == "small", after["profile"]
-        assert after["profile"]["source"] == "user", after["profile"]
-
-    def test_dropped_units_are_named_not_silent(self, gated, phases):
-        """D-2 의 침묵. 계약이 `경로` — 서술 형태로 쓴 줄은 유닛으로 안 세어졌고
-        `dropped` 를 읽는 곳이 doctor 의 **템플릿** 검사뿐이라 아무도 말하지
-        않았다. 유닛이 5 가 아니라 2 로 세어져 프로파일과 스코프가 함께 빗나갔다.
-        """
-        repo, paths, s = gated
-        s["contract"]["sha256"] = "낡은값"
-        self._at_05(repo, paths, s,
-                    {"name": "small", "source": "auto", "units": 1,
-                     "entrypoints": 0})
-        (repo / "_workspace" / "contract_sim.md").write_text(
-            CONTRACT_MD.replace(
-                "- `lib/match.ts · matchTitle(a: string, b: string): number`",
-                "- `lib/match.ts · matchTitle(a: string, b: string): number`\n"
-                "- `lib/normalize.ts` — 제목을 정규화한다"),
-            encoding="utf-8")
-
-        env = cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        dropped = after["contract"]["dropped"]
-        assert dropped, after["contract"]
-        assert "lib/normalize.ts" in json.dumps(dropped, ensure_ascii=False)
-        assert "유닛으로 세어지지 않" in env["render"], env["render"]
-
-    def test_the_report_names_the_profile_and_its_source(self, gated, phases):
-        """`리뷰어 1/1` 이 계획인지 결함인지는 프로파일이 갈라 준다."""
-        repo, paths, s = gated
-        s["contract"]["sha256"] = "낡은값"
-        self._at_05(repo, paths, s,
-                    {"name": "small", "source": "auto", "units": 1,
-                     "entrypoints": 0})
-        (repo / "_workspace" / "contract_sim.md").write_text(
-            FIVE_UNIT_CONTRACT, encoding="utf-8")
-        cli.run_next(repo, run_id=paths.run_id)
-
-        _, after = st.load(repo, paths.run_id)
-        text, _missing = rep_mod.build(after, {})
-        line = next(l for l in text.splitlines() if l.startswith("| 프로파일"))
-        assert "normal" in line and "small" in line, line
-        assert "유닛 5" in line, line
-
-    def test_replanning_05_does_not_shrink_the_planned_reviewers(self, gated,
-                                                                 phases):
-        """재판정을 넣으면 이 자리를 더 자주 지난다. 변경 집합이 줄었다고
-        계획된 리뷰어가 조용히 줄면 리뷰 실적이 축소된다.
-        """
-        repo, paths, s = gated
-        (repo / "src" / "lib" / "match.ts").write_text("// 고침\n",
-                                                       encoding="utf-8")
-        self._at_05(repo, paths, s,
-                    {"name": "normal", "source": "auto", "units": 5,
-                     "entrypoints": 0})
-        cli.run_next(repo, run_id=paths.run_id)
-        _, mid = st.load(repo, paths.run_id)
-        first = mid["phases"]["05-code-review"]["planned"]
-        assert first, mid["phases"]["05-code-review"]
-
-        # 변경 집합이 사라진다 (커밋됐다고 치자)
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-m", "wip", "--no-verify")
-
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        assert set(after["phases"]["05-code-review"]["planned"]) >= set(first), \
-            "계획된 리뷰어는 줄지 않는다"
 
 
 class TestLoopDeclarationsAreRead:
@@ -2401,12 +2235,10 @@ class TestTestsRequiredAt03:
         out2 = _run_cli(repo, "next")
         env2 = json.loads(out2.stdout)
         assert env2["exit"] == 0, env2["render"]
-        # 경로 언급이 없는 요청은 기계가 못 정한다 — 첫 패킷은 00 이고 저가
-        # 모델 1회를 지시한다 (ADR-H044). docs 요청의 첫 패킷이 01 인 것은
-        # `TestPhase00Wiring` 이 묻는다.
-        assert env2["phase"] == "00-triage"
-        assert "00_triage.json" in env2["render"]
-        assert "record --phase 00" in (env2["next_command"] or "")
+        # 첫 패킷은 01 이다 — 레인은 `init` 이 선언했고 예측 단계가 없다.
+        assert env2["phase"] == "01-plan"
+        assert "01_plan.md" in env2["render"]
+        assert "record --phase 01" in (env2["next_command"] or "")
 
     def test_init_rejects_a_bad_slug(self, repo, phases, request_file):
         out = _run_cli(repo, "init", "--feature", "Bad Slug",
@@ -4911,13 +4743,6 @@ class TestReviewerRouting:
         codes = [r["code"] for r in got["reviewers"]]
         assert codes == sorted(codes, key=lambda c: _priority(repo, c))
 
-    def test_small_profile_takes_gen_and_the_top_one(self, repo):
-        """small 의 상한 2 는 gen 자리 하나 + 특화 리뷰어 하나다 (ADR-H043)."""
-        got = rv.route(_config(repo),
-                       ["src/lib/schemas.ts", "src/app/api/x/route.ts"], "small")
-        assert [r["code"] for r in got["reviewers"]] == ["gen", "data"]
-        assert got["capped"] is True
-
     def test_normal_profile_respects_the_cap(self, repo):
         changed = ["src/lib/schemas.ts", "src/app/api/x/route.ts",
                    "src/lib/a.ts", "src/lib/a.test.ts"]
@@ -5253,11 +5078,11 @@ class TestPhase05File:
                   if f["rule"] == "on_success" and f["status"] == "WARN"]
         assert future == [], future
 
-    def test_실물_페이즈가_여덟이고_08_은_done_을_가리킨다(self, repo):
+    def test_실물_페이즈가_일곱이고_08_은_done_을_가리킨다(self, repo):
         """**M24.** 08 이 아무것도 안 가리키면 런이 닫히는 자리가 없다."""
         loaded, broken = cli.load_phases(ROOT)
         assert broken == []
-        assert sorted(loaded) == ["00-triage", "01-plan", "03-implement", "04-gate",
+        assert sorted(loaded) == ["01-plan", "03-implement", "04-gate",
                                   "05-code-review", "06-pr", "07-pr-review",
                                   "08-report"]
         assert loaded["08-report"]["front"].get("on_success") == st.DONE
@@ -7845,7 +7670,7 @@ class TestHorizonRender:
     def test_범위를_문자열로_박지_않고_페이즈에서_유도한다(self):
         loaded, _broken = cli.load_phases(ROOT)
         got = cli._horizon_render("09-nope", loaded)
-        assert "00-triage" in got and "08-report" in got
+        assert "01-plan" in got and "08-report" in got
         assert "01~04" not in got
 
 
@@ -7959,11 +7784,11 @@ class TestConvergenceThreshold:
         env = _submit_review(repo, paths, _review("plan", findings=[_crit()]))
         assert env["exit"] == 5, env["render"]
 
-    def test_the_normal_cap_is_three(self, run01):
-        """미검증 상속값 5 → 3 (ADR-H041). 값의 회귀 방지다."""
+    def test_the_normal_cap_is_two(self, run01):
+        """5 → 3 (ADR-H041) → 2 (덜어내기 Wave 3 — 리뷰어가 리포를 읽으므로 1~2라운드). 값의 회귀 방지다."""
         repo, paths, s = run01
         front = _front(_phase_file(repo, "01-plan.md"))
-        assert front["converge"]["max_by_profile"] == {"fix": 1, "small": 2, "normal": 3}
+        assert front["converge"]["max_by_profile"] == {"fix": 1, "normal": 2}
         assert front["loop"]["max_by_profile"] == front["converge"]["max_by_profile"]
 
     def test_missing_blocking_severities_is_exit_2(self, run01):
@@ -8049,10 +7874,8 @@ class TestInlineBudgetIsEnforced:
 
 
 # ---------------------------------------------------------------------------
-# J. 00-triage — 요청을 파이프라인에 넣기 전에 레인을 정한다 (ADR-H044)
+# J. 레인 — `init --profile` 의 선언으로 01 부터 간다 (ADR-H044 · 덜어내기 Wave 3)
 # ---------------------------------------------------------------------------
-
-import triage as triage_mod  # noqa: E402
 
 DOCS_REQUEST = REQUEST_TEXT + "그리고 docs/PRD.md 에 그 규칙을 적어 줘.\n"
 SOURCE_REQUEST = REQUEST_TEXT + "src/lib/match.ts 를 고친다.\n"
@@ -8070,223 +7893,47 @@ def _init(repo, text, slug="tri", profile=None):
     return paths, s
 
 
-def _submit_triage(repo, paths, payload):
-    f = paths.run_dir / "00_triage.json"
-    f.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return cli.run_record(repo, phase="00", file=str(f), reviewer=None, round_=None)
+class TestInitLane:
+    """레인은 `init --profile` 의 사용자 선언이다 — 없으면 `normal`, 첫 페이즈는 01."""
 
-
-class TestTriageSignals:
-    """순수 함수. 언어 키워드를 쓰지 않는다 — 같은 경로면 어느 언어든 같은 판정."""
-
-    def test_docs_path_in_korean_and_english_prose_decide_the_same(self):
-        cfg = _cfg()
-        ko = "docs/PRD.md 의 3절을 고쳐 줘."
-        en = "Please fix section 3 of docs/PRD.md."
-        a = triage_mod.decide(triage_mod.signals(ko, cfg), cfg)
-        b = triage_mod.decide(triage_mod.signals(en, cfg), cfg)
-        assert a["profile"] == b["profile"] == "docs", (a, b)
-        assert a["decided_by"] == "machine"
-        assert a["expected_paths"] == ["docs/PRD.md"]
-
-    def test_a_korean_particle_glued_to_the_path_does_not_break_it(self):
-        sig = triage_mod.signals("docs/PRD.md를 고쳐줘", _cfg())
-        assert sig["paths_docs"] == ["docs/PRD.md"], sig
-
-    def test_role_owned_paths_predict_small_under_the_thresholds(self):
-        cfg = _cfg()
-        got = triage_mod.decide(triage_mod.signals(SOURCE_REQUEST, cfg), cfg)
-        assert got["profile"] == "small", got
-        assert got["touches_source"] is True
-        assert "src/lib/match.ts" in got["expected_paths"]
-
-    def test_too_many_role_owned_paths_predict_normal(self):
-        cfg = _cfg()
-        text = " ".join("src/lib/f%d.ts" % i for i in range(5))
-        got = triage_mod.decide(triage_mod.signals(text, cfg), cfg)
-        assert got["profile"] == "normal", got
-
-    def test_a_long_request_predicts_normal_even_with_one_path(self):
-        cfg = _cfg()
-        text = "src/lib/match.ts " + ("요구사항 " * 400)
-        got = triage_mod.decide(triage_mod.signals(text, cfg), cfg)
-        assert got["profile"] == "normal", got
-
-    def test_no_path_at_all_is_undecided(self):
-        cfg = _cfg()
-        assert triage_mod.decide(triage_mod.signals(REQUEST_TEXT, cfg), cfg) is None
-
-    def test_harness_source_is_not_docs_even_though_main_owned(self):
-        """`scripts/**` 는 main_owned 이지만 하네스 소스다 — docs 로 새면 안 된다."""
-        cfg = _cfg()
-        sig = triage_mod.signals("scripts/pipeline/cli.py 를 고쳐 줘", cfg)
-        assert sig["paths_unresolved"] == ["scripts/pipeline/cli.py"], sig
-        assert triage_mod.decide(sig, cfg) is None
-
-    def test_a_url_is_not_a_path(self):
-        sig = triage_mod.signals("https://example.com/a/b 를 봐", _cfg())
-        assert sig["paths_unresolved"] == [] and sig["paths_docs"] == [], sig
-
-    def test_docs_and_unresolved_together_is_undecided(self):
-        cfg = _cfg()
-        sig = triage_mod.signals("docs/PRD.md 와 tools/x/y.sh", cfg)
-        assert triage_mod.decide(sig, cfg) is None
-
-    def test_missing_thresholds_raise_instead_of_falling_back(self):
-        """선언이 없으면 폴백이 곧 새 하드코딩이다 (M36)."""
-        cfg = _cfg()
-        cfg.pop("triage")
-        with pytest.raises(ValueError):
-            triage_mod.decide(triage_mod.signals(SOURCE_REQUEST, cfg), cfg)
-
-    def test_submission_vocabulary_and_substring_are_checked(self):
-        cfg = _cfg()
-        assert triage_mod.check_submission(
-            {"profile": "huge", "expected_paths": []}, DOCS_REQUEST, cfg)
-        errs = triage_mod.check_submission(
-            {"profile": "small", "expected_paths": ["src/lib/other.ts"]},
-            DOCS_REQUEST, cfg)
-        assert any("요청 원문에 없다" in e for e in errs), errs
-        assert triage_mod.check_submission(
-            {"profile": "docs", "expected_paths": ["docs/PRD.md"]},
-            DOCS_REQUEST, cfg) == []
-
-    def test_docs_submission_must_stay_inside_the_docs_globs(self):
-        cfg = _cfg()
-        errs = triage_mod.check_submission(
-            {"profile": "docs", "expected_paths": ["src/lib/match.ts"]},
-            SOURCE_REQUEST, cfg)
-        assert any("docs glob" in e for e in errs), errs
-        errs = triage_mod.check_submission(
-            {"profile": "docs", "expected_paths": []}, DOCS_REQUEST, cfg)
-        assert any("최소 하나" in e for e in errs), errs
-
-
-class TestPhase00Wiring:
-
-    def test_a_docs_request_reaches_01_in_one_envelope_without_a_model(self, repo, phases):
-        paths, s = _init(repo, DOCS_REQUEST)
-        assert s["phase"] == "00-triage"
-        env = cli.run_next(repo, run_id=paths.run_id)
-        assert env["exit"] == 0, env["render"]
-        assert env["phase"] == "01-plan", env["phase"]
-        assert "리뷰어 — 0명" in env["render"], env["render"]
-        assert "prescan" in env["data"]
-        _, after = st.load(repo, paths.run_id)
-        prof = after["profile"]
-        assert prof["name"] == "docs" and prof["source"] == "triage", prof
-        assert prof["predicted"]["decided_by"] == "machine"
-        assert prof["signals"]["paths_docs"] == ["docs/PRD.md"]
-        assert after["contract"]["mode"] == "no_contract"
-        assert st.phase_status(after, "00-triage") == "passed"
-        assert after["budget"]["model_calls"]["total"] == 0
-        assert (paths.run_dir / "00_triage.json").exists()
-        kinds = [e["kind"] for e in st.read_events(paths)]
-        assert "triage_decided" in kinds, kinds
-
-    def test_an_undecided_request_asks_one_cheap_model_call(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT)
-        env = cli.run_next(repo, run_id=paths.run_id)
-        assert env["exit"] == 0, env["render"]
-        assert env["phase"] == "00-triage"
-        assert "model: `haiku`" in env["render"], env["render"]
-        assert "00_original_request.md" in env["render"]
-        _, after = st.load(repo, paths.run_id)
-        assert after["budget"]["model_calls"]["counted"] == ["00:triage"]
-        assert after["models"]["instructed"]["00:triage"] == "haiku"
-        assert after["phases"]["00-triage"]["needs_model"] is True
-
-    def test_next_is_idempotent_on_00(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT)
-        cli.run_next(repo, run_id=paths.run_id)
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        assert after["budget"]["model_calls"]["total"] == 1
-
-    def test_a_model_prediction_is_recorded_and_advances_to_01(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT)
-        cli.run_next(repo, run_id=paths.run_id)
-        env = _submit_triage(repo, paths, {
-            "profile": "small", "expected_paths": [], "touches_source": True,
-            "reasons": ["한 함수"]})
-        assert env["exit"] == 0, env["render"]
-        assert env["phase"] == "01-plan"
-        _, after = st.load(repo, paths.run_id)
-        assert after["profile"] == dict(after["profile"], name="small",
-                                        source="triage")
-        assert after["profile"]["predicted"]["decided_by"] == "model"
-        assert after["phases"]["00-triage"]["decided_by"] == "model"
-
-    def test_unclear_is_exit_9_and_the_human_answer_wins(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT)
-        cli.run_next(repo, run_id=paths.run_id)
-        env = _submit_triage(repo, paths, {"profile": "unclear",
-                                           "expected_paths": [], "reasons": []})
-        assert env["exit"] == 9, env["render"]
-        assert len(env["data"]["options"]) == 4     # docs · fix · small · normal
-        _, mid = st.load(repo, paths.run_id)
-        assert mid["phase"] == "00-triage" and not mid.get("escalated")
-        env = _submit_triage(repo, paths, {"profile": "normal", "expected_paths": [],
-                                           "decided_by": "user"})
-        assert env["exit"] == 0, env["render"]
-        _, after = st.load(repo, paths.run_id)
-        assert after["profile"]["source"] == "user"
-        assert after["profile"]["predicted"]["decided_by"] == "user"
-
-    def test_a_bad_submission_is_exit_8(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT)
-        cli.run_next(repo, run_id=paths.run_id)
-        env = _submit_triage(repo, paths, {"profile": "docs",
-                                           "expected_paths": ["docs/없는.md"]})
-        assert env["exit"] == 8, env["render"]
-        assert "record --phase 00" in env["next_command"]
-
-    def test_a_user_profile_is_not_overridden_and_costs_no_model(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT, profile="small")
+    def test_init_starts_at_01_with_the_default_lane(self, repo, phases):
+        paths, s = _init(repo, SOURCE_REQUEST)
+        assert s["phase"] == "01-plan"
+        assert s["profile"] == {"name": "normal", "source": "default"}
+        assert s["contract"]["mode"] == "contract"
         env = cli.run_next(repo, run_id=paths.run_id)
         assert env["exit"] == 0 and env["phase"] == "01-plan", env["render"]
+        assert "prescan" in env["data"], "런 전체의 사전 검사는 첫 페이즈에서 한 번이다"
         _, after = st.load(repo, paths.run_id)
-        assert after["profile"]["name"] == "small"
-        assert after["profile"]["source"] == "user"
-        assert after["profile"]["predicted"]["decided_by"] == "user"
-        assert "request_chars" in after["profile"]["signals"]
-        assert after["budget"]["model_calls"]["counted"] == ["01:r0:plan"]
+        assert "01:r0:plan" in after["budget"]["model_calls"]["counted"]
 
-    def test_a_user_docs_profile_turns_the_contract_off(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT, profile="docs")
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        assert after["contract"]["mode"] == "no_contract"
-
-    def test_no_model_fallback_goes_normal(self, repo, phases):
-        cfg_path = repo / "harness" / "config.json"
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        cfg["triage"]["model_call_when_undecided"] = False
-        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
-        paths, s = _init(repo, REQUEST_TEXT)
+    def test_a_docs_declaration_means_no_contract_and_no_reviewer(self, repo, phases):
+        paths, s = _init(repo, DOCS_REQUEST, profile="docs")
+        assert s["profile"] == {"name": "docs", "source": "user"}
+        assert s["contract"]["mode"] == "no_contract"
         env = cli.run_next(repo, run_id=paths.run_id)
-        assert env["phase"] == "01-plan", env["render"]
+        assert env["phase"] == "01-plan" and "리뷰어 — 0명" in env["render"], env["render"]
         _, after = st.load(repo, paths.run_id)
-        assert after["profile"]["name"] == "normal"
-        assert "undecided_no_model" in after["profile"]["predicted"]["reasons"]
-        assert after["budget"]["model_calls"]["total"] == 1   # 01 은 이제 plan 단독(ADR-H045)
+        assert after["budget"]["model_calls"]["total"] == 0
 
-    def test_init_cli_accepts_docs(self, repo, phases, request_file):
-        out = _run_cli(repo, "init", "--feature", "d", "--request-file",
-                       str(request_file), "--profile", "docs")
+    def test_the_cli_accepts_three_lanes_only(self, repo, phases):
+        req = repo / "_workspace" / "requests" / "x.md"
+        req.parent.mkdir(parents=True, exist_ok=True)
+        req.write_text(REQUEST_TEXT, encoding="utf-8")
+        out = _run_cli(repo, "init", "--feature", "demo", "--request-file", str(req),
+                       "--profile", "docs")
         assert out.returncode == 0, out.stderr
-
-    def test_the_first_next_carries_the_prescan(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT)
-        env = cli.run_next(repo, run_id=paths.run_id)
-        assert "prescan" in env["data"]
+        assert json.loads(out.stdout)["run_id"]
+        bad = _run_cli(repo, "init", "--feature", "demo2", "--request-file", str(req),
+                       "--profile", "small")
+        assert bad.returncode != 0, "small 레인은 사라졌다"
 
 
 class TestDocsLane:
     """docs 레인 — 01 리뷰어 0 → 03 역할 0, 모델 호출 0."""
 
     def _at_01(self, repo):
-        paths, s = _init(repo, DOCS_REQUEST)
+        paths, s = _init(repo, DOCS_REQUEST, profile="docs")
         env = cli.run_next(repo, run_id=paths.run_id)
         assert env["phase"] == "01-plan", env["render"]
         return paths
@@ -8326,7 +7973,7 @@ class TestDocsLane:
         assert "03:roles=0" in after["profile"]["applied"]
         assert after["budget"]["model_calls"]["total"] == 0
 
-    def test_touching_source_in_the_docs_lane_is_a_triage_miss(self, repo, phases):
+    def test_touching_source_in_the_docs_lane_is_a_lane_miss(self, repo, phases):
         paths = self._at_01(repo)
         _submit_plan(repo, paths, _plan())
         (repo / "src" / "lib" / "match.ts").write_text("export const x = 1\n",
@@ -8340,91 +7987,16 @@ class TestDocsLane:
         _, after = st.load(repo, paths.run_id)
         prof = after["profile"]
         assert prof["name"] == "normal" and prof["previous"]["name"] == "docs"
-        assert prof["triage_miss"]["at"] == "03-implement"
-        assert prof["predicted"]["profile"] == "docs"      # 예측은 남는다
+        assert prof["lane_miss"]["at"] == "03-implement"
+        assert "predicted" not in prof
         assert after["contract"]["mode"] == "contract"
         assert after["grade"] == "PASS_WITH_GAPS"
-        assert "triage_miss:01:reviewers=0;03:roles=0" in after["gaps"]
+        assert "lane_miss:01:reviewers=0;03:roles=0" in after["gaps"]
         kinds = [e["kind"] for e in st.read_events(paths)]
-        assert "triage_miss" in kinds
+        assert "lane_miss" in kinds
         # 다음 `next` 는 계약을 요구한다 — 역할 패킷은 그 뒤다.
         env = cli.run_next(repo, run_id=paths.run_id)
         assert env["exit"] == 3, env["render"]
-
-
-class TestTriageMiss:
-    """예측은 03·05 의 실물에 밀린다 — 상향만 miss 다."""
-
-    def _at_05(self, repo, paths, s, profile):
-        s["profile"] = dict(profile)
-        s["contract"]["sha256"] = "낡은값"
-        st.set_phase_status(s, "04-gate", "passed")
-        s["phase"] = "05-code-review"
-        st.save(paths, s)
-
-    def test_small_prediction_beaten_by_a_five_unit_contract_is_a_miss(self, gated, phases):
-        repo, paths, s = gated
-        self._at_05(repo, paths, s, {"name": "small", "source": "triage",
-                                     "predicted": {"profile": "small"},
-                                     "applied": ["01:max_rounds=2"]})
-        (repo / "_workspace" / "contract_sim.md").write_text(
-            FIVE_UNIT_CONTRACT, encoding="utf-8")
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        prof = after["profile"]
-        assert prof["name"] == "normal" and prof["source"] == "auto", prof
-        assert prof["triage_miss"]["was"] == "small"
-        assert prof["triage_miss"]["at"] == "05-code-review"
-        assert prof["predicted"]["profile"] == "small"
-        assert "triage_miss:01:max_rounds=2" in after["gaps"]
-        assert after["grade"] == "PASS_WITH_GAPS"
-
-    def test_normal_prediction_beaten_downward_is_quiet(self, gated, phases):
-        repo, paths, s = gated
-        self._at_05(repo, paths, s, {"name": "normal", "source": "triage",
-                                     "predicted": {"profile": "normal"},
-                                     "applied": []})
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        prof = after["profile"]
-        assert prof["name"] == "small" and prof["previous"]["name"] == "normal"
-        assert "triage_miss" not in prof
-        assert not any(g.startswith("triage_miss") for g in after.get("gaps") or [])
-
-    def test_a_confirmed_prediction_keeps_its_source(self, gated, phases):
-        repo, paths, s = gated
-        self._at_05(repo, paths, s, {"name": "small", "source": "triage",
-                                     "predicted": {"profile": "small"},
-                                     "applied": ["01:max_rounds=2"]})
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        prof = after["profile"]
-        assert prof["name"] == "small" and prof["source"] == "triage", prof
-        assert prof["applied"] == ["01:max_rounds=2"]
-        assert prof.get("confirmed_at") == "05-code-review"
-
-    def test_the_report_names_the_prediction_and_the_miss(self, gated, phases):
-        repo, paths, s = gated
-        self._at_05(repo, paths, s, {"name": "small", "source": "triage",
-                                     "predicted": {"profile": "small",
-                                                   "decided_by": "machine"},
-                                     "applied": ["01:max_rounds=2"]})
-        s["phases"]["00-triage"] = {"decided_by": "machine", "profile": "small",
-                                    "signals": {"paths_role_owned": ["a"],
-                                                "paths_docs": [],
-                                                "paths_unresolved": [],
-                                                "request_chars": 10}}
-        st.save(paths, s)
-        (repo / "_workspace" / "contract_sim.md").write_text(
-            FIVE_UNIT_CONTRACT, encoding="utf-8")
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        text, _missing = rep_mod.build(after, {})
-        line = next(l for l in text.splitlines() if l.startswith("| 프로파일"))
-        assert "빗나감" in line and "00 예측 small" in line, line
-        assert "| 00 트리아지" in text and "machine → small" in text, text
-        assert "triage_miss" in text
-        assert "| 트리아지 적용 양보" in text
 
 
 class TestModelTierRouting:
@@ -8434,7 +8006,6 @@ class TestModelTierRouting:
     # normal 에서 opus — 계약이 작성자의 자유도를 묶었고 검사자의 내용 품질은
     # 기계가 못 잰다 (ADR-H061). `inherit` 는 표에 없다.
     EXPECTED_TIERS = {
-        "00:triage":      {"docs": "haiku", "fix": "haiku", "small": "haiku", "normal": "haiku"},
         "01:r0:plan":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "opus"},
         "03:r0:impl":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
         "04:r1:impl":     {"docs": "sonnet", "fix": "sonnet", "small": "sonnet", "normal": "sonnet"},
@@ -8462,9 +8033,9 @@ class TestModelTierRouting:
         env = cli.run_next(repo, run_id=paths.run_id)
         assert env["phase"] == "01-plan", env["render"]
         assert "## 모델 등급" in env["render"]
-        assert "`01:r0:plan` → model: `sonnet`" in env["render"], env["render"]
+        assert "`01:r0:plan` → model: `opus`" in env["render"], env["render"]
         _, after = st.load(repo, paths.run_id)
-        assert after["models"]["instructed"] == {"01:r0:plan": "sonnet"}
+        assert after["models"]["instructed"] == {"01:r0:plan": "opus"}
         assert after["models"]["basis"] == st.MODELS_BASIS
         assert after["models"]["blind_spots"]
 
@@ -8484,7 +8055,7 @@ class TestModelTierRouting:
         cli.run_next(repo, run_id=paths.run_id)
         _, after = st.load(repo, paths.run_id)
         text, _missing = rep_mod.build(after, {})
-        assert "| 지시된 모델 등급" in text and "sonnet: 1" in text, text
+        assert "| 지시된 모델 등급" in text and "opus: 1" in text, text
 
     def test_lint_warns_when_an_agent_file_pins_a_model(self, repo, phases):
         (repo / ".claude" / "agents" / "impl-writer.md").write_text(
@@ -8515,7 +8086,7 @@ class TestModelTierRouting:
         assert [f for f in _lint(repo) if f["rule"] == "agent_model"] == []
 
 
-class TestSkipPolicy:
+class TestConditionLint:
 
     def test_an_unparseable_unless_is_rejected(self, repo, phases):
         _rewrite(phases / "01-plan.md",
@@ -8526,10 +8097,12 @@ class TestSkipPolicy:
         assert _fails(_lint(repo), "allow_unless"), _lint(repo)
 
     def test_index_zero_lints_clean_and_sorts_first(self, repo, phases):
+        """`index: 0` 은 거짓값이지만 유효한 인덱스다 — falsy 로 다루면 첫 페이즈가 사라진다."""
+        _rewrite(phases / "01-plan.md", lambda f: f.__setitem__("index", 0))
         assert _fails(_lint(repo)) == []
         loaded, _ = cli.load_phases(repo)
-        assert sorted(loaded)[0] == "00-triage"
-        assert loaded["00-triage"]["front"]["index"] == 0
+        assert sorted(loaded)[0] == "01-plan"
+        assert loaded["01-plan"]["front"]["index"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -8785,7 +8358,7 @@ class TestJourneyHint:
         assert env["exit"] == 3 and "진입 거부" in env["render"], env["render"]
         assert self.HINT not in env["render"], env["render"]
 
-    def test_docs_예측_빗나감_봉투도_말한다(self, repo, phases):
+    def test_docs_선언_빗나감_봉투도_말한다(self, repo, phases):
         paths = TestDocsLane()._at_01(repo)
         _submit_plan(repo, paths, _plan())
         (repo / "src" / "lib" / "match.ts").write_text("export const x = 1\n",
@@ -8794,7 +8367,7 @@ class TestJourneyHint:
         claims.write_text('{"schema":1,"roles":[]}', encoding="utf-8")
         env = cli.run_record(repo, phase="03", file=str(claims), reviewer=None,
                              round_=None)
-        assert env["exit"] == 3 and "docs 예측" in env["render"], env["render"]
+        assert env["exit"] == 3 and "docs 레인 선언" in env["render"], env["render"]
         assert self.HINT in env["render"], env["render"]
 
 
@@ -9228,22 +8801,12 @@ class TestGateTestsByFile:
 
 
 class TestFixLane:
-    """`fix` 레인 (ADR-H053). 기계 신호는 내지 않고 사람·모델만 정한다.
+    """`fix` 레인 (ADR-H053). 사용자가 `init --profile fix` 로 선언한다.
 
     절차: 01 1라운드 → 03 impl·test → 05 cap 1(`gen`).
     """
 
-    def test_machine_decide_never_yields_fix(self):
-        cfg = _cfg()
-        assert "fix" in triage_mod.PROFILES
-        assert triage_mod.RANK["docs"] < triage_mod.RANK["fix"] < triage_mod.RANK["small"]
-        for text in (SOURCE_REQUEST, DOCS_REQUEST, REQUEST_TEXT,
-                     "src/lib/match.ts 의 버그를 고쳐 줘",
-                     "fix the bug in src/lib/match.ts"):
-            got = triage_mod.decide(triage_mod.signals(text, cfg), cfg)
-            assert got is None or got["profile"] != "fix", (text, got)
-
-    def test_a_user_fix_profile_is_kept_through_00(self, repo, phases):
+    def test_a_user_fix_profile_is_kept_at_init(self, repo, phases):
         paths, s = _init(repo, SOURCE_REQUEST, profile="fix")
         env = cli.run_next(repo, run_id=paths.run_id)
         assert env["exit"] == 0 and env["phase"] == "01-plan", env["render"]
@@ -9251,25 +8814,6 @@ class TestFixLane:
         assert after["profile"]["name"] == "fix"
         assert after["profile"]["source"] == "user"
         assert after["contract"].get("mode") != "no_contract"
-
-    def test_a_model_may_submit_fix(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT)
-        cli.run_next(repo, run_id=paths.run_id)
-        env = _submit_triage(repo, paths, {
-            "profile": "fix", "expected_paths": [], "touches_source": True,
-            "reasons": ["재현 가능한 버그 하나"]})
-        assert env["exit"] == 0, env["render"]
-        _, after = st.load(repo, paths.run_id)
-        assert after["profile"]["name"] == "fix"
-        assert after["profile"]["source"] == "triage"
-
-    def test_unclear_offers_fix_as_an_option(self, repo, phases):
-        paths, s = _init(repo, REQUEST_TEXT)
-        cli.run_next(repo, run_id=paths.run_id)
-        env = _submit_triage(repo, paths, {"profile": "unclear",
-                                           "expected_paths": [], "reasons": []})
-        assert env["exit"] == 9
-        assert any(o.startswith("fix") for o in env["data"]["options"]), env["data"]
 
     def test_01_converges_in_one_round(self, repo, phases):
         paths, s = _init(repo, SOURCE_REQUEST, profile="fix")
@@ -9283,24 +8827,6 @@ class TestFixLane:
         assert after["phase"] == "03-implement", after["phase"]
         assert "01:max_rounds=1" in after["profile"]["applied"]
         assert after.get("grade") in (None, "PASS"), after.get("gaps")
-
-    def test_a_fix_prediction_beaten_upward_at_05_is_a_miss(self, gated, phases):
-        repo, paths, s = gated
-        s["profile"] = {"name": "fix", "source": "triage",
-                        "predicted": {"profile": "fix"},
-                        "applied": ["01:max_rounds=1"]}
-        s["contract"]["sha256"] = "낡은값"
-        st.set_phase_status(s, "04-gate", "passed")
-        s["phase"] = "05-code-review"
-        st.save(paths, s)
-        (repo / "_workspace" / "contract_sim.md").write_text(
-            FIVE_UNIT_CONTRACT, encoding="utf-8")
-        cli.run_next(repo, run_id=paths.run_id)
-        _, after = st.load(repo, paths.run_id)
-        prof = after["profile"]
-        assert prof["name"] == "normal", prof
-        assert prof["triage_miss"]["was"] == "fix"
-        assert "triage_miss:01:max_rounds=1" in after["gaps"]
 
     def test_05_cap_routes_gen_only(self):
         cfg = _cfg()
@@ -9326,7 +8852,7 @@ class TestReviewDepth:
     def test_config_declares_a_depth_per_lane(self):
         cfg = _cfg()
         assert cfg["review"]["depth"] == {"docs": "diff", "fix": "diff",
-                                          "small": "diff", "normal": "diff+refs"}
+                                          "normal": "diff+refs"}
 
     def test_schema_and_config_are_paired(self):
         """스키마 없이 config 만 고치면 doctor 가 기동 전에 거부한다."""

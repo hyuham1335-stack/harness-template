@@ -51,8 +51,8 @@ GAP_REASONS = {
     "pr_review_open": ("07 의 `/code-review` 가 05 가 낸 키를 가리키지 않는 "
                        "Critical/Major 를 냈다 — 05 가 놓친 것이고, 수리는 사람이 정한다"),
     "local_only": "원격이 없어 로컬 커밋까지만 했다",
-    "triage_miss": ("00 의 레인 예측이 빗나가 앞 페이즈가 그 양보(콜론 뒤)를 "
-                    "적용한 채 지나갔다 — 03·05 의 실물이 상향으로 재판정했다"),
+    "lane_miss": ("선언한 docs 레인이 빗나가 앞 페이즈가 그 양보(콜론 뒤)를 "
+                  "적용한 채 지나갔다 — 03·05 의 실물에서 역할 소유 경로가 바뀌었다"),
     # 아래 다섯은 gate.py 가 처음부터 만들던 사유인데 어휘에 없었다 — 파일럿
     # 40dc 의 보고서가 `stage_no_selector:scoped` 를 "어휘에 없는 사유다" 로
     # 적었다 (ADR-H050). 코어가 만드는 사유는 전부 여기 있어야 하고, 그것을
@@ -119,43 +119,15 @@ def explain_gap(gap):
 
 
 def _profile_cell(node):
-    """`이름 (출처 · 유닛 n)`. 재판정이 있었으면 `무엇에서 무엇으로` 까지.
-
-    00 이 예측한 런은 누가 정했는지(기계 · 모델 · 사람)와 빗나갔는지도 적는다 —
-    임계값을 고칠 근거가 이 칸에서 나온다 (ADR-H044).
-    """
+    """`이름 (출처)`. 선언이 빗나갔으면 `무엇에서 무엇으로` 까지 (ADR-H044)."""
     if not node:
         return None
-    cell = "%s (%s · 유닛 %s)" % (node.get("name"), node.get("source"),
-                                  node.get("units"))
-    pred = node.get("predicted")
-    if pred:
-        cell = "%s — 00 예측 %s (%s)" % (cell, pred.get("profile"),
-                                        pred.get("decided_by"))
-    prev = node.get("previous")
-    if prev:
-        cell = "%s — 다시 셌다: %s(유닛 %s) → %s(유닛 %s)" % (
-            cell, prev.get("name"), prev.get("units"),
-            node.get("name"), node.get("units"))
-    miss = node.get("triage_miss")
+    cell = "%s (%s)" % (node.get("name"), node.get("source"))
+    miss = node.get("lane_miss")
     if miss:
         cell = "%s — **빗나감**: %s → %s (%s)" % (
             cell, miss.get("was"), miss.get("became"), miss.get("at"))
     return cell
-
-
-def _triage_cell(state):
-    """00 이 무엇을 보고 정했나. 없으면 None — 표가 `미측정` 을 찍는다."""
-    node = (state.get("phases") or {}).get("00-triage") or {}
-    if not node.get("decided_by"):
-        return None
-    sig = node.get("signals") or {}
-    return "%s → %s (소유 경로 %d · docs 경로 %d · 미해결 %d · %s자)" % (
-        node.get("decided_by"), node.get("profile"),
-        len(sig.get("paths_role_owned") or []),
-        len(sig.get("paths_docs") or []),
-        len(sig.get("paths_unresolved") or []),
-        sig.get("request_chars"))
 
 
 def _models_cell(state):
@@ -394,9 +366,8 @@ def build(state, data, timing=None):
         # 메인이 코드 근거로 기각한 01 지적 수 — 기각이 잦으면 리뷰어가 아니라
         # 기각이 검토 대상이다. 근거는 `01_review_r{n}.json` 의 `false_positive` 다.
         ("01 기각(false_positive)", _false_positive_count(state)),
-        # 00 이 무엇을 보고 정했고 어떤 양보가 실제로 적용됐나 (ADR-H044).
-        ("00 트리아지", _triage_cell(state)),
-        ("트리아지 적용 양보",
+        # 레인이 실제로 적용한 양보 (ADR-H044).
+        ("레인 양보",
          " · ".join((state.get("profile") or {}).get("applied") or []) or None),
     ])
     # 05 가 낸 키를 가리키지 않은 Critical/Major — 사람이 정할 목록이다.

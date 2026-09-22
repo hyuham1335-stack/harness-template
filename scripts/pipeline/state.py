@@ -104,7 +104,7 @@ EVENT_KINDS = (
     "profile_reconfirmed",
     # 사람을 기다리기 시작했다(`waiting_human`, exit 9 의 자리들) — 다음 이벤트
     # 까지가 대기다. exit 10 은 `escalated → resumed` 로 따로 잰다. 이것이
-    # 없으면 `40dc` 의 00-triage 36분이 "트리아지가 36분 걸렸다" 로 읽힌다
+    # 없으면 `40dc` 가 사람을 기다린 36분이 "그 페이즈가 36분 걸렸다" 로 읽힌다
     # (ADR-H052). `format_reject` 는 제출이 규약을 어겨 exit 8 로 되돌아온
     # 것을 **횟수로** 세는 자리다 — `check_fail` 이 그 사실을 남기지만
     # 절반의 exit 8 경로는 그것조차 없었고, 세지 않으면 `e7ff` 의 sec 처럼
@@ -114,10 +114,9 @@ EVENT_KINDS = (
     # `waiting_human` 이 "기다리기 시작했다" 라면 이것은 **"무엇을 골랐다"** 다 —
     # 없으면 그 판단이 어디에도 남지 않아 06 이 같은 것을 다시 묻는다.
     "policy_acked",
-    # 00 이 레인을 정했다(`triage_decided`), 그 예측이 03·05 의 실물에서 상향으로
-    # 빗나갔다(`triage_miss`). 둘을 뭉치면 임계값을 고칠 근거(어느 예측이
-    # 얼마나 틀리나)가 원장에서 사라진다.
-    "triage_decided", "triage_miss",
+    # 선언한 docs 레인이 03·05 의 실물에서 빗나갔다(`lane_miss`) — 역할 소유
+    # 경로가 바뀌었는데 01 리뷰어·역할을 건너뛴 채 왔다.
+    "lane_miss",
 )
 
 GRADES = ("PASS", "PASS_WITH_GAPS", "INCOMPLETE")
@@ -227,11 +226,13 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
         "profile": _initial_profile(profile),
         "adapter": {"id": config.get("adapter")},
         "vcs": {"baseline": _vcs_baseline(root)},
-        "phase": "00-triage",
+        "phase": "01-plan",
         "phases": {},
         "counters": {},
         "escalated": False,
-        "contract": {"mode": "contract", "present": False},
+        # docs 레인은 계약을 쓰지 않는다 — 선언이 그것을 정한다 (ADR-H044).
+        "contract": {"mode": "no_contract" if profile == "docs" else "contract",
+                     "present": False},
         "grade": None,
         "gaps": [],
         "budget": {"model_calls": {
@@ -243,23 +244,20 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
         "models": _models_node(),
     }
     save(paths, s)
-    append_event(paths, "run_created", cmd="init", phase="00-triage",
+    append_event(paths, "run_created", cmd="init", phase="01-plan",
                  slug=slug, request_bytes=len(raw))
     return paths, s
 
 
 def _initial_profile(profile):
-    """`init` 시점의 프로파일. 사람이 줬으면 `user`, 아니면 00 이 정한다.
+    """`init` 시점의 레인. 사람이 줬으면 `user`, 아니면 `normal`(`default`) 이다.
 
-    00 이 요청 원문의 구조 신호로 **예측**하고(`source: triage`), 03 의
-    계약(유닛·진입점 수)과 05 의 변경 파일이 그것을 재판정한다. 00 이 돌기
-    전의 값은 `default` 이고 라운드 상한이 큰 쪽(normal)이다 — 보수적으로
-    더 검토하는 쪽이다.
+    예측 단계는 없다 — 선언이 빗나가면(docs 인데 소스가 바뀜) 03·05 가
+    `lane_miss` 로 드러낸다.
     """
     if profile:
         return {"name": profile, "source": "user"}
-    return {"name": "normal", "source": "default",
-            "reason": "00 이 아직 판정하지 않았다"}
+    return {"name": "normal", "source": "default"}
 
 
 # 모델 등급의 관측 단위. **실행기는 어느 모델이 돌았는지 볼 수 없다** —

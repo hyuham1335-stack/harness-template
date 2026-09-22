@@ -8,7 +8,7 @@
 
 ## 범위
 
-- 프로파일: small | normal
+- 프로파일: normal | fix
 - 대상 경로(역할별): impl → `{glob}` / test → `{glob}`
 - 신규 / 기존 수정
 
