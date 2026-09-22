@@ -71,9 +71,10 @@ data·sec 리뷰어가 낸 Critical 은 전부 gen 이 같이 잡았고, 나머�
 1. precheck --scope pr      정적 · 무료   예산 · 브랜치 · divergence · 인프라
 2. contract-trace           정적 · 무료   계약 ↔ 코드 대조 5종
 3. Critical 있으면 선수리 + gate --phase 05 --stage loop             → 2로 복귀
+   (trace_repair 상한 — 초과면 에스컬레이션)
 4. 리뷰:  gen 1명. 인라인 상한 초과면 diff 대신 경로 전달
-5. 수리 → 델타 재리뷰 (같은 gen 1명 · 봉투가 이름으로 부른다)
-6. 코드 확정 → 전체 회귀 1회
+5. 수리 → gate --phase 05 --stage loop → next → 델타 재리뷰 (같은 gen 1명)
+6. 코드 확정 → gate --phase 05 --stage full  (05 수리가 있었으면 approve 가 exit 3 으로 요구한다)
 ```
 
 ### 1·2번 — 모델을 부르지 않는다
@@ -262,12 +263,15 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
 | `CONTRACT_DEFECT` 발견 | 정책 | 수리하지 않는다 → **에스컬레이션** |
 | diff 가 인라인 상한 초과 | — | **기계가 정한다** — `next` 가 `review.inline_max` 로 재고 봉투가 "경로로 전달하라" 고 말한다. 네 재량이 아니다 (ADR-H042). 폴백 사실이 상태에 남는다 |
 | `review_repair` 초과 | 정책 | 에스컬레이션 — 선택지 없이 자유 서술로 사람에게. **계약 결함을 먼저 의심**하라고 패킷에 적는다 |
+| `trace_repair` 초과 (contract-trace Critical 이 2회) | 정책 | 에스컬레이션 — 같은 처리. 선수리 루프도 천장이 있다 |
+| 수리 뒤 재게이트 없이 `next`·`record` | 정책 | **exit 6** — 게이트 영수증 지문이 낡았다. `gate --phase 05 --stage loop` 뒤 다시 친다. 리뷰어는 게이트된 코드만 본다 |
 | 제출이 내용은 그대로인데 회계 필드만 틀려 exit 8 | 기계 | `format_reject` 이벤트로 센다. 회계 필드는 메인이 고쳐 재제출해도 된다 — quote·헤딩 수·severity 는 여전히 금지 (ADR-H052) |
 
 **`review_repair.max: 2` 와 `findings_max`·`inline_max` 는 미검증 상속값이다.**
 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 실측이 이 값을 검사한다.
 
 **`loop.counter` · `loop.max` · `loop.on_exceed` 는 코드가 여기서 읽는다** (M36).
+`trace_loop` 도 같은 모양으로 읽는다 — contract-trace 선수리 루프의 상한이다 (ADR-H076).
 예전에는 카운터 이름이 코드에 박혀 있었고 상한에는 `or 2` 폴백이 있었다 —
 **폴백은 곧 새 하드코딩이다.** 지금은 선언이 없으면 exit 2 이고, 그 사실을
 `lint-phases` 가 런 전에 먼저 잡는다.
