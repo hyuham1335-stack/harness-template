@@ -923,7 +923,7 @@ def _junit_failed_units(root_el):
 
     `detail` 은 스택 원문 그대로다 — 프레임 추출은 여기서 하지 않는다.
     어느 토큰이 진짜 파일인지는 리포의 파일 목록을 알아야 판정할 수 있고,
-    그 판정은 귀속 계층의 몫이다.
+    그 판정은 하지 않는다 — 작성자가 원문을 읽는다 (ADR-H075).
     """
     out = []
     for case in root_el.iter("testcase"):

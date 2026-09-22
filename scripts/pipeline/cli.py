@@ -108,7 +108,7 @@ SUBMIT_CHECKS = {
                "경로를 근거로 대야 한다 — 기록 없는 기각은 지적의 증발이다"},
     "tests_required": {
         "exit": 8, "impl": ("cli:_tests_required",),
-        "why": "계약의 유닛·인가 항목에 대응하는 테스트가 있는가"},
+        "why": "계약의 유닛·진입점·오류 어휘에 대응하는 테스트가 있는가"},
     "pr_number_is_int": {
         "exit": 8, "impl": ("cli:_record_06",),
         "why": "PR 번호가 정수인가 — 문자열 번호는 뒤에서 조용히 안 맞는다"},
@@ -1226,8 +1226,8 @@ def _docs_lane_source_check(root, paths, s, ctx, where, source_changed=None,
                             cmd="record"):
     """docs 레인을 선언했는데 소스가 바뀌었는가. 반환: miss 가 났으면 True.
 
-    docs 레인은 계약이 없어 03(claims 제출)과 05(라우팅) 두 자리가 따로 묻는다.
-    술어는 05 의 라우팅과 같은 `review._source_changed` 다.
+    docs 레인은 계약이 없어 03(claims 제출)과 05(리뷰 계획) 두 자리가 따로 묻는다.
+    술어는 05 의 리뷰 계획과 같은 `review._source_changed` 다.
     """
     import precheck as pc
     import review as review_mod
@@ -2160,8 +2160,8 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
         # **계약 파일이 있는데 유닛이 0 이면 형식 문제다** (ADR-H049). `requires`
         # 는 크기와 절 제목만 본다 — 파일럿 40dc 의 계약이 `## 유닛` 을 `### `
         # 헤딩으로 적어 units=0 으로 게이트를 지났고, 그 결과 계약에 서술된
-        # 심볼이 전부 `out_of_contract` 로 잡히고 scoped 는 `no_selector` 로
-        # 스킵됐다. 여기서 막으면 그 둘이 뒤에서 안 난다.
+        # 심볼이 전부 대조 밖으로 빠지고 scoped 는 `no_selector` 로 스킵됐다.
+        # 여기서 막으면 그 둘이 뒤에서 안 난다.
         st.set_phase_status(s, "03-implement", "failed")
         st.append_event(paths, "check_fail", cmd="record", phase="03-implement",
                         contract_units=0)
@@ -2195,8 +2195,6 @@ def _record_03(root, paths, s, phase_item, ctx, file, reviewer, round_):
             "때문이다.\n\n계약 파일을 쓰고 `next` 로 역할 패킷을 받는다. "
             "이미 고친 소스는 그 역할이 claim 한다.",
             "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
-
-
 
     _config, adapter = adapters.load(root)
     if adapters.stage_state(adapter, "compile") == "present":
@@ -2386,8 +2384,7 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
             errors=got["errors"])
 
     slot = rounds.setdefault(str(round_), {})
-    slot[reviewer] = {"mode": payload.get("mode") or "primary",
-                      "keys": got["keys"], "blocking": got["blocking"],
+    slot[reviewer] = {"keys": got["keys"], "blocking": got["blocking"],
                       "closed": got["closed"], "findings": got["findings"],
                       "truncated": got["truncated"],
                       "need_more_context": payload.get("need_more_context") or []}
@@ -2508,7 +2505,7 @@ def _record_05_failure_slot(root, paths, s, phase_item, ctx, node, reviewer,
     """실패를 슬롯에 **데이터로** 남기고 대기·판정 흐름을 잇는다."""
     rounds = node.setdefault("rounds", {})
     slot = rounds.setdefault(str(round_), {})
-    slot[reviewer] = {"mode": "primary", "keys": None, "blocking": 0,
+    slot[reviewer] = {"keys": None, "blocking": 0,
                       "closed": [], "findings": [], "status": "failed",
                       "reason": reason, "errors": list(errors or []),
                       "truncated": False,
@@ -3406,7 +3403,7 @@ def run_pr(root, run_id=None):
     data["body_file"] = paths.rel(body_path)
 
     # 6. push → 계약 삭제 → 요청서.
-    # **삭제는 push 가 성공한 뒤다** (G-7). 04 귀속과 05 대조가 계약을 계속
+    # **삭제는 push 가 성공한 뒤다** (G-7). 04 의 선택자와 05 의 대조가 계약을 계속
     # 읽으므로 최대한 늦추는 것이 §E13 의 근거인데, push 앞은 충분히 늦지
     # 않다 — push 는 실패할 수 있고, 실패하면 05 의 `requires` 가 안 채워져
     # **재개가 불가능해진다.** 계약은 `_workspace/` 아래 untracked 라 삭제

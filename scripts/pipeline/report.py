@@ -306,8 +306,6 @@ def build(state, data, timing=None):
             "%s: %s" % (k, v)
             for k, v in sorted((budget.get("by_phase") or {}).items()))
          or None),
-        # **지급이 드러나야 한다.** `used` 만 적으면 다섯 라운드를 쓴 런과 세
-        # 라운드를 쓰고 둘을 더 받은 런이 같아 보인다 (M32).
         ("라운드", _counter_cell((state.get("counters") or {}).get("round"))),
         ("수리", _counter_cell((state.get("counters") or {}).get("repair"))),
         ("리뷰 수리",

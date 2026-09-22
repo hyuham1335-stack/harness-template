@@ -88,8 +88,8 @@ def repo(tmp_path):
         "import { matchTitle } from './match'\n", encoding="utf-8")
     (tmp_path / "CLAUDE.md").write_text("# 가드레일\n", encoding="utf-8")
 
-    # 실물과 같게 _workspace/ 를 무시한다 — 계약 파일이 추적되는 orphan 이 되면
-    # clean_ownership 이 잡는다.
+    # 실물과 같게 _workspace/ 를 무시한다 — 계약 파일이 추적되면 지문·변경
+    # 집합에 섞인다.
     (tmp_path / ".gitignore").write_text("_workspace/\n", encoding="utf-8")
 
     _git(tmp_path, "init", "-q")
@@ -1240,17 +1240,6 @@ class TestContractUnits:
         assert p["units"] == []
         assert p["dropped"] and p["dropped"][0]["reason"]
 
-    def test_entrypoint_role_tag_is_parsed_outside_backticks(self, repo):
-        """`[id]` 는 경로 파라미터라 태그가 아니다 — 태그는 백틱 밖에서만 뽑는다."""
-        doc = "## 진입점\n\n- `GET /api/x/[id]` [admin] → 200\n- `POST /api/y` → 201\n"
-        p = self._parse(repo, doc)
-        assert [e["tags"] for e in p["entrypoints"]] == [["admin"], []]
-
-    def test_path_segment_is_not_a_tag_without_backticks(self, repo):
-        p = self._parse(repo, "## 진입점\n\n- GET /api/x/[id] [admin] → 200\n")
-        assert p["entrypoints"][0]["path"] == "/api/x/[id]"
-        assert p["entrypoints"][0]["tags"] == ["admin"]
-
     def test_a_unit_needs_both_a_container_and_a_symbol(self, repo):
         """심볼명만 보면 흔한 이름이 다른 파일에서 거짓 통과한다."""
         p = self._parse(repo, "## 유닛\n\n- `matchTitle`\n")
@@ -2118,11 +2107,6 @@ def _write_report(root, tests=1, failures=0, cases=None):
 
 
 # ---------------------------------------------------------------------------
-# G(순수 함수). 귀속 — 소유자 · 시그니처 · flip
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # G. 게이트 — 러너 스텁
 # ---------------------------------------------------------------------------
 
@@ -2640,48 +2624,6 @@ def _trace(repo, contract_path, **kw):
     return tr.run(repo, config, adapter, contract_path, **kw)
 
 
-# P8 의 계약이 「데이터 형태」 절을 쓴 그대로다 (M57).
-#
-# **상수 다섯이 불릿이 아니라 그 불릿의 연속 줄에 있다.** `_errors` 의
-# "최상위 `-` 줄만" 규칙으로는 못 잡는 모양이고, 그것이 P8 의 오탐 6/6 이
-# 나온 자리다. 픽스처를 다듬지 않고 실물 그대로 둔다 — 다듬으면 이 테스트가
-# 실제로 났던 실패를 재현하지 않는다.
-DATA_SHAPES_DOC = """# 계약: x
-
-## 데이터 형태
-
-- `RateLimitDecision { allowed: boolean; retryAfterSeconds: number }`
-  - `retryAfterSeconds` 는 **1 이상의 정수**다. `Retry-After` 가 정수 초를 요구한다
-- 전역 상태는 **컨테이너 하나**다:
-  `RateLimitState { map: Map<string, number>; windowStart: number | undefined }`
-  - **`windowStart` 는 `map` 의 속성이 아니라 컨테이너의 형제 필드다**
-  - `globalThis` 에 건다. `declare global` 로 타입을 선언하고 `any` 로 얹지 않는다
-- 상수는 전부 `src/lib/env.ts` 에서 온다:
-  `RATE_LIMIT_MAX_REQUESTS`(20) · `RATE_LIMIT_WINDOW_MS`(60_000) ·
-  `RATE_LIMIT_MAX_TRACKED_KEYS`(50_000) · `RATE_LIMIT_SHARED_MAX_REQUESTS`(200) ·
-  `RATE_LIMIT_MAX_KEY_CHARS`(45)
-  - `process.env` 를 읽지 않는다
-
-## 유닛
-
-- `lib/match.ts · matchTitle(a: string, b: string): number`
-"""
-
-# 「데이터 형태」 절이 없는 옛 계약. 그대로 돌아야 한다.
-OLD_CONTRACT_DOC = """# 계약: x
-
-## 유닛
-
-- `lib/a.ts · f(): void`
-"""
-
-P8_FALSE_POSITIVES = (
-    "RATE_LIMIT_MAX_REQUESTS", "RATE_LIMIT_WINDOW_MS",
-    "RATE_LIMIT_MAX_TRACKED_KEYS", "RATE_LIMIT_SHARED_MAX_REQUESTS",
-    "RATE_LIMIT_MAX_KEY_CHARS", "RateLimitDecision",
-)
-
-
 class TestContractTraceMissingImpl:
     """컨테이너명 + 심볼명 **쌍**으로 본다. 심볼명만 보면 거짓 통과한다."""
 
@@ -2934,7 +2876,7 @@ class TestContractTraceUntestedEntrypoint:
         got = _trace(repo, _write_contract(repo))
         assert _codes(got, "untested_entrypoint") == [], got["findings"]
 
-    def test_no_test_is_major_for_the_test_role(self, repo):
+    def test_no_test_is_major_for_the_primary_role(self, repo):
         _route(repo, "analyze")
         got = _trace(repo, _write_contract(repo))
         miss = _codes(got, "untested_entrypoint")
@@ -4037,7 +3979,7 @@ class TestReview05EnvelopeContract:
                      "title": "경계가 새고 있다"}]
         prev = [{"id": "F-9", "severity": "minor", "reviewer": "arch",
                  "key": "k9", "title_norm": "주석이 낡았다"}]
-        out = cli._review_repair_render(blocking, 2, delta="arch",
+        out = cli._review_repair_render(blocking, 2, delta="gen",
                                         previous_open=prev)
         assert "resolved_from_previous" in out, out
         assert "회계" in out, out
@@ -4047,14 +3989,14 @@ class TestReview05EnvelopeContract:
 
     def test_열린_지적이_없으면_목록을_적지_않는다(self):
         blocking = [{"severity": "major", "target_role": "impl", "title": "x"}]
-        out = cli._review_repair_render(blocking, 2, delta="arch",
+        out = cli._review_repair_render(blocking, 2, delta="gen",
                                         previous_open=[])
         assert "F-9" not in out
         assert "회계" in out, "의무 자체는 목록 유무와 무관하다"
 
 
 class TestReview05DeltaRound:
-    """델타 재리뷰는 1명이고(M27), 그 1명이 G-4 를 되돌리지 않는다."""
+    """델타 재리뷰는 같은 리뷰어 하나이고(M27), 그 라운드가 G-4 를 되돌리지 않는다."""
 
     def _ready(self, repo, request_file, phases):
         run_id, paths = _enter_05(repo, request_file, phases)
@@ -4065,51 +4007,31 @@ class TestReview05DeltaRound:
         node["planned"] = ["gen"]
         return run_id, paths, s, node
 
-    def test_델타_라운드가_1회차_리뷰어_수를_지우지_않는다(self, repo):
-        """M43 — 1회차에 셋이 돌았는데 상태가 `1/1` 로 기록됐다."""
-        s, node = {}, {}
-        cli._write_review05(s, node, ["data", "sec", "arch"], 3, [],
-                            {"data": {"keys": []}, "sec": {"keys": []},
-                             "arch": {"keys": []}}, round_=1)
-        cli._write_review05(s, node, ["arch"], 1, [],
-                            {"arch": {"keys": []}}, round_=2)
-        got = s["review05"]
-        assert got["reviewers_planned"] == 3, got
-        assert got["reviewers_ok"] == 3, got
-        assert got["rounds"]["1"]["planned"] == 3, got["rounds"]
-        assert got["rounds"]["2"]["planned"] == 1, got["rounds"]
-
     def test_status_는_델타_뒤에도_최악을_보존한다(self, repo):
-        """이 수정이 만들 수 있는 유일한 회귀를 잠근다.
+        """이 수정이 만들 수 있는 유일한 회귀를 잠근다 (M43).
 
         실적을 최댓값으로 접는다고 `status` 까지 새 값에서 유도하면 델타
-        라운드가 1회차의 `degraded` 를 지운다.
+        라운드가 1회차의 `failed` 를 지운다. 리뷰어가 하나라 라운드 상태는
+        `ok`/`failed` 둘뿐이고, 접기는 여전히 최악이다. 실패한 리뷰어도
+        라운드를 넘어 남는다.
         """
         s, node = {}, {}
-        cli._write_review05(s, node, ["data", "sec", "arch"], 2, [],
-                            {"data": {"keys": []}, "sec": {"keys": []},
-                             "arch": {"keys": None}}, round_=1)
-        cli._write_review05(s, node, ["arch"], 1, [],
-                            {"arch": {"keys": []}}, round_=2)
+        cli._write_review05(s, node, ["gen"], 0, [],
+                            {"gen": {"keys": None}}, round_=1)
+        cli._write_review05(s, node, ["gen"], 1, [],
+                            {"gen": {"keys": []}}, round_=2)
         got = s["review05"]
-        assert got["status"] == "degraded", got
-        assert got["reviewers_planned"] == 3, got
-        assert got["reviewers_ok"] == 2, got
-
-    def test_실패한_리뷰어가_라운드를_넘어_남는다(self, repo):
-        s, node = {}, {}
-        cli._write_review05(s, node, ["data", "arch"], 1, [],
-                            {"data": {"keys": None}, "arch": {"keys": []}},
-                            round_=1)
-        cli._write_review05(s, node, ["arch"], 1, [],
-                            {"arch": {"keys": []}}, round_=2)
-        assert s["review05"]["reviewers_failed"] == ["data"], s["review05"]
+        assert got["status"] == "failed", got
+        assert got["reviewers_planned"] == 1, got
+        assert got["reviewers_failed"] == ["gen"], got
+        assert got["rounds"]["1"]["planned"] == 1, got["rounds"]
+        assert got["rounds"]["2"]["planned"] == 1, got["rounds"]
 
     # ------------------------------------------------------------------
     # M53 — 리뷰어가 남긴 신호도 라운드를 가로질러 보존한다.
-    # 위 셋(M43)과 **같은 함수의 같은 실패 모드**다: `slot`(현재 라운드
-    # 하나)만 읽어 델타 라운드의 1명이 덮었다. 접는 방식은 셋이 다르므로
-    # 셋을 따로 잠근다 — 하나가 빨간불일 때 고칠 자리가 각각 다르다.
+    # 위 status(M43)와 **같은 함수의 같은 실패 모드**다: `slot`(현재 라운드
+    # 하나)만 읽어 델타 라운드가 덮었다. 접는 방식은 셋이 다르므로 셋을
+    # 따로 잠근다 — 하나가 빨간불일 때 고칠 자리가 각각 다르다.
     # ------------------------------------------------------------------
 
     def _sub(self, need=None, truncated=False):
@@ -4129,12 +4051,11 @@ class TestReview05DeltaRound:
         리스트를 그대로 비교해 **첫 등장 순서**까지 함께 못박는다.
         """
         s, node = {}, {}
-        r1 = self._round(node, 1, {"data": self._sub(["가", "나"]),
-                                   "sec": self._sub(["다"])})
-        cli._write_review05(s, node, ["data", "sec"], 2, [], r1, round_=1)
+        r1 = self._round(node, 1, {"gen": self._sub(["가", "나", "다"])})
+        cli._write_review05(s, node, ["gen"], 1, [], r1, round_=1)
         assert s["review05"]["need_more_context"] == ["가", "나", "다"], s["review05"]
-        r2 = self._round(node, 2, {"arch": self._sub([])})
-        cli._write_review05(s, node, ["arch"], 1, [], r2, round_=2)
+        r2 = self._round(node, 2, {"gen": self._sub([])})
+        cli._write_review05(s, node, ["gen"], 1, [], r2, round_=2)
         assert s["review05"]["need_more_context"] == ["가", "나", "다"], s["review05"]
 
     def test_같은_문구의_맥락_요청은_한_번만_센다(self, repo):
@@ -4146,12 +4067,13 @@ class TestReview05DeltaRound:
         """
         s, node = {}, {}
         same = "diff 밖이라 대조 못 했다"
-        r1 = self._round(node, 1, {"arch": self._sub([same, "1회차만의 것"])})
-        cli._write_review05(s, node, ["arch"], 1, [], r1, round_=1)
-        r2 = self._round(node, 2, {"arch": self._sub([same])})
-        cli._write_review05(s, node, ["arch"], 1, [], r2, round_=2)
+        r1 = self._round(node, 1, {"gen": self._sub([same, "1회차만의 것"])})
+        cli._write_review05(s, node, ["gen"], 1, [], r1, round_=1)
+        r2 = self._round(node, 2, {"gen": self._sub([same])})
+        cli._write_review05(s, node, ["gen"], 1, [], r2, round_=2)
         # 안 접으면 3건, 안 모으면 1건. 둘 다 아니어야 한다.
-        assert s["review05"]["need_more_context"] == [same, "1회차만의 것"],             s["review05"]
+        assert s["review05"]["need_more_context"] == [same, "1회차만의 것"], (
+            s["review05"])
 
     def test_절단_사실이_델타_뒤에도_남는다(self, repo):
         """`status` 가 "런 안에서 좋아지지 않는다" 인 것의 대칭이다.
@@ -4160,17 +4082,17 @@ class TestReview05DeltaRound:
         `False` 가 그것을 덮으면 신호가 무의미해진다.
         """
         s, node = {}, {}
-        r1 = self._round(node, 1, {"arch": self._sub(truncated=True)})
-        cli._write_review05(s, node, ["arch"], 1, [], r1, round_=1)
-        r2 = self._round(node, 2, {"arch": self._sub(truncated=False)})
-        cli._write_review05(s, node, ["arch"], 1, [], r2, round_=2)
+        r1 = self._round(node, 1, {"gen": self._sub(truncated=True)})
+        cli._write_review05(s, node, ["gen"], 1, [], r1, round_=1)
+        r2 = self._round(node, 2, {"gen": self._sub(truncated=False)})
+        cli._write_review05(s, node, ["gen"], 1, [], r2, round_=2)
         assert s["review05"]["truncated"] is True, s["review05"]
 
     # ---------------------------------------------------------------- M52
     #
-    # 델타 라운드는 설계상 한 명만 돈다. 그 한 명의 제출이 **그 라운드의**
-    # merged 이고, PR 본문의 「미해결 Minor」가 거기서 나오면 다른 리뷰어의
-    # 열린 Minor 가 사람이 읽는 자리에서만 사라진다 (원장에는 남는다).
+    # 델타 라운드는 같은 리뷰어 하나가 돈다. 그 라운드의 제출만 보고 PR 본문의
+    # 「미해결 Minor」를 내면 앞 회차의 열린 Minor 가 사람이 읽는 자리에서만
+    # 사라진다 (원장에는 남는다).
 
     @staticmethod
     def _mf(fid, title, severity="minor", category="RESPONSE_SHAPE",
@@ -4183,7 +4105,7 @@ class TestReview05DeltaRound:
     @classmethod
     def _mslot(cls, findings, closed=()):
         """성공한 제출 슬롯 하나. `keys` 가 None 이 아닌 것이 성공의 표식이다."""
-        return {"mode": "primary", "blocking": 0,
+        return {"blocking": 0,
                 "keys": [{"key": verdict_mod.finding_key(f), "id": f["id"],
                           "severity": f["severity"], "reraised_from": None}
                          for f in findings],
@@ -4191,60 +4113,40 @@ class TestReview05DeltaRound:
                 "truncated": False,
                 "need_more_context": []}
 
-    def test_델타_라운드가_다른_리뷰어의_열린_Minor_를_지우지_않는다(self, repo):
-        """M52 — P7 2회차가 `arch` 하나였고 `sec`·`data` 의 셋이 사라졌다."""
+    def test_델타_라운드가_앞_회차의_열린_Minor_를_지우지_않는다(self, repo):
+        """M52 — P7 2회차 제출 하나만 보고 1회차의 열린 Minor 가 사라졌다."""
         major = self._mf("F-9", "인가 누락", "major", "AUTHZ_MISSING_RULE")
-        r1 = {"arch": self._mslot([self._mf("A-1", "arch 지적 1"),
-                                   self._mf("A-2", "arch 지적 2"), major]),
-              "sec": self._mslot([self._mf("S-1", "sec 지적")]),
-              "data": self._mslot([self._mf("D-1", "data 지적 1"),
-                                   self._mf("D-2", "data 지적 2")])}
-        r2 = {"arch": self._mslot([], closed=[verdict_mod.finding_key(major)])}
+        r1 = {"gen": self._mslot([self._mf("A-1", "지적 1"),
+                                  self._mf("A-2", "지적 2"), major])}
+        r2 = {"gen": self._mslot([], closed=[verdict_mod.finding_key(major)])}
         open_ = rv.open_findings({"1": r1, "2": r2})
-        minors = sorted(f["title"] for f in open_ if f["severity"] == "minor")
-        assert minors == ["arch 지적 1", "arch 지적 2", "data 지적 1",
-                          "data 지적 2", "sec 지적"], (
-            "마지막 라운드만 보면 0건이고 델타의 것만 보면 2건이다 — 다섯이어야 "
-            "한다 (M52)")
+        titles = sorted(f["title"] for f in open_)
+        assert titles == ["지적 1", "지적 2"], (
+            "마지막 라운드만 보면 0건이다 — 둘이어야 한다 (M52)")
+        assert all(f["severity"] == "minor" for f in open_), open_
 
     def test_닫힌_지적은_열린_목록에_없다(self, repo):
         """접기가 넓어졌다고 이미 해소된 것까지 되살리면 안 된다."""
         major = self._mf("F-9", "인가 누락", "major", "AUTHZ_MISSING_RULE")
-        r1 = {"arch": self._mslot([major, self._mf("A-1", "arch 지적 1")])}
-        r2 = {"arch": self._mslot([], closed=[verdict_mod.finding_key(major)])}
+        r1 = {"gen": self._mslot([major, self._mf("A-1", "지적 1")])}
+        r2 = {"gen": self._mslot([], closed=[verdict_mod.finding_key(major)])}
         titles = [f["title"] for f in rv.open_findings({"1": r1, "2": r2})]
-        assert titles == ["arch 지적 1"], titles
+        assert titles == ["지적 1"], titles
 
-    def test_열린_목록이_라운드를_가로질러_severity_를_올리지_않는다(self, repo):
-        """라운드를 섞어 한 번에 merge 하면 여기가 빨간불이 된다.
-
-        `sec` 가 1회차에, 델타 `arch` 가 2회차에 **같은** 지적을 낸다. 라운드
-        안에서만 merge 하면 둘 다 1인 관측이라 minor 그대로다. 라운드를
-        가로질러 합치면 `by` 가 둘이 되어 major 로 오르고, **한 번도 합치된
-        적 없는 지적이 합치로 오른 것처럼** 적힌다.
-        """
-        same = dict(category="RESPONSE_SHAPE", role="impl")
-        r1 = {"sec": self._mslot([self._mf("S-1", "같은 지적", **same)])}
-        r2 = {"arch": self._mslot([self._mf("A-9", "같은 지적", **same)])}
-        open_ = rv.open_findings({"1": r1, "2": r2})
-        assert len(open_) == 1, open_
-        assert open_[0]["severity"] == "minor", open_[0]
-        assert "severity_raised_from" not in open_[0], open_[0]
-
-    def test_실패한_리뷰어의_슬롯은_열린_목록에_안_들어간다(self, repo):
+    def test_실패한_제출의_슬롯은_열린_목록에_안_들어간다(self, repo):
         """`keys: None` 이 실패의 표식이다 (`cli.py` 의 실패 슬롯).
 
         `_judge_05` 가 병합에서 그것을 빼는 것과 **같은 가드**를 쓴다. 안 빼면
         규약을 어겨 되돌려진 제출의 문장이 PR 본문에 실린다.
         """
-        r1 = {"arch": self._mslot([self._mf("A-1", "arch 지적")]),
-              "sec": {"mode": "primary", "keys": None, "blocking": 0,
+        r1 = {"gen": {"keys": None, "blocking": 0,
                       "closed": [], "status": "failed",
                       "findings": [self._mf("S-1", "반려된 제출의 문장")],
                       "truncated": False,
                       "need_more_context": []}}
-        titles = [f["title"] for f in rv.open_findings({"1": r1})]
-        assert titles == ["arch 지적"], titles
+        r2 = {"gen": self._mslot([self._mf("A-1", "지적")])}
+        titles = [f["title"] for f in rv.open_findings({"1": r1, "2": r2})]
+        assert titles == ["지적"], titles
 
     def test_첫_등장의_판정이_원장과_같이_이긴다(self, repo):
         """같은 키는 첫 등장이 이긴다 (M30).
@@ -4253,26 +4155,13 @@ class TestReview05DeltaRound:
         말을 한다 — 이 증분이 없애려는 그 어긋남을 방향만 바꿔 되살리는 것이다.
         """
         same = dict(category="RESPONSE_SHAPE", role="impl")
-        r1 = {"arch": self._mslot([self._mf("A-1", "같은 지적", **same)])}
-        r2 = {"arch": self._mslot(
+        r1 = {"gen": self._mslot([self._mf("A-1", "같은 지적", **same)])}
+        r2 = {"gen": self._mslot(
             [self._mf("A-1", "같은 지적", severity="major", **same)])}
         open_ = rv.open_findings({"1": r1, "2": r2})
         assert len(open_) == 1, open_
         assert open_[0]["severity"] == "minor", open_[0]
-
-    def test_델타의_회계_목록은_여전히_자기_것만이다(self, repo):
-        """**(A) 를 안 골랐다는 것을 코드로 잠근다.**
-
-        보고 표면을 넓혔다고 회계 목록까지 넓히면 M21 ③ 이 다시 열린다 —
-        두 리뷰어가 모두 `F-1` 을 쓰므로 id 대조가 전역이 되면 한 줄이 서로
-        다른 두 지적을 동시에 해소로 계수한다. 누가 나중에 그 필터를 지우면
-        여기가 빨간불이 된다.
-        """
-        r1 = {"arch": self._mslot([self._mf("F-1", "arch 지적")]),
-              "sec": self._mslot([self._mf("F-1", "sec 지적")])}
-        got = cli._previous_open({"1": r1}, 2, "arch")
-        assert [k["id"] for k in got] == ["F-1"], got
-        assert len(got) == 1, "sec 의 F-1 이 들어오면 한 줄이 둘을 닫는다"
+        assert "severity_raised_from" not in open_[0], open_[0]
 
     def test_worst_status_is_a_pure_function(self, repo):
         assert rv.worst_status(["ok", "degraded"]) == "degraded"
@@ -4295,10 +4184,10 @@ class TestReview05DeltaRound:
             self, repo, request_file, phases):
         """G-4 재개봉 방지 — status 는 런 안에서 단조 비개선이다."""
         run_id, paths, s, node = self._ready(repo, request_file, phases)
-        node["round_status"] = {"1": "degraded"}
+        node["round_status"] = {"1": "failed"}
         node["rounds_planned"] = {"2": ["gen"]}
-        s["review05"] = {"status": "degraded", "reviewers_planned": 2,
-                         "reviewers_ok": 1, "major": 0,
+        s["review05"] = {"status": "failed", "reviewers_planned": 1,
+                         "reviewers_ok": 0, "major": 0,
                          "need_more_context": [],
                          "truncated": False}
         st.save(paths, s)
@@ -4306,8 +4195,8 @@ class TestReview05DeltaRound:
         cli.run_record(repo, "05", str(f), reviewer="gen", round_=2,
                        run_id=run_id)
         _p, s = st.load(repo, run_id)
-        assert s["review05"]["status"] == "degraded", \
-            "깨끗한 델타 라운드가 앞선 결손을 지우면 E1 가드가 옆문으로 다시 열린다"
+        assert s["review05"]["status"] == "failed", (
+            "깨끗한 델타 라운드가 앞선 결손을 지우면 E1 가드가 옆문으로 다시 열린다")
 
     def _context_file(self, paths, code, round_, need, findings=(), resolved=()):
         """`_reviewer_files` 는 `need_more_context` 를 `[]` 로 박아 쓴다."""
@@ -4331,7 +4220,7 @@ class TestReview05DeltaRound:
             self, repo, request_file, phases):
         """P7 이 실제로 밟은 경로다 (M53).
 
-        단위 넷은 `node["rounds"]` 를 손으로 채운다. 이것은 **`record` 가 그
+        단위 셋은 `node["rounds"]` 를 손으로 채운다. 이것은 **`record` 가 그
         자리를 실제로 채우는지**와 `_judge_05` 가 그 `node` 를 넘기는지까지
         잰다 — 접는 코드가 맞아도 원천이 안 차 있으면 실물에서는 여전히
         증발한다.
@@ -4361,8 +4250,11 @@ class TestReview05DeltaRound:
                              run_id=run_id)
         assert env["exit"] == 0, (env["exit"], env.get("render"))
         _p, s = st.load(repo, run_id)
-        assert "2" in (s["phases"]["05-code-review"].get("rounds") or {}),             "2회차가 슬롯에 안 들어갔으면 이 테스트는 아무것도 안 잰다"
-        assert len(s["review05"]["need_more_context"]) == 1,             "델타 라운드의 빈 배열이 1회차의 것을 지웠다 (M53)"
+        assert "2" in (s["phases"]["05-code-review"].get("rounds") or {}), (
+            "2회차가 슬롯에 안 들어갔으면 이 테스트는 아무것도 안 잰다")
+        assert len(s["review05"]["need_more_context"]) == 1, (
+            "델타 라운드의 빈 배열이 1회차의 것을 지웠다 (M53)")
+
 
 class TestPr06MinorAccounting:
     """M52 — 「미해결 Minor」의 출처는 런 전체이지 마지막 라운드가 아니다."""
