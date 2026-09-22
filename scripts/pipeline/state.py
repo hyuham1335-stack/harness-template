@@ -59,7 +59,7 @@ TERMINAL_STATUS = ("done", "abandoned")
 # 다음을 `done` 이라 적는다 — 페이즈 id 가 아니라 "여기서 끝" 이라는 표식이다.
 DONE = "done"
 
-COUNTERS = ("round", "repair", "xverify_return", "review_repair")
+COUNTERS = ("round", "repair", "review_repair")
 
 # 예산을 **무엇에 썼는가**. 카운터는 "몇 번 썼나"만 세므로, 사유가 없으면
 # "수리 2회로 안 됐다"와 "형식으로 2회 튕겼다"가 원장에서 같은 줄로 보인다
@@ -72,7 +72,6 @@ COUNTERS = ("round", "repair", "xverify_return", "review_repair")
 COUNTER_REASONS = (
     "converged",              # 01 이 수렴해 라운드를 닫았다
     "not_converged",          # 01 이 한 라운드를 더 쓴다
-    "xverify_critical",       # 02 의 Critical 이 01 로 되돌렸다
     "gate_failure",           # 04 게이트가 실패해 수리로 간다
     "review_blocking",        # 05 의 Critical/Major 를 수리한다
     "format_reject",          # 제출이 규약을 어겨 되돌아왔다 — 수리가 아니다
@@ -236,7 +235,6 @@ def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None
         "counters": {},
         "escalated": False,
         "contract": {"mode": "contract", "present": False},
-        "cross_verify": _cross_verify_init(config),
         "grade": None,
         "gaps": [],
         "budget": {"model_calls": {
@@ -298,55 +296,6 @@ def note_model_instruction(s, key, tier):
     """봉투가 지시 키 `key` 에 등급 `tier` 를 찍었다. `None` 이면 미선언이다."""
     node = s.setdefault("models", _models_node())
     node.setdefault("instructed", {})[key] = tier
-    return node
-
-
-def _cross_verify_init(config):
-    """런 시작 시의 교차검증 요약.
-
-    **`configured` 와 `mode` 는 다른 것을 말한다.** `configured` 는 config 가
-    무엇을 선언했는가이고 `mode` 는 **실제로 무엇이 관측했는가**다. 예전에는
-    하나뿐이라 config 가 `primary` 를 선언하면 라운드가 전부 폴백으로 돌아도
-    상태는 `primary` 라고 적었다 — P3 가 다섯 라운드 내내 그랬고, 그 사실이
-    상태에도 보고서에도 남지 않았다.
-
-    `mode` 는 라운드가 제출될 때마다 `note_cross_verify_round` 가 내린다.
-    올리지는 않는다 — 한 번 약해진 관측은 뒤 라운드가 좋아도 그 런의 사실이다.
-    """
-    return {"mode": _cross_verify_mode(config),
-            "configured": _cross_verify_mode(config),
-            "rounds": {}, "degraded_rounds": 0, "last_primary_error": None}
-
-
-def _cross_verify_mode(config):
-    """primary 도 fallback 도 없으면 skipped — 02 가 등급에 드러낸다."""
-    cv = config.get("cross_verify") or {}
-    if cv.get("primary"):
-        return "primary"
-    if cv.get("fallback"):
-        return "fallback"
-    return "skipped"
-
-
-def note_cross_verify_round(s, round_, mode, primary_error=None):
-    """한 회차의 교차검증이 무엇으로 돌았는지 런 요약에 접는다.
-
-    **부재와 일시 실패를 가른다** — `primary_error` 가 있으면 primary 를
-    시도했다가 실패한 것이고(일시), 없으면 primary 가 애초에 없던 것이다(구조).
-    앱 코드에 `lookup_failed` ≠ `no_match` 를 요구하면서(ADR-005) 하네스가
-    그 둘을 한 어휘로 뭉개고 있었다.
-
-    `mode` 는 **내려가기만 한다.** 3회차가 primary 로 회복돼도 1·2회차가
-    폴백이었다는 것은 그 런의 사실이고, 등급이 그것을 말해야 한다.
-    """
-    node = s.setdefault("cross_verify", {})
-    node.setdefault("rounds", {})[str(round_)] = mode
-    if primary_error:
-        node["last_primary_error"] = primary_error
-    node["degraded_rounds"] = sum(
-        1 for v in node["rounds"].values() if v == "fallback")
-    if mode == "fallback":
-        node["mode"] = "fallback"
     return node
 
 
@@ -643,8 +592,7 @@ def counter_grant(s, name, extra, reason, now=None):
     `grants` 에 남긴다 — 보고서가 "왕복 뒤 몇 라운드를 더 줬는가"를 말할 수
     있는 것이 여기서 나온다.
 
-    지급은 무한 연장이 아니다. 부르는 쪽이 자기 왕복 예산(`xverify_return`
-    상한 1)에 묶여 있어 런당 한 번뿐이다 (M32 · ADR-H024).
+    지급은 무한 연장이 아니다. 부르는 쪽이 자기 예산에 묶여 있다 (M32 · ADR-H024).
 
     **여기서 올리는 `max` 는 `grants` 의 파생값이다** — `counter_inc` 이 매
     소모마다 `선언값 + grants 합` 으로 다시 계산하므로 두 값이 어긋나지 않는다.
@@ -670,7 +618,7 @@ def demote(s, grade, gap=None):
     """등급을 **강등만** 한다. 반환: 최종 등급.
 
     이 함수가 있기 전에는 세 곳이 `s["grade"] = ...` 를 직접 대입했고
-    (게이트 · 02 스킵 · 05 판정), **나중에 쓰는 쪽이 이겼다.** 게이트가
+    (게이트 · 레인 miss · 05 판정), **나중에 쓰는 쪽이 이겼다.** 게이트가
     나중에 돌면 05 가 남긴 `PASS_WITH_GAPS` 가 `PASS` 로 되돌아간다 —
     한 번 드러난 결손이 조용히 사라지는 경로다.
 

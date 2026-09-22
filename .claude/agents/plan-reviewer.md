@@ -1,6 +1,6 @@
 ---
 name: plan-reviewer
-description: 확정된 플랜을 독립 관측자로 검토하고 findings JSON 을 낸다. 플랜을 고치지 않는다. 01-plan · 02-cross-verify 가 호출한다.
+description: 확정된 플랜을 독립 관측자로 검토하고 findings JSON 을 낸다. 플랜을 고치지 않는다. 01-plan 이 호출한다.
 effort: high
 ---
 
@@ -28,18 +28,13 @@ effort: high
 `.raw.md` 와 아래 JSON **둘 다** 낸다. JSON 의 심각도는 raw 원문과 일치해야 한다.
 
 ```json
-{"reviewer":"plan|xv","round":1,"mode":"primary|fallback",
+{"reviewer":"plan","round":1,"mode":"primary|fallback",
  "findings":[{"id":"F-1","severity":"critical|major|minor","category":"…",
               "title":"…","quote":"raw 원문의 부분문자열","evidence":"…",
               "suggestion":"…"}],
  "resolved_from_previous":[{"id":"F-0","resolved_by":"…"}],
  "need_more_context":[]}
 ```
-
-**`02-cross-verify` 로 불렸다면 `quote` 는 `01_plan.md` 의 부분문자열이다.**
-그 페이즈는 `.raw.md` 를 산출물로 받지 않아 실행기가 **플랜 원문**과 대조한다 —
-raw 에서 인용하면 findings 수만큼 exit 8 로 되돌아온다. 원문은 사람이 읽을
-근거로 그래도 내되, 검사받는 것은 플랜 인용이다. 01 에서는 위 규칙 그대로다.
 
 `reviewer` 는 패킷이 준 코드를 그대로 쓴다. **`main` 을 쓰면 거부된다** —
 작성자가 자기 글을 리뷰한 것은 독립 관측이 아니다.

@@ -5,8 +5,7 @@
   "owner": "config.roles[]",
   "approval": "none",
   "requires": [
-    {"kind": "state", "pointer": "phases.02-cross-verify.status",
-     "in": ["passed", "skipped"]},
+    {"kind": "state", "pointer": "phases.01-plan.status", "equals": "passed"},
     {"kind": "file", "path": "${run.dir}/01_plan.md", "min_bytes": 200},
     {"kind": "file", "path": "${run.contract_file}", "min_bytes": 200,
      "must_contain": "${config.contract.sections.units}",
@@ -56,7 +55,7 @@
 
 ## 진입 조건
 
-- 02 가 `passed` 이거나 `skipped` 다
+- 01 이 `passed` 다
 - 플랜이 있다
 - 계약 파일이 있고 필수 절을 담고 있다 (`no_contract` 모드가 아닌 한)
 
@@ -105,7 +104,7 @@
 
 **역할 소유 경로(소스)를 건드리면 제출이 exit 3 으로 되돌아온다.** 예측이
 빗나간 것이다 — 프로파일이 `normal` 로 오르고 `triage_miss` 가 gap 으로
-남으며(01 리뷰어 · 02 · 역할을 건너뛴 채 여기까지 왔으므로), 계약을 쓰고
+남으며(01 리뷰어 · 역할을 건너뛴 채 여기까지 왔으므로), 계약을 쓰고
 `next` 로 역할 패킷을 받는다. 이미 고친 소스는 그 역할이 claim 한다.
 
 ## 역할 프롬프트 템플릿

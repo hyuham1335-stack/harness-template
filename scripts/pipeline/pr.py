@@ -247,44 +247,6 @@ def _no_units(state):
             "없다._")
 
 
-_VERDICT_LABELS = {
-    "accept": "반영함",
-    "reject": "반영 안 함",
-    "modify": "수정해서 반영함",
-}
-
-
-def _verdict_label(v):
-    """판정 코드 → 한글 동사. **모르는 코드는 코드 그대로 보여준다** — 표가
-    새 어휘를 못 따라가도 정보가 사라지지 않는 안전 폴백이다."""
-    return _VERDICT_LABELS.get(v, v or "판정 없음")
-
-
-def _adopted(paths):
-    """02 의 **채택 판정**. `reject` 도 뺴지 않는다.
-
-    `adopted[]` 는 "채택된 것" 이 아니라 판정이고(`02-cross-verify.md` 절차 4),
-    거부를 감추면 본문이 거짓말을 한다. 이유도 자르지 않는다 — 자르면 거부
-    근거가 사라지고 그것이 이 절의 유일한 값이다.
-
-    원소가 dict 가 아니면 `str` 로 떨어뜨린다 (M41). 스키마가 문자열을 금하지
-    않고, 본문 조립 중에 예외를 던지면 06 이 죽는다.
-    """
-    try:
-        d = json.loads(_read(paths.run_dir / "02_verdict.json") or "{}")
-    except ValueError:
-        return []
-    out = []
-    for a in d.get("adopted") or []:
-        if isinstance(a, dict) and a.get("id"):
-            head = "**%s** — %s" % (a.get("id"), _verdict_label(a.get("verdict")))
-            reason = (a.get("reason") or "").strip()
-            out.append("%s: %s" % (head, reason) if reason else head)
-        else:
-            out.append(str(a))
-    return out
-
-
 def _minor_open(paths, state):
     """미해결 Minor. **런 전체이지 마지막 라운드가 아니다** (M52).
 
@@ -528,7 +490,6 @@ def build_body(root, paths, state, config):
     request, request_note = _quoted_request(paths.request)
     units = _contract_sections(root, state, config)
     stat = _diff_stat(root, config)
-    adopted = _adopted(paths)
     minors = _minor_open(paths, state)
     skipped = [g for g in gaps if g.startswith(("stage_absent:", "stage_na:",
                                                 "stage_not_touched:",
@@ -568,9 +529,6 @@ def build_body(root, paths, state, config):
         lines += ["</details>", ""]
     else:
         lines += [_no_units(state), ""]
-    lines += ["## 기술적 고려사항", ""]
-    lines += (["- %s" % a for a in adopted] if adopted
-              else ["_02 교차검증에서 채택된 판정이 없다._"]) + [""]
     lines += ["## 참고사항", ""]
     lines += ["**미해결 Minor**", ""]
     lines += (["- %s" % m for m in minors] if minors else ["- 없다"]) + [""]

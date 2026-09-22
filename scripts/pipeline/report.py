@@ -38,9 +38,6 @@ GAP_REASONS = {
     "attribution_unparsed": ("스테이지가 실패했는데 귀속이 실패 항목을 하나도 "
                              "못 읽었다 — 어댑터의 파싱 규칙이 실물 출력에 "
                              "안 맞는다 (ADR-H069)"),
-    "cross_verify_unavailable": "교차검증 primary·fallback 이 둘 다 불가였다",
-    "cross_verify:fallback": ("01 의 교차검증이 폴백으로 돈 회차가 있다 — "
-                              "독립 관측 둘이라는 전제가 그만큼 약해졌다"),
     "review05": "05 의 리뷰어가 전부 또는 일부 실패했다",
     "infra_skipped": "인프라 프로브 실패로 건너뛴 검증이 있다",
     "precheck_policy_override": ("`precheck` 정책 실패(예산·브랜치·base)를 사람이 "
@@ -105,8 +102,8 @@ def _sum_phase(timing, key):
 def gap_reason(gap):
     """어휘 조회의 단일 출처 — **전체 키가 먼저, 머리가 그다음**이다.
 
-    `cross_verify:fallback` 처럼 콜론까지가 키인 항목이 있는데 머리만 찾으면
-    "어휘에 없는 사유" 가 된다. 08 보고서와 06 PR 본문이 같은 함수를 쓴다.
+    콜론까지가 키인 항목이 생기면 머리만 찾을 때 "어휘에 없는 사유" 가 된다.
+    08 보고서와 06 PR 본문이 같은 함수를 쓴다.
     없으면 None.
     """
     gap = str(gap)
@@ -320,7 +317,6 @@ def build(state, data, timing=None):
     tests = state.get("tests") or {}
     r05 = state.get("review05") or {}
     r07 = state.get("review07") or {}
-    cv = state.get("cross_verify") or {}
 
     lines = ["# 런 보고서 — %s" % state.get("run_id"), ""]
     lines += ["> 요청 슬러그: `%s`" % (state.get("slug") or "?"), ""]
@@ -386,8 +382,6 @@ def build(state, data, timing=None):
          ("%d (findings %s · dup_05 %s)"
           % (len(r07.get("escaped") or []), r07.get("findings"), r07.get("dup_05")))
          if r07.get("findings") is not None else None),
-        # **01 의 관측 품질이 이 표에 없었다.** 05·07 만 적어서, 교차검증이
-        # 다섯 라운드 내내 폴백이어도 보고서는 아무 말도 하지 않았다 (P3).
         # **프로파일이 리뷰어 상한을 정한다.** 그 값이 어디서 나왔는지가
         # 보고서에 없으면 "리뷰어 1명" 이 계획인지 결함인지 갈리지 않는다 (M34).
         ("프로파일", _profile_cell(state.get("profile"))),
@@ -395,21 +389,11 @@ def build(state, data, timing=None):
         ("00 트리아지", _triage_cell(state)),
         ("트리아지 적용 양보",
          " · ".join((state.get("profile") or {}).get("applied") or []) or None),
-        ("01 교차검증", cv.get("mode")),
-        ("폴백 회차", "%s / %s" % (cv.get("degraded_rounds") or 0,
-                                   len(cv.get("rounds") or {}))),
-        # **생략과 불가는 다르다** (ADR-H042). `no_risk` 는 01 INTENT 의 `risk`
-        # 가 비어 있고 Critical 도 없었던 것(ADR-H060), `docs_profile` ·
-        # `fix_profile` 은 레인의 양보다 — 셋 다 정책 스킵이라 등급이 안 내려간다.
-        ("02 생략 사유", cv.get("skip_reason")),
     ])
     # 05 가 낸 키를 가리키지 않은 Critical/Major — 사람이 정할 목록이다.
     for f in r07.get("escaped") or []:
         lines.append("- **07 escaped** `%s` — %s (`%s`)"
                      % (f.get("severity"), f.get("title"), f.get("path") or "경로 없음"))
-    if cv.get("last_primary_error"):
-        lines += ["", "- **교차검증 primary 가 실패한 적이 있다** — `%s`. "
-                  "부재가 아니라 일시 실패다." % cv["last_primary_error"]]
     lines.append("")
 
 
