@@ -9,8 +9,14 @@
      "unless": "state.contract.mode == \"no_contract\""}
   ],
   "produces": [
-    {"key": "trace", "path": "${run.dir}/05_trace.json", "kind": "json"},
-    {"key": "review", "path": "${run.dir}/05_review.json", "kind": "json"}
+    {"key": "review_raw", "path": "${run.dir}/05_review_${config.reviewers.0.code}.raw.md",
+     "kind": "markdown"},
+    {"key": "review_json", "path": "${run.dir}/05_review_${config.reviewers.0.code}.json",
+     "kind": "json"},
+    {"key": "trace", "path": "${run.dir}/05_trace.json", "kind": "json",
+     "owner": "executor"},
+    {"key": "review", "path": "${run.dir}/05_review.json", "kind": "json",
+     "owner": "executor"}
   ],
   "gate": {
     "runner": "adapter", "fail_fast": true,

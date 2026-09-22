@@ -9,7 +9,7 @@
   ],
   "produces": [
     {"key": "report", "path": "docs/harness/pipeline/runs/${run.id}.md",
-     "kind": "markdown"}
+     "kind": "markdown", "owner": "executor"}
   ],
   "gate": {"runner": "none"},
   "allow": {"agents": []},

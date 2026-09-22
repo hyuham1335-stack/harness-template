@@ -11,7 +11,8 @@
      "mode": "fail"}
   ],
   "produces": [
-    {"key": "gate_report", "path": "${run.dir}/04_gate_report.json", "kind": "json"}
+    {"key": "gate_report", "path": "${run.dir}/04_gate_report.json", "kind": "json",
+     "owner": "executor"}
   ],
   "gate": {
     "runner": "adapter", "fail_fast": true,

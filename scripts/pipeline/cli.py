@@ -359,6 +359,10 @@ def _lookup(ctx, dotted):
             % (ns, "·".join(_NAMESPACES)))
     node = ctx
     for part in dotted.split("."):
+        if isinstance(node, list) and part.isdigit() and int(part) < len(node):
+            # `config.reviewers.0.code` — 05 산출물 이름의 리뷰어 code (ADR-H076 B′)
+            node = node[int(part)]
+            continue
         if not isinstance(node, dict) or part not in node:
             raise PlaceholderError("`${%s}` 를 해결하지 못했다" % dotted)
         node = node[part]
@@ -1227,8 +1231,7 @@ def run_next(root, run_id=None):
 
     render, next_cmd = render_packet(root, phase, ctx, s, checks)
     env = st.envelope("next", True, 0, s,
-                      {"produces": [resolve(p.get("path"), ctx)
-                                    for p in phase["front"].get("produces") or []],
+                      {"produces": _model_produces(phase["front"], ctx),
                        "requires_report": checks,
                        # 런 전체의 사전 검사는 **첫 페이즈**에서 한 번.
                        "prescan": _prescan(root, loaded, ctx, s) if pid == "01-plan" else []},
@@ -1552,6 +1555,12 @@ def _review_render(s):
     return "\n".join(lines)
 
 
+def _model_produces(front, ctx):
+    """모델이 쓰는 산출물 경로 — `owner: executor`(실행기가 쓴다)는 뺀다 (ADR-H076 B′)."""
+    return [resolve(p.get("path"), ctx) for p in front.get("produces") or []
+            if p.get("owner") != "executor"]
+
+
 def render_packet(root, phase, ctx, s, checks=None):
     front, body = phase["front"], phase["body"]
     pid = front["id"]
@@ -1580,7 +1589,7 @@ def render_packet(root, phase, ctx, s, checks=None):
     parts.append(_section(body, "## 제출 형식"))
     parts.append(_section(body, "## 금지"))
 
-    produces = [resolve(p.get("path"), ctx) for p in front.get("produces") or []]
+    produces = _model_produces(front, ctx)
     if produces:
         parts.append("## 쓸 파일\n\n" +
                      "\n".join("- `%s`" % p for p in produces))

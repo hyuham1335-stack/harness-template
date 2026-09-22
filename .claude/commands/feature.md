@@ -48,11 +48,12 @@ python scripts/pipeline/cli.py init --feature {slug} \
 python scripts/pipeline/cli.py next
 ```
 
-봉투(stdout 의 JSON 하나)에서 **`render` 와 `next_command` 둘만 읽는다.**
-다른 필드로 판단하지 마라.
+봉투(stdout 의 JSON 하나)에서 **`render` 와 `next_command` 를 따른다.** `data` 는
+`render` 가 가리키는 것만 본다 — `produces`(쓸 파일) · `repair_dispatch`(04 수리
+배정) · `stage`(03 컴파일 실패 스테이지). 다른 필드로 판단하지 마라.
 
 1. `render` 가 시키는 대로 한다
-2. `produces[].path` 에 파일을 쓴다
+2. `render` 의 「쓸 파일」(= `data.produces`)에 파일을 쓴다
 3. `next_command` 를 그대로 실행한다
 
 ### 종료 코드별 대처
@@ -61,7 +62,7 @@ python scripts/pipeline/cli.py next
 |---|---|---|
 | 0 | 진행 | 봉투의 `next_command` 를 계속 따른다 |
 | 3 | 선행조건 미충족 | `render` 가 말한 것을 채우고 같은 명령을 다시 친다 |
-| 4 | 기계 판정 실패, 예산 남음 | 수리한다. **`data.repair_dispatch` 의 배정을 그대로 쓴다** |
+| 4 | 기계 판정 실패, 예산 남음 | 수리한다. 04 는 **`data.repair_dispatch` 의 배정을 그대로 쓴다**, 03 컴파일 실패는 `data.stage` 가 실패한 스테이지다 |
 | 8 | 제출물이 스키마·정합성을 어겼다 | 고쳐서 다시 낸다 |
 | 5 · 7 · 10 | 예산 소진 · 반복 한계 · 에스컬레이션 | **멈춘다.** `ESCALATION.md` 의 선택지를 그대로 사용자에게 제시한다 |
 | 6 | 전이 거부 — 산출물 없음 · 지문 stale | `render` 가 말한 것을 채운다. 승인이 무효면 재승인이다 |
@@ -138,7 +139,7 @@ python scripts/pipeline/cli.py contract-trace --run-id <id>
   그것은 `review05:failed` gap 이다
 - Agent 호출 `subagent_type: general-reviewer` 로 부른다 — 관점·제출 형식은 에이전트
   정의가 든다. 본문을 복사하지 마라
-- 봉투의 **"검토 제외"** 목록과 참조 파일 경로(`diff+refs`)를 그대로 전달한다
+- 봉투의 참조 파일 경로(`diff+refs`)를 그대로 전달한다
 - 리뷰어에게 **리포 탐색을 허용하지 마라.** 부족하면 `need_more_context` 에 적게 한다
 
 리뷰어의 `.raw.md` 와 `.json` **두 파일**을 받고 제출한다.
