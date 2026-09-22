@@ -46,8 +46,8 @@ PRODUCES_KINDS = ("json", "markdown")
 PRODUCES_KEYS = ("key", "path", "kind", "owner", "min_bytes", "must_contain",
                  "unless")
 FRONT_KEYS = ("id", "index", "owner", "approval", "docs", "requires", "produces",
-              "review", "converge", "submit_checks", "gate", "loop", "allow",
-              "on_success")
+              "review", "converge", "submit_checks", "gate", "loop", "trace_loop",
+              "allow", "on_success")
 REQUIRED_SECTIONS = ("## 목적", "## 진입 조건", "## 절차",
                      "## 제출 형식", "## 금지", "## 실패 시")
 ROLE_TEMPLATE_SECTION = "## 역할 프롬프트 템플릿"
@@ -157,47 +157,48 @@ class ConfigDeclarationError(ValueError):
             "`%s` 의 `%s.%s` %s" % (phase_id, scope, key, detail))
 
 
-def _loop_counter(front):
-    """`loop.counter`. 어휘는 `state.COUNTERS` 다."""
-    got = (front.get("loop") or {}).get("counter")
+def _loop_counter(front, key="loop"):
+    """`loop.counter`. 어휘는 `state.COUNTERS` 다. `key` 는 05 의 `trace_loop` 처럼
+    같은 모양의 둘째 루프 선언을 읽을 때 준다."""
+    got = (front.get(key) or {}).get("counter")
     if not got:
-        raise ConfigDeclarationError(front.get("id"), "counter", "가 없다")
+        raise ConfigDeclarationError(front.get("id"), "counter", "가 없다", key)
     if got not in st.COUNTERS:
         raise ConfigDeclarationError(
             front.get("id"), "counter",
-            "가 어휘 밖이다: %r (%s)" % (got, ", ".join(st.COUNTERS)))
+            "가 어휘 밖이다: %r (%s)" % (got, ", ".join(st.COUNTERS)), key)
     return got
 
 
-def _loop_max(front, profile=None):
+def _loop_max(front, profile=None, key="loop"):
     """`loop.max`, 또는 프로파일별이면 `loop.max_by_profile[profile]`."""
-    loop = front.get("loop") or {}
+    loop = front.get(key) or {}
     by = loop.get("max_by_profile")
     if by:
         got = by.get(profile) or by.get("normal")
         if not got:
             raise ConfigDeclarationError(
                 front.get("id"), "max_by_profile",
-                "에 %r 도 `normal` 도 없다" % (profile,))
+                "에 %r 도 `normal` 도 없다" % (profile,), key)
         return got
     got = loop.get("max")
     if not got:
         raise ConfigDeclarationError(front.get("id"), "max",
-                                     "도 `max_by_profile` 도 없다")
+                                     "도 `max_by_profile` 도 없다", key)
     return got
 
 
-def _loop_on_exceed(front):
+def _loop_on_exceed(front, key="loop"):
     """`loop.on_exceed`. **어휘가 하나뿐인 것은 사실이다** — 둘째 동작이 없다.
 
     값을 늘리는 것은 그 동작을 구현한 뒤의 일이다. 지금 늘리면 선언이 다시
     기계 사실을 참칭한다.
     """
-    got = (front.get("loop") or {}).get("on_exceed")
+    got = (front.get(key) or {}).get("on_exceed")
     if got not in LOOP_ON_EXCEED:
         raise ConfigDeclarationError(
             front.get("id"), "on_exceed",
-            "가 어휘 밖이다: %r (%s)" % (got, ", ".join(LOOP_ON_EXCEED)))
+            "가 어휘 밖이다: %r (%s)" % (got, ", ".join(LOOP_ON_EXCEED)), key)
     return got
 
 
@@ -795,6 +796,7 @@ def lint_phases(root, phases_dir=None):
                 seen_keys[key] = pid
         _lint_submit_checks(name, front, declared_checks, add)
         _lint_loop(name, pid, front, loaded, add)
+        _lint_loop(name, pid, front, loaded, add, key="trace_loop")
         _lint_converge(name, front, add)
         _lint_conditions(name, front, add)
         _lint_requires(name, front, loaded, add)
@@ -950,39 +952,40 @@ def _lint_conditions(name, front, add):
             add(name, "%s_unless" % key, "FAIL", "%s.unless: %s" % (key, exc))
 
 
-def _lint_loop(name, pid, front, loaded, add):
+def _lint_loop(name, pid, front, loaded, add, key="loop"):
     """루프 선언이 **읽히는 값**인가.
 
     M36: `on_exceed` · 상한이 프론트매터에만 있고 코드는
     하드코딩을 썼다. 이제 코드가 읽으므로, 선언이 어휘 밖이면 런 중간이 아니라
     **여기서** 안다. 검사하지 않으면 exit 2 를 런 한복판에서 만난다.
     """
-    loop = front.get("loop") or {}
+    loop = front.get(key) or {}
     if not loop:
         return
     counter = loop.get("counter")
     if not counter:
-        add(name, "counter", "FAIL", "loop.counter 가 없다 — 무엇을 세는지 "
-                                     "코드가 읽을 자리가 없다")
+        add(name, "counter", "FAIL", "%s.counter 가 없다 — 무엇을 세는지 "
+                                     "코드가 읽을 자리가 없다" % key)
     elif counter not in st.COUNTERS:
         add(name, "counter", "FAIL",
             "알 수 없는 카운터: %r (%s)" % (counter, ", ".join(st.COUNTERS)))
 
     if not loop.get("max") and not loop.get("max_by_profile"):
         add(name, "loop_max", "FAIL",
-            "loop.max 도 loop.max_by_profile 도 없다 — 상한이 코드에만 남는다")
+            "%s.max 도 %s.max_by_profile 도 없다 — 상한이 코드에만 남는다"
+            % (key, key))
 
     on_exceed = loop.get("on_exceed")
     if on_exceed is not None and on_exceed not in LOOP_ON_EXCEED:
         add(name, "on_exceed", "FAIL",
-            "loop.on_exceed 가 어휘 밖이다: %r (%s) — **없는 동작을 어휘로 "
+            "%s.on_exceed 가 어휘 밖이다: %r (%s) — **없는 동작을 어휘로 "
             "예고하지 않는다.** 늘리려면 그 동작을 먼저 만든다"
-            % (on_exceed, ", ".join(LOOP_ON_EXCEED)))
+            % (key, on_exceed, ", ".join(LOOP_ON_EXCEED)))
 
     # 01 은 `converge` 와 `loop` 가 같은 초과 동작을 선언한다. 코드는 `loop` 를
     # 읽으므로 둘이 갈리면 `converge` 쪽이 조용히 무시된다.
     conv_exceed = (front.get("converge") or {}).get("on_exceed")
-    if conv_exceed is not None and conv_exceed != on_exceed:
+    if key == "loop" and conv_exceed is not None and conv_exceed != on_exceed:
         add(name, "on_exceed", "FAIL",
             "converge.on_exceed(%r) 와 loop.on_exceed(%r) 가 다르다 — "
             "코드는 loop 를 읽는다" % (conv_exceed, on_exceed))
@@ -3687,6 +3690,27 @@ def run_contract_trace(root, contract=None, run_id=None):
     st.save(paths, s)
 
     exit_ = 8 if got.get("blocking") else 0
+    if exit_:
+        # **선수리 루프에도 천장이 있다.** 05 의 `trace_loop` 가 선언하고 여기서
+        # 읽는다 — 반복마다 작성자 호출 1 + 재게이트 1 이고, 같은 Critical 이
+        # 반복되면 코드가 아니라 계약이 틀렸을 수 있다 (ADR-H076).
+        front = (load_phases(root)[0].get("05-code-review") or {}).get("front") or {}
+        try:
+            used, max_, exceeded = st.counter_inc(
+                s, _loop_counter(front, "trace_loop"),
+                _loop_max(front, key="trace_loop"), "trace_blocking", paths=paths)
+            if exceeded:
+                _loop_on_exceed(front, "trace_loop")
+        except ConfigDeclarationError as exc:
+            return _declaration_envelope("contract-trace", s, exc)
+        st.save(paths, s)
+        if exceeded:
+            st.escalate(paths, s,
+                        "계약 대조의 Critical %d건이 %d회 안에 해소되지 않았다 — "
+                        "같은 지적이 반복되면 코드가 아니라 계약이 틀렸을 수 있다"
+                        % (got["blocking"], max_),
+                        phase="05-code-review")
+            return _escalation_envelope("contract-trace", paths, s)
     return st.envelope("contract-trace", exit_ == 0, exit_, s, got,
                        _trace_render(got, rel),
                        "python scripts/pipeline/cli.py gate --phase 05 --stage loop "

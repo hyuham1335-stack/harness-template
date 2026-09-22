@@ -33,6 +33,7 @@
     {"id": "monotonicity", "on_fail": 8}
   ],
   "loop": {"counter": "review_repair", "max": 2, "on_exceed": "escalate"},
+  "trace_loop": {"counter": "trace_repair", "max": 2, "on_exceed": "escalate"},
   "allow": {"agents": "config.roles[].agent"},
   "on_success": "06-pr"
 }

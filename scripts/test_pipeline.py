@@ -2973,7 +2973,9 @@ class TestContractTraceNoContract:
 
 class TestContractTraceCli:
 
-    def test_cli_emits_a_single_envelope_and_writes_the_file(self, repo, request_file):
+    def test_cli_emits_a_single_envelope_and_writes_the_file(self, repo, request_file,
+                                                             phases):
+        """`phases` — Critical 이면 05 의 `trace_loop` 선언을 읽는다 (A8)."""
         _write_contract(repo)
         init = cli.run_init(repo, "x", request_file)
         run_id = init["run_id"]
@@ -2985,7 +2987,7 @@ class TestContractTraceCli:
         assert out.exists()
         assert json.loads(out.read_text(encoding="utf-8"))["checks_run"]
 
-    def test_cli_reports_utf8_without_escaping(self, repo, request_file):
+    def test_cli_reports_utf8_without_escaping(self, repo, request_file, phases):
         _write_contract(repo, CONTRACT.replace("matchTitle", "제목맞추기"))
         init = cli.run_init(repo, "x", request_file)
         run_id = init["run_id"]
