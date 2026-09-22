@@ -714,9 +714,9 @@ class TestWaitingHumanEvents:
         return [e for e in st.read_events(paths) if e["kind"] == "waiting_human"]
 
     def test_precheck_정책_실패가_남긴다(self, repo, request_file):
-        _branch(repo, "feat-x")
+        _git(repo, "branch", "-M", "main")      # 보호 브랜치 위 — 정책 실패
         cli.run_init(repo, "x", request_file)
-        _bulk_change(repo, 40)
+        _bulk_change(repo, 1)
         env = cli.run_precheck(repo, scope="pr")
         assert env["exit"] == 9
         paths, _ = st.load(repo)
@@ -754,8 +754,8 @@ class TestCounterExceededIsConsumed:
 class TestModelCallBudget:
     """M22 — 선언만 되고 아무도 세지 않던 예산.
 
-    P1 은 서브에이전트 10회를 태우고도 봉투에 "0/24" 를 찍었다. 재지 않는 예산은
-    소진되지 않으므로 exit 5 가 영원히 발화하지 않는다.
+    P1 은 서브에이전트 10회를 태우고도 봉투에 "0/24" 를 찍었다. 지금은 세되
+    **정지하지 않는다** — `max` 는 보고서용 숫자다 (ADR-H075).
     """
 
     def test_a_new_run_starts_at_zero_with_the_configured_max(self, repo, request_file):
@@ -775,17 +775,18 @@ class TestModelCallBudget:
         assert mc["total"] == 4
         assert mc["by_phase"] == {"01-plan": 2, "03-implement": 2}
 
-    def test_bump_reports_exhaustion_at_the_max(self, repo, request_file):
+    def test_bump_returns_total_and_max(self, repo, request_file):
         _, s = st.create_run(repo, "demo", request_file)
         s["budget"]["model_calls"]["max"] = 2
-        assert st.bump_model_calls(s, "01-plan") == (1, 2, False)
-        assert st.bump_model_calls(s, "01-plan") == (2, 2, True)
+        assert st.bump_model_calls(s, "01-plan") == (1, 2)
+        assert st.bump_model_calls(s, "01-plan") == (2, 2)
+        assert st.bump_model_calls(s, "01-plan") == (3, 2), "넘어도 센다 — 정지하지 않는다"
 
-    def test_no_max_never_exhausts(self, repo, request_file):
+    def test_no_max_is_none_not_zero(self, repo, request_file):
         """max 가 null 이면 예산이 없는 것이지 0 인 것이 아니다."""
         _, s = st.create_run(repo, "demo", request_file)
         s["budget"]["model_calls"]["max"] = None
-        assert st.bump_model_calls(s, "01-plan") == (1, None, False)
+        assert st.bump_model_calls(s, "01-plan") == (1, None)
 
     def test_01_진입이_리뷰어_하나를_지시로_센다(self, run01):
         """01 은 이제 내부 plan-reviewer 하나만 부른다(ADR-H045) — 봉투가 그것을 지시한다."""
@@ -836,14 +837,14 @@ class TestModelCallBudget:
         _, after = st.load(repo, paths.run_id)
         assert after["budget"]["model_calls"]["total"] == before
 
-    def test_exhausted_budget_stops_the_run_with_exit_5(self, run01):
-        """예산이 소진되면 다음 모델 호출을 요구하지 않고 멈춘다."""
+    def test_an_exhausted_budget_does_not_stop_the_run(self, run01):
+        """`model_calls_max` 는 보고서용 숫자다 — 넘어도 멈추지 않고 헤더에 n/max 로 남는다."""
         repo, paths, s = run01
         s["budget"]["model_calls"]["max"] = 1
         st.save(paths, s)
         env = cli.run_next(repo, run_id=paths.run_id)
-        assert env["exit"] == 5, env["render"]
-        assert "예산" in env["render"]
+        assert env["exit"] == 0, env["render"]
+        assert "모델 호출 1/1" in env["render"]
 
     def test_the_packet_header_names_what_it_counts(self, run01):
         """무엇을 세는지 이름으로 말한다 — "근사" 는 그것을 말하지 못한다."""
@@ -3123,7 +3124,14 @@ def _probe_policy(repo, name, value):
 
 
 class TestPrecheckBudget:
-    """예산 초과는 exit 9 다 — **자동 분할하지 않는다.** 범위 판단은 사람의 것이다."""
+    """예산은 **정보 행**이다 (ADR-H075) — 숫자는 남기되 exit 9 를 내지 않는다.
+
+    클론 4런 중 3런이 `files_max` 10 으로 멈췄고 사람은 매번 「그대로 간다」를
+    골랐다. 3/4런이 넘는 상한은 상한이 아니라 통행료다.
+    """
+
+    def _budget_row(self, got):
+        return next(c for c in got["checks"] if c["name"] == "예산")
 
     def test_clean_small_change_passes(self, repo):
         _branch(repo, "feat-x")
@@ -3131,165 +3139,40 @@ class TestPrecheckBudget:
         got = pc.run(repo, scope="pr")
         assert got["exit"] == 0, got["checks"]
 
-    def test_too_many_files_is_exit_9(self, repo):
+    def test_too_many_files_is_informational_not_exit_9(self, repo):
         _branch(repo, "feat-x")
         _bulk_change(repo, 12)          # budget.files_max 는 10 이다
         got = pc.run(repo, scope="pr")
-        assert got["exit"] == 9
-        assert any(c["name"] == "예산" and not c["ok"] for c in got["checks"])
+        assert got["exit"] == 0, got["checks"]
+        row = self._budget_row(got)
+        assert row["ok"] and row["kind"] == "info", row
+        assert got["budget"]["files"] >= 12 and got["budget"]["files_max"] == 10
 
-    def test_too_many_lines_is_exit_9(self, repo):
+    def test_too_many_lines_is_informational_too(self, repo):
         _branch(repo, "feat-x")
         _bulk_change(repo, 1, lines=1200)   # budget.lines_max 는 1000 이다
         got = pc.run(repo, scope="pr")
-        assert got["exit"] == 9
+        assert got["exit"] == 0
+        assert got["budget"]["lines"] >= 1200
 
     def test_untracked_file_counts_toward_the_budget(self, repo):
-        """git diff 는 새 파일을 못 본다. 안 세면 예산이 사실보다 작게 잡힌다."""
+        """git diff 는 새 파일을 못 본다. 안 세면 숫자가 사실보다 작게 잡힌다."""
         _branch(repo, "feat-x")
         _bulk_change(repo, 12)
         got = pc.run(repo, scope="pr")
         assert got["budget"]["files"] >= 12
 
-    def test_test_files_do_not_count_toward_files_max(self, repo):
-        """ADR-H066 — 파일 수 예산은 소스만 센다. 줄 수는 여전히 전체다."""
+    def test_test_files_do_not_count_toward_files(self, repo):
+        """ADR-H066 — 파일 수는 소스만 센다. 줄 수는 여전히 전체다."""
         _branch(repo, "feat-x")
         _bulk_change(repo, 3)
         for i in range(11):
             (repo / "src" / "lib" / ("t%d.test.ts" % i)).write_text(
                 "export const t = %d\n" % i, encoding="utf-8")
         got = pc.run(repo, scope="pr")
-        assert got["exit"] == 0, got["checks"]
         assert got["budget"]["files"] == 3, got["budget"]
         assert got["budget"]["test_files_excluded"] == 11, got["budget"]
-
-    def test_source_files_alone_still_exceed_files_max(self, repo):
-        _branch(repo, "feat-x")
-        _bulk_change(repo, 11)
-        (repo / "src" / "lib" / "a.test.ts").write_text("export const t = 1\n",
-                                                        encoding="utf-8")
-        got = pc.run(repo, scope="pr")
-        assert got["exit"] == 9
-        assert got["budget"]["files"] == 11, got["budget"]
-
-
-class TestPrecheckPolicyOverride:
-    """미구현 백로그 26 — 같은 정책을 05·06 에서 두 번 묻지 않는다.
-
-    exit 9 는 상태를 잠그지도 카운터를 쓰지도 않고 오버라이드 플래그도 없었다 —
-    **사람이 「그대로 간다」를 고른 사실이 어디에도 남지 않았다.** §E13 이 재개마다
-    재실행을 요구하므로 06 에서 연속 두 번 묻는 일까지 생긴다. 클론 4런에서
-    3런이 05·06 양쪽에서 exit 9 였고 사람 대기 8.5분이 전체 대기의 30% 였다.
-
-    **검사는 계속 돈다.** 바뀌는 것은 「같은 사유·같은 값이면 다시 묻지 않는다」
-    뿐이고, 넘어간 사실은 `precheck_policy_override` gap 으로 등급이 치른다 —
-    면제는 통과가 아니다 (ADR-H027).
-    """
-
-    def _over(self, repo, files=12):
-        _branch(repo, "feat-x")
-        _bulk_change(repo, files)
-
-    def test_지문이_실패_사유와_값을_담는다(self, repo):
-        self._over(repo)
-        got = pc.run(repo, scope="pr")
-        fp = got["policy_fingerprint"]
-        assert fp["reasons"] == ["예산"], fp
-        assert fp["files"] >= 12 and fp["lines"] >= 12, fp
-
-    def test_통과한_런은_지문이_없다(self, repo):
-        _branch(repo, "feat-x")
-        _bulk_change(repo, 1)
-        got = pc.run(repo, scope="pr")
-        assert got["exit"] == 0 and got["policy_fingerprint"] is None, got
-
-    def test_ack_없이는_종전대로_다시_묻는다(self, repo, request_file):
-        self._over(repo)
-        cli.run_init(repo, "x", request_file)
-        assert cli.run_precheck(repo, scope="pr", phase="05")["exit"] == 9
-        assert cli.run_precheck(repo, scope="pr", phase="06")["exit"] == 9
-
-    def test_ack_한_뒤_같은_지문이면_06_이_묻지_않는다(self, repo, request_file):
-        self._over(repo)
-        cli.run_init(repo, "x", request_file)
-        assert cli.run_precheck(repo, scope="pr", phase="05")["exit"] == 9
-        acked = cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
-        assert acked["exit"] == 0, acked["render"]
-        env = cli.run_precheck(repo, scope="pr", phase="06")
-        assert env["exit"] == 0, env["render"]
-        assert "precheck_policy_override" in (env["data"].get("gaps") or []), env["data"]
-
-    def test_대기는_런당_한_번뿐이다(self, repo, request_file):
-        """닫힘 조건 — `waiting_human {"reason":"precheck_policy"}` 가 런당 1회 이하."""
-        self._over(repo)
-        cli.run_init(repo, "x", request_file)
-        cli.run_precheck(repo, scope="pr", phase="05")
-        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
-        cli.run_precheck(repo, scope="pr", phase="06")
-        cli.run_precheck(repo, scope="pr", phase="06")
-        paths, _ = st.load(repo)
-        waits = [e for e in st.read_events(paths)
-                 if e["kind"] == "waiting_human"
-                 and e["data"]["reason"] == "precheck_policy"]
-        assert len(waits) == 1, waits
-
-    def test_값이_나빠지면_다시_묻는다(self, repo, request_file):
-        """오버라이드는 사람이 본 범위까지다 — 더 커진 것은 사람이 안 본 것이다."""
-        self._over(repo)
-        cli.run_init(repo, "x", request_file)
-        cli.run_precheck(repo, scope="pr", phase="05")
-        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
-        _bulk_change(repo, 30)
-        assert cli.run_precheck(repo, scope="pr", phase="06")["exit"] == 9
-
-    def test_새_사유가_붙으면_다시_묻는다(self, repo, request_file):
-        self._over(repo)
-        cli.run_init(repo, "x", request_file)
-        cli.run_precheck(repo, scope="pr", phase="05")
-        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
-        _git(repo, "checkout", "-q", "main")
-        env = cli.run_precheck(repo, scope="pr", phase="06")
-        assert env["exit"] == 9, env["render"]
-
-    def test_넘어간_사실이_등급을_내린다(self, repo, request_file):
-        self._over(repo)
-        cli.run_init(repo, "x", request_file)
-        cli.run_precheck(repo, scope="pr", phase="05")
-        cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
-        _, s = st.load(repo)
-        assert s["grade"] == st.GRADES[1], s["grade"]
-        assert "precheck_policy_override" in (s.get("gaps") or []), s.get("gaps")
-
-    def test_ack_는_통과한_런에서는_아무것도_안_남긴다(self, repo, request_file):
-        """넘길 것이 없는데 오버라이드를 적으면 다음 초과를 조용히 삼킨다."""
-        _branch(repo, "feat-x")
-        _bulk_change(repo, 1)
-        cli.run_init(repo, "x", request_file)
-        env = cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
-        assert env["exit"] == 0
-        _, s = st.load(repo)
-        assert not (s.get("precheck") or {}).get("policy_override"), s.get("precheck")
-
-    def test_봉투가_고르는_법을_이름으로_알려준다(self, repo, request_file):
-        """사람에게 선택지를 주면서 그것을 못박는 법을 안 적으면 아무도 안 쓴다."""
-        self._over(repo)
-        cli.run_init(repo, "x", request_file)
-        env = cli.run_precheck(repo, scope="pr", phase="05")
-        assert "--ack-policy" in env["render"], env["render"]
-
-    def test_넘어간_런의_봉투가_프로브_면제로_읽히지_않는다(self, repo, request_file):
-        self._over(repo)
-        cli.run_init(repo, "x", request_file)
-        cli.run_precheck(repo, scope="pr", phase="05")
-        env = cli.run_precheck(repo, scope="pr", phase="05", ack_policy=True)
-        assert "면제된 프로브" not in env["render"], env["render"]
-        assert "통과가 아니라" in env["render"], env["render"]
-
-    def test_gap_이_이름으로_설명된다(self):
-        import report as rep
-        assert rep.gap_reason("precheck_policy_override"), \
-            "어휘에 없으면 보고서와 PR 본문이 설명하지 못한다"
-        assert not rep.is_non_demoting("precheck_policy_override")
+        assert "테스트 11 제외" in self._budget_row(got)["message"]
 
 
 class TestPrecheckBranch:
@@ -4693,8 +4576,8 @@ class TestPrecheckSpecAlignment:
     상태를 잠근다고 한다. 둘 다 코드와 어긋나 있었다."""
 
     def test_정책_실패는_카운터를_소모하지_않는다(self, repo):
-        _branch(repo, "feat-x")
-        _bulk_change(repo, 40)          # files_max: 10 초과
+        _git(repo, "branch", "-M", "main")      # 보호 브랜치 위 — 정책 실패
+        _bulk_change(repo, 1)
         got = pc.run(repo, scope="pr")
         assert got["exit"] == 9
         assert got["classification"] == "policy"
@@ -4717,9 +4600,9 @@ class TestPrecheckSpecAlignment:
                 / "ESCALATION.md").exists()
 
     def test_정책_실패는_상태를_잠그지_않는다(self, repo, request_file):
-        _branch(repo, "feat-x")
+        _git(repo, "branch", "-M", "main")      # 보호 브랜치 위 — 정책 실패
         cli.run_init(repo, "x", request_file)
-        _bulk_change(repo, 40)
+        _bulk_change(repo, 1)
         env = cli.run_precheck(repo, scope="pr")
         assert env["exit"] == 9
         _paths, s = st.load(repo)
@@ -6166,14 +6049,6 @@ class TestConvergenceThreshold:
         assert after["budget"]["model_calls"]["total"] == before + 1, \
             after["budget"]["model_calls"]
         assert "01:r1:plan" in after["budget"]["model_calls"]["counted"]
-
-    def test_an_exhausted_budget_stops_the_second_round(self, run01):
-        repo, paths, s = run01
-        s["budget"]["model_calls"]["max"] = 1
-        st.save(paths, s)
-        _submit_plan(repo, paths, _plan())
-        env = _submit_review(repo, paths, _review("plan", findings=[_crit()]))
-        assert env["exit"] == 5, env["render"]
 
     def test_the_normal_cap_is_two(self, run01):
         """5 → 3 (ADR-H041) → 2 (덜어내기 Wave 3 — 리뷰어가 리포를 읽으므로 1~2라운드). 값의 회귀 방지다."""

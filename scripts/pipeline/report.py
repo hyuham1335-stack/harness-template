@@ -37,9 +37,6 @@ GAP_REASONS = {
     "stage_not_touched": "그 스테이지가 볼 변경이 없었다",
     "review05": "05 의 리뷰어가 전부 또는 일부 실패했다",
     "infra_skipped": "인프라 프로브 실패로 건너뛴 검증이 있다",
-    "precheck_policy_override": ("`precheck` 정책 실패(예산·브랜치·base)를 사람이 "
-                                 "「그대로 간다」로 정했다 — 넘어간 것이지 통과한 "
-                                 "것이 아니다 (ADR-H071)"),
     "tests_not_ran": "테스트가 한 건도 돌지 않았다",
     "pr_closed": "PR 이 닫혔다 — 수리·코멘트를 하지 않았다",
     "pr_merged": "PR 이 이미 머지됐다 — 수리·코멘트를 하지 않았다",

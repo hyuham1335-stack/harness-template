@@ -106,10 +106,6 @@ EVENT_KINDS = (
     # 절반의 exit 8 경로는 그것조차 없었고, 세지 않으면 `e7ff` 의 sec 처럼
     # 두 번 튕겨 failed 로 닫힌 리뷰어가 원장에 "실패" 로만 남는다.
     "waiting_human", "format_reject",
-    # 사람이 정책 exit 9 를 「그대로 간다」로 정했다 (백로그 26 · ADR-H071).
-    # `waiting_human` 이 "기다리기 시작했다" 라면 이것은 **"무엇을 골랐다"** 다 —
-    # 없으면 그 판단이 어디에도 남지 않아 06 이 같은 것을 다시 묻는다.
-    "policy_acked",
     # 선언한 docs 레인이 03·05 의 실물에서 빗나갔다(`lane_miss`) — 역할 소유
     # 경로가 바뀌었는데 01 리뷰어·역할을 건너뛴 채 왔다.
     "lane_miss",
@@ -611,17 +607,16 @@ def _budget_node(s):
 
 
 def bump_model_calls(s, phase, n=1):
-    """(total, max, exhausted). 예산이 없으면(max=None) 소진되지 않는다."""
+    """(total, max). `max` 는 보고서용 숫자다 — 정지하지 않는다 (ADR-H075)."""
     node = _budget_node(s)
     node["total"] = node.get("total", 0) + n
     by = node.setdefault("by_phase", {})
     by[phase] = by.get(phase, 0) + n
-    max_ = node.get("max")
-    return node["total"], max_, (max_ is not None and node["total"] >= max_)
+    return node["total"], node.get("max")
 
 
 def count_instructions(s, phase, keys):
-    """봉투가 낸 **에이전트 기동 지시**를 센다. 반환: (total, max, exhausted).
+    """봉투가 낸 **에이전트 기동 지시**를 센다. 반환: (total, max).
 
     키가 필요한 이유는 `next` 가 같은 페이즈에서 여러 번 불릴 수 있기
     때문이다 — 같은 지시를 두 번 세면 계수가 왕복 횟수를 센다. 이미 센 키는
@@ -637,9 +632,7 @@ def count_instructions(s, phase, keys):
     seen = node["counted"]
     fresh = [k for k in keys if k not in seen]
     if not fresh:
-        max_ = node.get("max")
-        return (node.get("total", 0), max_,
-                (max_ is not None and node.get("total", 0) >= max_))
+        return node.get("total", 0), node.get("max")
     seen.extend(fresh)
     return bump_model_calls(s, phase, len(fresh))
 

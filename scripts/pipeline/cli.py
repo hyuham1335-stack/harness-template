@@ -1183,8 +1183,7 @@ def run_next(root, run_id=None):
                 "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
     # **지시를 낸 자리에서 센다** (M26). `next` 는 같은 페이즈에서 여러 번
     # 불릴 수 있으므로 키로 멱등을 만든다.
-    _t, _m, exhausted = st.count_instructions(
-        s, pid, _instruction_keys(s, pid, ctx, phase["front"]))
+    st.count_instructions(s, pid, _instruction_keys(s, pid, ctx, phase["front"]))
     st.save(paths, s)
 
     render, next_cmd = render_packet(root, phase, ctx, s, checks)
@@ -1195,7 +1194,7 @@ def run_next(root, run_id=None):
                        # 런 전체의 사전 검사는 **첫 페이즈**에서 한 번.
                        "prescan": _prescan(root, loaded, ctx, s) if pid == "01-plan" else []},
                       render, next_cmd)
-    return _budget_stop(paths, env) if exhausted else env
+    return env
 
 
 def _note_applied(s, tag):
@@ -1804,23 +1803,6 @@ def _instruction_keys(s, pid, ctx, front=None):
     return []
 
 
-def _budget_stop(paths, env):
-    """제출은 살리고 다음 호출만 막는다 — exit 5 는 소진이지 거부가 아니다."""
-    if not env.get("ok") or env.get("exit") not in (0, 11):
-        return env
-    env["ok"] = False
-    env["exit"] = 5
-    env["next_command"] = None
-    env["render"] = (
-        "## 모델 호출 예산이 소진됐다\n\n"
-        "이번 제출은 기록됐다. 다음 호출을 요구하지 않고 여기서 멈춘다.\n"
-        "계속하려면 사람이 `budget.model_calls_max` 를 올리거나 범위를 줄인다.\n\n"
-        "직전 지시문:\n\n%s" % env.get("render", ""))
-    st.append_event(paths, "check_fail", cmd="record", exit=5,
-                    reason="model_call_budget")
-    return env
-
-
 def _normalize_phase(phase, loaded):
     """`04` 와 `04-gate` 를 둘 다 받는다."""
     if phase in loaded:
@@ -1883,12 +1865,11 @@ def _advance_to_next(root, paths, s, phase_item, ctx, cmd="record"):
     st.append_event(paths, "phase_enter", cmd=cmd, phase=nxt)
     # **지시를 낸 자리에서 센다.** 전이가 다음 패킷을 바로 내므로 `next` 의
     # 계수를 지나친다 (ADR-H042).
-    _t, _m, exhausted = st.count_instructions(
-        s, nxt, _instruction_keys(s, nxt, ctx, nxt_item["front"]))
+    st.count_instructions(s, nxt, _instruction_keys(s, nxt, ctx, nxt_item["front"]))
     st.save(paths, s)
     render, next_cmd = render_packet(root, nxt_item, ctx, s, nxt_checks)
     env = st.envelope(cmd, True, 0, s, {"next_phase": nxt}, render, next_cmd)
-    return _budget_stop(paths, env) if exhausted else env
+    return env
 
 
 # ------------------------------------------------------- 01 제출 처리
@@ -2136,7 +2117,7 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
     # **지시를 낸 자리에서 센다.** 01 의 루프는 `record → record` 라 `next`
     # 의 계수를 지나쳤고, 다섯 라운드 열 번을 불러도 예산은 2 였다 (ADR-H042).
     next_keys = ["01:r%d:%s" % (used, code) for code in planned]
-    _t, _m, exhausted = st.count_instructions(s, "01-plan", next_keys)
+    st.count_instructions(s, "01-plan", next_keys)
     st.save(paths, s)
     focus = conv.get("focus_round_2") or ""
     env = st.envelope(
@@ -2153,7 +2134,7 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
         "python scripts/pipeline/cli.py record --phase 01 --file <리뷰 json> "
         "--reviewer %s --round %d --run-id %s"
         % (planned[0], used + 1, s["run_id"]))
-    return _budget_stop(paths, env) if exhausted else env
+    return env
 
 
 def _same_command(s, phase):
@@ -3009,11 +2990,10 @@ def _write_json(path, data):
 
 def cmd_precheck(root, args):
     return st.emit(run_precheck(root, args.scope, args.run_id,
-                               getattr(args, "phase", "05"),
-                               ack_policy=getattr(args, "ack_policy", False)))
+                               getattr(args, "phase", "05")))
 
 
-def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
+def run_precheck(root, scope="pr", run_id=None, phase="05"):
     """05 진입과 06 에서 각 1회, 그리고 **재개마다** 다시 돈다 (§E13).
 
     런 없이도 돈다 — 무료 검사의 요점이 "시작하기 전에 안다"이므로 런을
@@ -3030,9 +3010,6 @@ def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
     got = pc.run(root, scope=scope)
 
     if s is not None:
-        # **사람이 이미 고른 것을 다시 묻지 않는다** (백로그 26). 기록과 판정이
-        # 아래 모든 것(슬롯·gap·이벤트·봉투)보다 앞이다 — exit 를 바꾸기 때문이다.
-        _apply_policy_override(paths, s, got, pid, ack_policy)
         # 명세의 state 스키마가 `precheck.at_05` 와 `at_06` 을 나란히 둔다 —
         # 같은 검사가 두 시점에 돌고 **그 사이에 값이 변하기 때문**이다 (§E13).
         # 한 칸에 덮어쓰면 06 이 05 의 예산을 지우고, 무엇이 언제 참이었는지
@@ -3055,7 +3032,7 @@ def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
         st.append_event(paths, "check_fail" if got["exit"] else "stage_done",
                         cmd="precheck", phase=pid, exit=got["exit"])
         if got["exit"] == 9:
-            # 예산·브랜치·divergence 는 사람이 판단한다 — 그 대기가 여기서
+            # 브랜치·divergence 는 사람이 판단한다 — 그 대기가 여기서
             # 시작된다 (ADR-H052). `check_fail` 은 "무엇이" 이고 이것은 "언제부터" 다.
             st.append_event(paths, "waiting_human", cmd="precheck", phase=pid,
                             reason="precheck_policy")
@@ -3078,38 +3055,6 @@ def run_precheck(root, scope="pr", run_id=None, phase="05", ack_policy=False):
 
 _PRECHECK_PHASE = {"05": "05-code-review", "06": "06-pr"}
 
-# 사람이 정책 exit 9 를 「그대로 간다」로 정한 사실. **면제는 통과가 아니다** —
-# 비강등 목록에 넣지 않아 등급이 그 사실을 치른다 (ADR-H027 · ADR-H071).
-PRECHECK_OVERRIDE_GAP = "precheck_policy_override"
-
-
-def _apply_policy_override(paths, s, got, pid, ack_policy):
-    """사람이 못박은 정책 판단을 적고, 덮이는 실패는 다시 묻지 않는다 (백로그 26).
-
-    exit 9 는 상태를 잠그지도 카운터를 쓰지도 않아 **사람이 「그대로 간다」를 고른
-    사실이 어디에도 남지 않았다.** 그래서 §E13 의 재개 재검사가 06 에서 같은 것을
-    다시 물었다 — 클론 4런에서 사람 대기의 30% 가 그것이었다.
-
-    **검사는 그대로 돈다.** 바뀌는 것은 「같은 사유·같은 값이면 묻지 않는다」뿐이고,
-    넘어간 사실은 gap 으로 남는다.
-    """
-    import precheck as pc
-
-    node = s.setdefault("precheck", {})
-    fresh = got.get("policy_fingerprint")
-    if ack_policy and got["exit"] == 9 and fresh:
-        node["policy_override"] = {"fingerprint": fresh, "phase": pid,
-                                   "at": st.stamp()}
-        st.append_event(paths, "policy_acked", cmd="precheck", phase=pid,
-                        reasons=fresh["reasons"])
-    saved = (node.get("policy_override") or {}).get("fingerprint")
-    if got["exit"] != 9 or not pc.override_covers(saved, fresh):
-        return
-    got["exit"] = 0
-    got["classification"] = None
-    got["policy_override"] = dict(node["policy_override"])
-    got.setdefault("gaps", []).append(PRECHECK_OVERRIDE_GAP)
-
 
 def _base_behind(got):
     """divergence 검사가 센 behind 수. 검사가 안 돌았으면 0 이 아니라 None 이다."""
@@ -3128,20 +3073,11 @@ def _precheck_next(pid, s):
 
 def _precheck_render(got):
     if got["exit"] == 0:
-        lines = ["`precheck` 통과. 파일 %d · 줄 %d 로 예산 안이고 브랜치·base·"
-                 "인프라가 전부 맞다."
+        lines = ["`precheck` 통과. 파일 %d · 줄 %d — 브랜치·base·인프라가 전부 맞다."
                  % (got["budget"]["files"], got["budget"]["lines"])]
         # **면제를 조용히 넘기지 않는다** (M44). "전부 맞다" 로만 적으면
         # 면제가 통과와 구분되지 않는다.
         for gap in got.get("gaps") or []:
-            if gap == PRECHECK_OVERRIDE_GAP:
-                fp = (got.get("policy_override") or {}).get("fingerprint") or {}
-                lines += ["", "**정책 실패를 사람이 넘기기로 한 상태다: `%s`.** "
-                              "통과가 아니라 넘어간 것이다 — 등급이 "
-                              "`PASS_WITH_GAPS` 로 내려가고 보고서·PR 본문에 "
-                              "이름으로 남는다. 사유·값이 커지면 다시 묻는다."
-                          % ", ".join(fp.get("reasons") or [])]
-                continue
             lines += ["", "**면제된 프로브가 있다: `%s`.** 통과가 아니라 "
                           "미검증이다 — 등급이 `PASS_WITH_GAPS` 로 내려가고 "
                           "보고서·PR 본문에 이름으로 남는다." % gap]
@@ -3158,11 +3094,8 @@ def _precheck_render(got):
                   "이대로 회귀를 돌리면 전부 빨간불이 되고, 그것을 코드 문제로 "
                   "읽게 된다."]
     else:
-        lines += ["", "**자동으로 쪼개거나 리베이스하지 않는다.** 무엇을 할지 "
-                      "정하고 다시 부른다.",
-                  "사람이 **이대로 간다**고 정했으면 같은 명령에 `--ack-policy` 를 "
-                  "붙여 그 판단을 못박는다 — 그래야 06 이 같은 것을 다시 묻지 "
-                  "않는다 (백로그 26). 넘어간 사실은 gap 으로 남는다."]
+        lines += ["", "**자동으로 리베이스하지 않는다.** 브랜치를 옮기거나 "
+                      "리베이스한 뒤 같은 명령을 다시 부른다."]
     return "\n".join(lines)
 
 
@@ -3583,7 +3516,7 @@ def _approval_prompt(root, s, rs, branch, config):
         % (rs["remote"], branch,
            (config.get("vcs") or {}).get("base_branch") or "main",
            b["files"], b["lines"],
-           "예산 내" if got["exit"] == 0 else "**예산 밖**"),
+           "precheck 통과" if got["exit"] == 0 else "**precheck 미통과**"),
         "게이트: 스킵된 스테이지 %s" % ", ".join(skipped),
         "05: 리뷰어 %s/%s · Major %s"
         % (r05.get("reviewers_ok", "?"), r05.get("reviewers_planned", "?"),
@@ -3829,7 +3762,6 @@ def build_parser():
     sp.add_argument("--scope", dest="scope", default="pr",
                     choices=["pr", "worktree"])
     sp.add_argument("--phase", dest="phase", default="05", choices=["05", "06"])
-    sp.add_argument("--ack-policy", dest="ack_policy", action="store_true")
     sp.add_argument("--run-id", dest="run_id", default=None)
 
     sp = sub.add_parser("contract-trace", add_help=False)

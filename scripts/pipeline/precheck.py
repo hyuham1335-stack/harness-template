@@ -7,9 +7,9 @@
 종료 코드가 둘로 갈리는 것이 요점이다:
 
 - **exit 9** — 사용자 판단 대기. 상태를 잠그지 않고 **카운터도 소모하지
-  않는다** (§2.5 — 정책은 소모하지 않는다). 예산 초과·브랜치 불일치·base
-  behind 가 여기다. **자동 분할도 자동 리베이스도 하지 않는다** — 범위와
-  히스토리는 사람의 것이다.
+  않는다** (정책은 소모하지 않는다). 브랜치 불일치·base behind 가 여기다.
+  **자동 리베이스를 하지 않는다** — 히스토리는 사람의 것이다. 예산(파일·줄)은
+  정보 행이다 — 클론 4런 중 3런이 넘는 상한은 상한이 아니라 통행료였다 (ADR-H075).
 - **exit 10** — 인프라 실패. 상태를 잠그고, **카운터를 소모하지 않는다** (§E9).
   프로브가 실패한 채로 전체 회귀를 돌리면 한꺼번에 빨간불이 되고, 그것을
   코드 문제로 읽게 된다.
@@ -80,53 +80,10 @@ def run(root, scope="pr", changed=None, config=None, adapter=None):
                    gaps=gaps)
 
 
-def policy_fingerprint(checks, budget):
-    """정책 실패를 **사유 집합 + 값**으로 적은 것. 실패가 없으면 `None` (백로그 26).
-
-    소유 범위 파일의 내용 해시(`state.fingerprint`)를 쓰지 않는다 — 05 와 06
-    사이에는 수리가 들어가므로 거의 매번 달라지고, 그러면 「사람이 이미 판단한
-    것을 다시 묻지 않는다」가 성립하지 않는다. 사람이 판단한 것은 코드의 바이트가
-    아니라 **무엇이 얼마나 넘었는가**다.
-    """
-    failed = sorted(c["name"] for c in checks
-                    if not c["ok"] and c["kind"] == "policy")
-    if not failed:
-        return None
-    behind = 0
-    for c in checks:
-        if c["name"] == "base":
-            behind = c.get("behind") or 0
-    return {"reasons": failed, "files": budget.get("files"),
-            "lines": budget.get("lines"), "base_behind": behind}
-
-
-# 값이 이 키들에서 하나라도 커졌으면 사람이 본 적 없는 범위다.
-_FP_SCALARS = ("files", "lines", "base_behind")
-
-
-def override_covers(saved, fresh):
-    """사람이 못박은 판단이 이번 실패를 덮는가 (백로그 26).
-
-    덮는 조건은 **사유 집합이 같고 값이 커지지 않았다** 이다. 사유가 늘면 사람이
-    안 본 것이 생긴 것이고, 값이 커지면 같은 사유라도 사람이 본 범위가 아니다.
-    작아진 것은 덮는다 — 더 좁아진 변경을 다시 묻는 것은 마찰만 는다.
-    """
-    if not saved or not fresh:
-        return False
-    if list(saved.get("reasons") or []) != list(fresh.get("reasons") or []):
-        return False
-    for key in _FP_SCALARS:
-        if (fresh.get(key) or 0) > (saved.get(key) or 0):
-            return False
-    return True
-
-
 def _result(exit_, checks, budget, classification, changed, counter_consumed,
             infra=None, gaps=None):
     return {"exit": exit_, "checks": checks, "budget": budget,
             "classification": classification,
-            # 사람이 「그대로 간다」를 고른 것을 못박을 때 쓰는 지문 (백로그 26).
-            "policy_fingerprint": policy_fingerprint(checks, budget),
             "counter_consumed": counter_consumed,
             "changed_count": len(changed),
             "infra_failures": infra or [],
@@ -136,8 +93,8 @@ def _result(exit_, checks, budget, classification, changed, counter_consumed,
             "note": ("인프라 실패는 카운터를 소모하지 않는다 — 코드가 아니라 "
                      "환경의 문제이므로 재시도 예산을 태울 이유가 없다."
                      if classification == "infra" else
-                     "예산·브랜치·divergence 는 사람이 판단한다. 자동으로 "
-                     "쪼개거나 리베이스하지 않는다.")}
+                     "브랜치·divergence 는 사람이 판단한다. 자동으로 "
+                     "리베이스하지 않는다. 예산은 정보다.")}
 
 
 def _add(checks, name, ok, kind, message="", **extra):
@@ -227,15 +184,12 @@ def _check_budget(root, config, changed, checks, scope="worktree", adapter=None)
     tests = [p for p in changed if harness.glob_any(globs, p)]
     files = len(changed) - len(tests)
     lines = _changed_lines(root, changed, scope, config)
-    over = []
-    if budget.get("files_max") and files > budget["files_max"]:
-        over.append("파일 %d > %d" % (files, budget["files_max"]))
-    if budget.get("lines_max") and lines > budget["lines_max"]:
-        over.append("줄 %d > %d" % (lines, budget["lines_max"]))
-    _add(checks, "예산", not over, "policy",
-         ("범위가 예산을 넘었다 (%s). **자동으로 쪼개지 않는다** — 나눌지 "
-          "그대로 갈지는 사람이 정한다." % ", ".join(over)) if over else
-         "파일 %d · 줄 %d · 테스트 %d 제외" % (files, lines, len(tests)))
+    # **정보 행이다** (ADR-H075). 예산 초과가 exit 9 였을 때 클론 4런 중 3런이
+    # `files_max` 로 멈췄고 사람은 매번 「그대로 간다」를 골랐다 — 3/4런이 넘는
+    # 상한은 상한이 아니라 통행료다. 숫자는 봉투·보고서·PR 본문이 계속 적는다.
+    _add(checks, "예산", True, "info",
+         "파일 %d · 줄 %d · 테스트 %d 제외 (참고 상한 파일 %s · 줄 %s)"
+         % (files, lines, len(tests), budget.get("files_max"), budget.get("lines_max")))
     return {"files": files, "lines": lines, "test_files_excluded": len(tests),
             "files_max": budget.get("files_max"),
             "lines_max": budget.get("lines_max")}

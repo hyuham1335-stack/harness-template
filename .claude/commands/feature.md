@@ -128,7 +128,7 @@ python scripts/pipeline/cli.py contract-trace --run-id <id>
 
 | exit | 뜻 | 할 일 |
 |---|---|---|
-| 9 | 예산·브랜치·base | **사람에게 묻는다.** 자동으로 쪼개거나 리베이스하지 마라 |
+| 9 | 브랜치·base | **사람에게 묻는다.** 자동으로 리베이스하지 마라. 예산(파일·줄)은 정보 행이라 멈추지 않는다 |
 | 10 | 인프라 프로브 실패 | 멈춘다. 카운터는 소모되지 않았다 |
 | 8 (trace) | Critical 이 남았다 | 고치고 `gate --phase 05 --stage loop` 후 다시 친다 (compile 포함 — scoped 단독은 타입 에러를 흘린다, ADR-H046) |
 
