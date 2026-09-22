@@ -95,10 +95,6 @@ EVENT_KINDS = (
     # 06. 승인·PR 은 "일어났다"가 사후에 확인 가능해야 하는 사건이고,
     # 둘 다 외부 상태를 건드린다 — 이벤트가 없으면 되돌아볼 기록이 없다.
     "approved", "approval_revoked", "pr_pushed", "pr_opened",
-    # `counter_inc` 은 "예산을 썼다", `counter_grant` 는 "예산을 더 줬다" 다.
-    # 뭉치면 원장에서 다섯 라운드를 쓴 런과 세 라운드를 쓰고 둘을 더 받은 런이
-    # 같아 보인다 (M32).
-    "counter_grant",
     # 계약이 바뀌어 프로파일이 다시 정해졌다. 리뷰어 상한이 그 값에서 나오므로
     # 언제 무엇에서 무엇으로 바뀌었는지가 사후에 필요하다 (M34).
     "profile_reconfirmed",
@@ -514,28 +510,11 @@ def set_phase_status(s, phase_id, status, now=None, **fields):
     return node
 
 
-def _granted(node):
-    """이 카운터가 지금까지 **추가 지급**받은 총량. 없으면 0.
-
-    지급의 원장은 `grants` 하나이고 `max` 는 그것을 반영한 **파생값**이다.
-    파생값을 원장처럼 다루면 그것을 덮어쓰는 코드가 지급을 지운다 (M56).
-    """
-    return sum(g.get("extra") or 0 for g in node.get("grants") or [])
-
-
 def counter_inc(s, name, max_, reason, paths=None, now=None, note=None):
-    """(used, **실효 상한**, exceeded). 어휘 밖 카운터·사유는 예외.
+    """(used, max, exceeded). 어휘 밖 카운터·사유는 예외.
 
-    **인자 `max_` 는 선언값이고 실효 상한은 `max_ + grants 합` 이다.** 예전에는
-    `node["max"] = max_` 로 선언값을 그대로 대입해 `counter_grant` 가 올린
-    상한을 **다음 소모 한 번이 지웠다** (M56). P8 에서 라운드 7·8·9 가 실효 10
-    인 예산을 5 로 보고 잘못 에스컬레이션했고, 사람이 답변 셋을 손으로 써서
-    [[ADR-H024]] 가 만든 지급 경로의 대역을 했다.
-
-    **셋이 모두 실효값을 말한다** — 반환 2항 · `node["max"]` · `counter_inc`
-    이벤트의 `max`. 한 곳이라도 선언값을 말하면 "어느 예산으로 돌았는가" 가 그
-    자리에서 갈린다. P8 의 `events.jsonl` 이 지급 뒤에도 `max: 5` 를 적어
-    **그 런이 왜 세 번 멈췄는지 원장만으로는 설명되지 않았다.**
+    `max_` 는 페이즈 선언값이다. 예산 추가 지급은 덜어내기 Wave 4 에서 사라졌다 —
+    유일한 지급 경로(05 재상정 승격)가 리뷰어 하나와 함께 없어졌다 (ADR-H075).
 
     **`reason` 은 필수다.** 기본값을 두면 그 기본값이 곧 새 하드코딩이고,
     "무엇에 썼는지 모른다" 가 조용히 통과한다 ([[ADR-H025]] 의 교훈).
@@ -550,10 +529,7 @@ def counter_inc(s, name, max_, reason, paths=None, now=None, note=None):
                          "없이 예산을 태우면 원장이 그 런을 설명하지 못한다"
                          % (reason, ", ".join(COUNTER_REASONS)))
     node = s.setdefault("counters", {}).setdefault(name, {"used": 0, "max": max_})
-    # **실효 상한은 매번 다시 계산한다** (M56). `grants` 가 원장이고 `max` 는
-    # 파생값이므로, 여기가 유일한 재계산 지점이다 — `node["max"]` 를 직접 읽는
-    # 셋(런 헤더·왕복 봉투·보고서의 `_counter_cell`)이 각자 합산하지 않아도 된다.
-    eff = None if max_ is None else max_ + _granted(node)
+    eff = max_
     node["max"] = eff
     node["used"] = node.get("used", 0) + 1
     entry = {"n": node["used"], "reason": reason, "ts": stamp(now)}
@@ -566,36 +542,6 @@ def counter_inc(s, name, max_, reason, paths=None, now=None, note=None):
         append_event(paths, "counter_inc", counter=name, used=node["used"],
                      max=eff, reason=reason, note=note, now=now)
     return node["used"], eff, node["used"] >= eff if eff is not None else False
-
-
-def counter_grant(s, name, extra, reason, now=None):
-    """예산을 **추가 지급**한다. 반환: (used, max).
-
-    **리셋이 아니다.** `used` 를 되돌리면 "이 런이 라운드를 몇 번 돌았는가"가
-    사라지고, 그것이 M31 이 낸 손실의 모양이다. 상한만 올리고 지급 사실을
-    `grants` 에 남긴다 — 보고서가 "왕복 뒤 몇 라운드를 더 줬는가"를 말할 수
-    있는 것이 여기서 나온다.
-
-    지급은 무한 연장이 아니다. 부르는 쪽이 자기 예산에 묶여 있다 (M32 · ADR-H024).
-
-    **여기서 올리는 `max` 는 `grants` 의 파생값이다** — `counter_inc` 이 매
-    소모마다 `선언값 + grants 합` 으로 다시 계산하므로 두 값이 어긋나지 않는다.
-    이 대입을 중복 가산으로 오해해 지우면, 지급 직후부터 다음 소모 전까지
-    봉투(`record` 의 왕복 렌더)와 보고서가 **옛 상한**을 말한다.
-    """
-    if name not in COUNTERS:
-        raise ValueError("알 수 없는 카운터: %r (%s)" % (name, ", ".join(COUNTERS)))
-    if not extra or extra < 0:
-        raise ValueError("지급량은 양수여야 한다: %r" % (extra,))
-    # 초기값은 **0 이다** (M58). `extra` 로 만들면 바로 아래가 그것에 `extra` 를
-    # 또 더해 소모 전 첫 지급이 상한을 두 배로 만든다. `max` 는 `grants` 의
-    # 파생값이므로 소모가 없는 상태의 상한은 지급 합계와 같아야 한다 —
-    # 선언값은 이 함수가 모르고 `counter_inc` 이 인자로 받는다.
-    node = s.setdefault("counters", {}).setdefault(name, {"used": 0, "max": 0})
-    node["max"] = (node.get("max") or 0) + extra
-    node.setdefault("grants", []).append(
-        {"at": stamp(now), "extra": extra, "reason": reason})
-    return node.get("used", 0), node["max"]
 
 
 def demote(s, grade, gap=None):

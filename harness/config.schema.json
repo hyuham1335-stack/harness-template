@@ -105,7 +105,7 @@
       }
     },
     "reviewers": {
-      "description": "05-code-review 의 리뷰어 목록. when glob 이 변경 파일에 걸리면 켜지고, 우선순위는 배열 순서다. skill 은 .claude/skills/{skill}/SKILL.md 를 가리키며 doctor 와 lint-phases 가 기동 전에 실재를 확인한다 — 없는 스킬을 부르면 05 가 라운드마다 헛돈다. roles[].agent 와 겹치는 skill 은 거부한다: 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
+      "description": "05-code-review 의 리뷰어. 하나다 (ADR-H075) — 소스 변경이 있으면 계획된다. skill 은 .claude/skills/{skill}/SKILL.md 를 가리키며 doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치는 skill 은 거부한다: 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
       "type": "array",
       "items": {
         "type": "object",
@@ -120,62 +120,26 @@
           "skill": {
             "description": ".claude/skills/{skill}/SKILL.md 의 디렉터리 이름.",
             "type": "string"
-          },
-          "priority": {"type": "integer", "minimum": 0},
-          "when_role_owned": {
-            "description": "참이면 glob 대신 roles[].owns 가 소유한 파일이 바뀌었을 때 켜진다. when 과 둘 다 없으면 review.validate 가 거부한다 — 영원히 켜지지 않는 리뷰어다.",
-            "type": "boolean"
-          },
-          "when": {
-            "description": "변경 파일 경로에 매칭할 glob. 하나라도 걸리면 켜진다. when_role_owned 가 없으면 필수다.",
-            "type": "array",
-            "minItems": 1,
-            "items": {"type": "string"}
-          },
-          "only_when_no_source_change": {
-            "description": "참이면 소스 변경이 하나도 없는 런에서만 켜진다.",
-            "type": "boolean"
           }
         }
       }
     },
     "review": {
-      "description": "05 의 상한과 모드 전환점. **여기 값은 전부 미검증 상속값이다** — 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 실측이 이 값을 검사한다.",
+      "description": "05 의 리뷰 범위와 상한. findings_max·inline_max 는 미검증 상속값이다.",
       "type": "object",
-      "required": ["profile_caps"],
+      "required": ["depth"],
       "additionalProperties": false,
       "properties": {
-        "merge_below_diff_lines": {
-          "description": "이 줄 수 이하이면 통합 모드 — 단일 에이전트가 체크리스트를 순차 적용한다. 같은 diff 를 여러 번 보내지 않는다.",
-          "type": "integer", "minimum": 1
-        },
-        "profile_caps": {
-          "description": "레인별 리뷰어 상한. 세 레인이 **전부** 있어야 한다 — 코드에 기본값이 없다. 폴백을 두면 그 폴백이 곧 새 하드코딩이고 두 출처가 갈라진 날 어느 쪽이 이겼는지 볼 수 없다 (ADR-H025 · ADR-H073).",
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["docs", "fix", "normal"],
-          "properties": {
-            "docs": {"type": "integer", "minimum": 1},
-            "fix": {"type": "integer", "minimum": 1},
-            "normal": {"type": "integer", "minimum": 1}
-          }
-        },
         "depth": {
-          "description": "레인별 리뷰 범위. `diff` 는 diff·계약·05_trace.json 만, `diff+refs` 는 계약 `## 유닛` 이 참조하는 기존 파일까지 리뷰어 패킷에 넣는다 — diff 밖 상호작용(낙관적 잠금·상태 가드)을 보기 위해서다 (FR-007 escaped). 봉투가 결정론으로 찍고 리뷰어는 고르지 않는다.",
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "docs": {"$ref": "#/definitions/review_depth"},
-            "fix": {"$ref": "#/definitions/review_depth"},
-            "normal": {"$ref": "#/definitions/review_depth"}
-          }
+          "description": "리뷰 범위. `diff` 는 diff·계약·05_trace.json 만, `diff+refs` 는 계약 `## 유닛` 이 참조하는 기존 파일까지 리뷰어 패킷에 넣는다 — diff 밖 상호작용(낙관적 잠금·상태 가드)을 보기 위해서다 (FR-007 escaped). 봉투가 결정론으로 찍고 리뷰어는 고르지 않는다.",
+          "$ref": "#/definitions/review_depth"
         },
         "findings_max": {
           "description": "넘으면 Critical/Major 만 남기고 절단하되 truncated 로 드러낸다.",
           "type": "integer", "minimum": 1
         },
         "inline_max": {
-          "description": "리뷰어에게 인라인으로 싣는 diff 의 상한. 넘으면 경로 전달로 폴백하고 그 사실을 원장에 남긴다.",
+          "description": "리뷰어에게 인라인으로 싣는 diff 의 상한. 넘으면 경로 전달로 폴백하고 그 사실을 상태에 남긴다.",
           "type": "object",
           "additionalProperties": false,
           "properties": {

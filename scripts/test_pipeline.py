@@ -53,11 +53,6 @@ COPIED = [
     "harness/templates/contract.md",
     # 05 는 기동 전에 리뷰어 스킬의 실재를 확인한다. 실물을 복사해 두므로
     # 스킬 하나를 지우거나 이름을 바꾸면 이 테스트가 먼저 깨진다.
-    ".claude/skills/data-layer-reviewer/SKILL.md",
-    ".claude/skills/security-reviewer/SKILL.md",
-    ".claude/skills/architecture-reviewer/SKILL.md",
-    ".claude/skills/test-quality-reviewer/SKILL.md",
-    ".claude/skills/docs-reviewer/SKILL.md",
     ".claude/skills/general-reviewer/SKILL.md",
 ]
 
@@ -562,84 +557,6 @@ class TestCounters:
         assert st.counter_inc(s, "repair", 2, "gate_failure") == (1, 2, False)
         assert st.counter_inc(s, "repair", 2, "gate_failure") == (2, 2, True)
 
-    def test_지급한_상한을_다음_소모가_지우지_않는다(self, repo, request_file):
-        """M56 — `counter_grant` 가 올린 상한을 `counter_inc` 한 번이 되돌렸다.
-
-        `20260908-1720-dca1` 의 `counters.round` 는 `used 9 / max 5` 인데
-        `grants[0].extra` 가 5 다. 실효 상한 10 인 예산에서 라운드 7·8·9 가
-        `used >= max` 로 잘못 에스컬레이션했고 **사람이 답변 셋을 손으로 써서
-        그 대역을 했다** — [[ADR-H024]] 가 만든 지급 경로가 실질적으로 없었다.
-
-        기존 지급 테스트 다섯(`TestRoundBudgetAfterRoundTrip`)은 전부 지급
-        **직후** 상태만 봐서 이 결함을 초록불로 통과시켰다.
-        """
-        _, s = st.create_run(repo, "demo", request_file)
-        assert st.counter_inc(s, "repair", 2, "gate_failure") == (1, 2, False)
-        assert st.counter_grant(s, "repair", 2, "왕복이 설계를 뒤집었다") == (1, 4)
-        # 되돌리면 여기가 `(2, 2, True)` 다 — 상한도 판정도 선언값으로 돌아간다.
-        assert st.counter_inc(s, "repair", 2, "gate_failure") == (2, 4, False)
-        assert s["counters"]["repair"]["max"] == 4, s["counters"]["repair"]
-
-    def test_지급받은_예산도_결국_소진된다(self, repo, request_file):
-        """지급은 상한을 올릴 뿐 무한 연장이 아니다 (ADR-H024 의 트레이드오프).
-
-        M56 을 고치면서 `exceeded` 를 영영 False 로 만들면 상한이 사라진다.
-        """
-        _, s = st.create_run(repo, "demo", request_file)
-        st.counter_inc(s, "repair", 1, "gate_failure")
-        st.counter_grant(s, "repair", 1, "왕복 지급")
-        assert st.counter_inc(s, "repair", 1, "gate_failure") == (2, 2, True)
-
-    def test_두_번_지급해도_한_번씩만_더해진다(self, repo, request_file):
-        """실효 상한은 **선언값 + `grants` 합**이고 재계산은 멱등이다.
-
-        `counter_grant` 도 `node["max"]` 를 직접 올리므로, 재계산이 그것과
-        어긋나면 지급~다음 소모 사이 구간에서 봉투와 보고서가 다른 값을 말한다.
-        실물에서 두 번 지급은 `loop.max` 를 올린 변이 테스트에서만 난다
-        (부르는 쪽의 예산이 묶는다 · M32).
-        """
-        _, s = st.create_run(repo, "demo", request_file)
-        st.counter_inc(s, "repair", 2, "gate_failure")
-        st.counter_grant(s, "repair", 2, "1차 지급")
-        st.counter_inc(s, "repair", 2, "gate_failure")
-        st.counter_grant(s, "repair", 2, "2차 지급")
-        assert st.counter_inc(s, "repair", 2, "gate_failure") == (3, 6, False)
-
-    def test_소모_전_첫_지급이_상한을_두_배로_만들지_않는다(self, repo, request_file):
-        """M58 — `counter_grant` 가 카운터 노드를 만들 때 `extra` 를 두 번 센다.
-
-        `setdefault(name, {"used": 0, "max": extra})` 로 노드를 만든 **직후**
-        `node["max"] = (node.get("max") or 0) + extra` 를 하므로, 소모가 한 번도
-        없던 카운터의 첫 지급이 상한을 `2 * extra` 로 만든다.
-
-        **오늘 실물 경로로는 도달하지 않는다** — 지급은 05 의 `severity_raised`
-        한 곳에서 일어나고 그 전에 반드시 카운터를 소모해 노드가 이미
-        있다. 재현이 라이브러리 직접 호출뿐이라는 것이 이 결함이 여섯 런을 조용히
-        지나온 이유다. **드러나지 않는다는 것이 안전하다는 뜻은 아니다** (M11 이
-        다섯 런 동안 같은 자리를 지났다).
-
-        `max` 는 `grants` 의 파생값이므로(`counter_grant` docstring) 소모가 없는
-        상태의 상한은 **지급 합계**여야 한다.
-        """
-        _, s = st.create_run(repo, "demo", request_file)
-        assert "repair" not in (s.get("counters") or {})
-        # 되돌리면 `(0, 10)` 이다 — 초기값 `extra` 에 `extra` 를 또 더한다.
-        assert st.counter_grant(s, "repair", 5, "소모 전 지급") == (0, 5)
-        assert s["counters"]["repair"]["max"] == 5, s["counters"]["repair"]
-
-    def test_소모_전_지급도_선언값_위에서_다시_계산된다(self, repo, request_file):
-        """M58 수정이 M56 의 재계산을 되돌리지 않는지 잠근다.
-
-        지급 직후의 `max` 는 지급 합계뿐이고 **선언값을 모른다** — 선언값은
-        `counter_inc` 이 인자로 받는다. 그러므로 그 첫 소모가 내는 실효 상한은
-        `선언값 + 지급 합` 이어야 한다. 초기값을 0 으로 내린 것이 이 경로를
-        깨뜨리면 여기가 먼저 빨간불이 된다.
-        """
-        _, s = st.create_run(repo, "demo", request_file)
-        st.counter_grant(s, "repair", 3, "소모 전 지급")
-        assert st.counter_inc(s, "repair", 2, "gate_failure") == (1, 5, False)
-
-
 class TestCounterSpendReason:
     """예산을 **무엇에 썼는지**가 원장에 남는가 (M47).
 
@@ -694,12 +611,11 @@ class TestCounterSpendReason:
         """
         paths, s = st.create_run(repo, "demo", request_file)
         st.counter_inc(s, "review_repair", 2, "format_reject", paths=paths)
-        st.counter_grant(s, "review_repair", 2, "왕복 지급")
         st.counter_inc(s, "review_repair", 2, "review_blocking", paths=paths)
         kinds = [json.loads(l) for l in
                  paths.events.read_text(encoding="utf-8").splitlines() if l.strip()]
         got = [e for e in kinds if e["kind"] == "counter_inc"]
-        assert [e["data"]["max"] for e in got] == [2, 4], got
+        assert [e["data"]["max"] for e in got] == [2, 2], got
 
     def test_보고서가_예산을_무엇에_썼는지_적는다(self, repo, request_file):
         """원장에 있어도 보고서가 안 말하면 사람이 그 런을 못 읽는다."""
@@ -1188,41 +1104,6 @@ class TestLintPhases:
         left = [(p.name, pr) for p in sorted(phases.glob("*.md"))
                 for pr in (_front(p).get("produces") or []) if "schema" in pr]
         assert left == [], left
-
-
-class TestProfileCapsHaveNoFallback:
-    """ADR-H073 (백로그 28 곁가지) — 폴백이 곧 새 하드코딩이다 (ADR-H025).
-
-    `DEFAULT_CAPS` 와 `config.json` 이 어긋나 있었고, **config 가 이겨서
-    무해했기 때문에** 아무도 눈치채지 못했다. M36 의 모양 그대로다.
-    """
-
-    def test_빠진_레인은_기동_전에_잡힌다(self, repo):
-        cfg = harness._read_json(repo / harness.CONFIG_REL)
-        del cfg["review"]["profile_caps"]["docs"]
-        assert any("profile_caps" in e for e in rv.validate(repo, cfg))
-
-    def test_선언이_없으면_기본값으로_낙하하지_않는다(self, repo):
-        cfg = harness._read_json(repo / harness.CONFIG_REL)
-        cfg["review"]["profile_caps"] = {}
-        with pytest.raises(ValueError):
-            rv.route(cfg, ["src/lib/x.ts"], "normal")
-
-    def test_선언을_바꾸면_절단이_따라_바뀐다(self, repo):
-        """**변이 테스트** — 「읽는지」만 보는 단언은 폴백을 되살려도 초록이다."""
-        cfg = harness._read_json(repo / harness.CONFIG_REL)
-        paths = ["src/lib/schemas.ts", "src/app/api/x/route.ts",
-                 "src/lib/match.test.ts"]
-        cfg["review"]["profile_caps"]["normal"] = 1
-        one = rv.route(cfg, paths, "normal")
-        cfg["review"]["profile_caps"]["normal"] = 3
-        three = rv.route(cfg, paths, "normal")
-        assert len(one["reviewers"]) == 1 and len(three["reviewers"]) == 3, (one, three)
-
-    def test_스키마가_세_레인을_전부_요구한다(self, repo):
-        schema = harness._read_json(repo / harness.CONFIG_SCHEMA_REL)
-        caps = schema["properties"]["review"]["properties"]["profile_caps"]
-        assert sorted(caps["required"]) == ["docs", "fix", "normal"]
 
 
 class TestSubmitCheckDeclarationsAreRead:
@@ -3652,7 +3533,7 @@ class TestPrecheckCli:
 
 
 # ---------------------------------------------------------------------------
-# M. 리뷰어 라우팅 — 결정론. when glob 이 정하고 우선순위는 배열 순서다
+# M. 리뷰어 — 하나다 (gen). 작성자 격리와 스킬 실재만 검사한다
 # ---------------------------------------------------------------------------
 
 import review as rv  # noqa: E402
@@ -3662,127 +3543,25 @@ def _config(repo):
     return harness._read_json(repo / harness.CONFIG_REL)
 
 
-class TestReviewerRouting:
-
-    def test_api_change_wakes_the_security_reviewer(self, repo):
-        got = rv.route(_config(repo), ["src/app/api/analyze/route.ts"], "normal")
-        assert "sec" in [r["code"] for r in got["reviewers"]]
-
-    def test_priority_order_is_array_order(self, repo):
-        got = rv.route(_config(repo),
-                       ["src/lib/schemas.ts", "src/app/api/x/route.ts",
-                        "src/lib/a.ts"], "normal")
-        codes = [r["code"] for r in got["reviewers"]]
-        assert codes == sorted(codes, key=lambda c: _priority(repo, c))
-
-    def test_normal_profile_respects_the_cap(self, repo):
-        changed = ["src/lib/schemas.ts", "src/app/api/x/route.ts",
-                   "src/lib/a.ts", "src/lib/a.test.ts"]
-        got = rv.route(_config(repo), changed, "normal")
-        assert len(got["reviewers"]) <= 4
-
-    def test_dropped_reviewers_are_named_not_silently_lost(self, repo):
-        """상한에 걸려 빠진 리뷰어가 누구인지 드러나야 한다."""
-        changed = ["src/lib/schemas.ts", "src/app/api/x/route.ts",
-                   "src/lib/a.ts", "src/lib/a.test.ts"]
-        got = rv.route(_config(repo), changed, "normal")
-        assert got["dropped"], "상한으로 빠진 리뷰어가 이름으로 남아야 한다"
-
-    def test_a_test_change_keeps_the_test_reviewer_under_the_normal_cap(self, repo):
-        """테스트 파일이 바뀌면 `test` 가 cap 에 잘리지 않는다 — 잘리는 것은
-        `arch` 다 (ADR-H062). 파일럿 5런이 `test` 를 `dropped` 로 잃었다."""
-        changed = ["src/lib/schemas.ts", "src/app/api/x/route.ts",
-                   "src/lib/a.test.ts"]
-        got = rv.route(_config(repo), changed, "normal")
-        codes = [r["code"] for r in got["reviewers"]]
-        assert "test" in codes, got
-        assert "arch" not in codes, got
-
-    def test_docs_reviewer_only_when_no_source_change(self, repo):
-        with_src = rv.route(_config(repo), ["docs/x.md", "src/lib/a.ts"], "normal")
-        assert "docs" not in [r["code"] for r in with_src["reviewers"]]
-        docs_only = rv.route(_config(repo), ["docs/x.md"], "normal")
-        assert "docs" in [r["code"] for r in docs_only["reviewers"]]
-
-    def test_no_match_yields_zero_reviewers_and_that_is_a_failed_review(self, repo):
-        """계획된 리뷰어가 0개면 review05.status 는 failed 다 (§E1)."""
-        got = rv.route(_config(repo), ["아무데도/안걸리는.txt"], "normal")
-        assert got["reviewers"] == []
-        assert rv.status(planned=0, ok=0) == "failed"
-
-
-class TestGeneralReviewerRouting:
-    """gen 은 glob 이 아니라 **역할 소유**로 켜진다 (ADR-H043).
-
-    07 이 깨끗한 런의 내장 리뷰를 생략하는 근거가 "05 의 gen 이 봤다" 이므로,
-    소스 변경이 있는데 gen 이 안 켜지는 경로가 있으면 그 근거가 무너진다.
-    프로젝트가 `roles[].owns` 를 다른 레이아웃으로 바꿔도 따라가야 한다.
-    """
-
-    def test_source_change_wakes_gen_first(self, repo):
-        got = rv.route(_config(repo), ["src/lib/a.ts"], "normal")
-        assert [r["code"] for r in got["reviewers"]][0] == "gen"
-
-    def test_gen_follows_roles_owns_not_a_glob(self, repo):
-        cfg = _config(repo)
-        cfg["roles"][0]["owns"] = ["lib/**"]
-        got = rv.route(cfg, ["lib/a.ts"], "normal")
-        # 다른 리뷰어의 glob 은 src/** 라 아무도 안 걸린다. gen 만 걸린다.
-        assert [r["code"] for r in got["reviewers"]] == ["gen"]
-
-    def test_docs_only_does_not_wake_gen(self, repo):
-        got = rv.route(_config(repo), ["docs/x.md"], "normal")
-        assert "gen" not in [r["code"] for r in got["reviewers"]]
-
-    def test_excluded_test_files_do_not_wake_gen_alone(self, repo):
-        """impl 이 excludes 한 테스트 파일은 test 역할이 소유한다 — 그래도 소유다."""
-        got = rv.route(_config(repo), ["src/lib/a.test.ts"], "normal")
-        assert "gen" in [r["code"] for r in got["reviewers"]]
-
-    def test_validate_accepts_when_role_owned_without_glob(self, repo):
-        cfg = _config(repo)
-        assert rv.validate(repo, cfg) == []
-        gen = [r for r in cfg["reviewers"] if r["code"] == "gen"][0]
-        assert not gen.get("when"), "gen 은 glob 을 갖지 않는다"
-        gen.pop("when_role_owned")
-        errs = rv.validate(repo, cfg)
-        assert any("'gen'" in e and "켜지지 않는다" in e for e in errs), errs
-
-
-class TestReviewMode:
-    """작은 diff 는 통합 모드다 — 같은 diff 를 여러 번 보내지 않는다."""
-
-    def test_small_diff_is_merged_mode(self, repo):
-        assert rv.mode(_config(repo), diff_lines=20) == "merged"
-
-    def test_large_diff_is_fanout(self, repo):
-        assert rv.mode(_config(repo), diff_lines=900) == "fanout"
-
-
 class TestReviewerIsolation:
     """작성자는 리뷰어가 될 수 없다. 자기 글을 리뷰한 것은 독립 관측이 아니다."""
 
     def test_author_agent_as_reviewer_is_rejected(self, repo):
         cfg = _config(repo)
-        cfg["reviewers"] = [{"code": "x", "skill": "impl-writer",
-                             "priority": 1, "when": ["src/**"]}]
+        cfg["reviewers"] = [{"code": "x", "skill": "impl-writer"}]
         errs = rv.validate(repo, cfg)
         assert any("격리" in e or "작성자" in e for e in errs)
 
     def test_missing_skill_file_is_caught_before_launch(self, repo):
         cfg = _config(repo)
-        cfg["reviewers"] = [{"code": "x", "skill": "없는-리뷰어",
-                             "priority": 1, "when": ["src/**"]}]
+        cfg["reviewers"] = [{"code": "x", "skill": "없는-리뷰어"}]
         errs = rv.validate(repo, cfg)
         assert any("없는-리뷰어" in e for e in errs)
 
     def test_duplicate_code_is_rejected(self, repo):
         cfg = _config(repo)
-        cfg["reviewers"] = [
-            {"code": "a", "skill": "architecture-reviewer", "priority": 1,
-             "when": ["src/**"]},
-            {"code": "a", "skill": "security-reviewer", "priority": 2,
-             "when": ["src/**"]}]
+        cfg["reviewers"] = [{"code": "a", "skill": "general-reviewer"},
+                            {"code": "a", "skill": "general-reviewer"}]
         assert any("code" in e for e in rv.validate(repo, cfg))
 
     def test_real_config_passes_validation(self, repo):
@@ -3818,15 +3597,8 @@ class TestReviewerSkillDocs:
             assert "diff" not in lines[0], "%s: %r" % (rel, lines[0])
 
 
-def _priority(repo, code):
-    for r in _config(repo).get("reviewers") or []:
-        if r["code"] == code:
-            return r["priority"]
-    raise AssertionError(code)
-
-
 # ---------------------------------------------------------------------------
-# N. 05 제출 판정 — 01 의 검사 + 리뷰어가 여럿이라 생기는 넷
+# N. 05 제출 판정 — 01 의 검사 + 분모·절단·실패 슬롯
 # ---------------------------------------------------------------------------
 
 RAW_ONE = """## major
@@ -3844,7 +3616,7 @@ RAW_TWO = """## critical
 """
 
 
-def _sub(reviewer="arch", by_checklist=None, **kw):
+def _sub(reviewer="gen", by_checklist=None, **kw):
     payload = {"reviewer": reviewer, "round": 1, "status": "ok",
                "by_checklist": by_checklist if by_checklist is not None else {
                    "의존 방향": [{"id": "F-1", "category": "AUTHZ_MISSING_RULE",
@@ -3918,38 +3690,25 @@ class TestReview05Truncation:
 
 
 class TestReview05Merge:
-    """2인 이상이 지적한 항목은 severity 가 한 단계 오른다."""
+    """같은 키는 하나로 접히고 `reported_by` 가 남는다 — 2인 합치 상승은 지웠다 (ADR-H075)."""
 
     def _f(self, title="같은 지적", severity="major"):
         return {"category": "NAMING", "target_role": "impl",
                 "title": title, "severity": severity}
-
-    def test_two_reviewers_raise_severity(self, repo):
-        merged = rv.merge([
-            {"reviewer": "arch", "findings": [self._f()]},
-            {"reviewer": "sec", "findings": [self._f()]}])
-        assert len(merged) == 1
-        assert merged[0]["severity"] == "critical"
-        assert merged[0]["severity_raised_from"] == "major"
-        assert sorted(merged[0]["reported_by"]) == ["arch", "sec"]
 
     def test_one_reviewer_keeps_severity(self, repo):
         merged = rv.merge([{"reviewer": "arch", "findings": [self._f()]}])
         assert merged[0]["severity"] == "major"
         assert "severity_raised_from" not in merged[0]
 
-    def test_critical_does_not_overflow(self, repo):
+    def test_same_key_folds_to_one(self, repo):
         merged = rv.merge([
-            {"reviewer": "arch", "findings": [self._f(severity="critical")]},
-            {"reviewer": "sec", "findings": [self._f(severity="critical")]}])
-        assert merged[0]["severity"] == "critical"
-
-    def test_same_reviewer_twice_does_not_raise(self, repo):
-        """한 리뷰어가 두 번 낸 것은 독립 관측 둘이 아니다."""
-        merged = rv.merge([
-            {"reviewer": "arch", "findings": [self._f()]},
-            {"reviewer": "arch", "findings": [self._f()]}])
+            {"reviewer": "gen", "findings": [self._f()]},
+            {"reviewer": "gen", "findings": [self._f()]}])
+        assert len(merged) == 1
         assert merged[0]["severity"] == "major"
+        assert merged[0]["reported_by"] == ["gen"]
+        assert "severity_raised_from" not in merged[0]
 
 
 class TestReview05Status:
@@ -4096,8 +3855,8 @@ class TestPhase05Wiring:
         env = cli.run_next(repo, run_id)
         _paths, s = st.load(repo, run_id)
         node = s["phases"]["05-code-review"]
-        assert node["planned"], "라우팅이 상태에 확정돼야 한다"
-        assert "리뷰어 라우팅" in env["render"]
+        assert node["planned"] == ["gen"], "계획이 상태에 확정돼야 한다"
+        assert "## 리뷰어" in env["render"]
 
     def test_zero_reviewers_is_named_as_a_failure_not_silence(self, repo,
                                                               request_file, phases):
@@ -4271,9 +4030,6 @@ class TestReview05Denominator:
         paths, s = st.load(repo, run_id)
         node = s.setdefault("phases", {}).setdefault("05-code-review", {})
         node["planned"] = list(codes)
-        node.setdefault("routing", {"reviewers": [{"code": c} for c in codes],
-                                    "dropped": [], "capped": False})
-        node.setdefault("mode", "fanout")
         st.save(paths, s)
         return paths
 
@@ -4334,116 +4090,63 @@ class TestReview05Failure:
         cli.run_next(repo, run_id)
         cli.run_contract_trace(repo, run_id=run_id)
         paths, s = st.load(repo, run_id)
-        node = s["phases"]["05-code-review"]
-        node["planned"] = list(codes)
-        node["routing"] = {"reviewers": [{"code": c} for c in codes],
-                           "dropped": [], "capped": False}
-        node["mode"] = "fanout"
+        s["phases"]["05-code-review"]["planned"] = list(codes)
         st.save(paths, s)
         return run_id, paths
 
     def test_second_rejection_records_the_reviewer_as_failed(
             self, repo, request_file, phases):
         """재제출 1회 → 2회 실패 시 스킵 + degrade (페이즈 파일 234행)."""
-        run_id, paths = self._ready(repo, request_file, phases, ["arch", "test"])
-        bad = paths.run_dir / "05_review_arch.json"
-        bad.write_text(json.dumps({"reviewer": "arch", "by_checklist": {"a": [
+        run_id, paths = self._ready(repo, request_file, phases, ["gen"])
+        bad = paths.run_dir / "05_review_gen.json"
+        bad.write_text(json.dumps({"reviewer": "gen", "by_checklist": {"a": [
             {"id": "F-1", "severity": "major", "title": "x",
              "category": "NAMING", "target_role": "impl",
              "quote": "원문에없는문장이다"}]}},
             ensure_ascii=False), encoding="utf-8")
-        bad.with_name("05_review_arch.raw.md").write_text(
+        bad.with_name("05_review_gen.raw.md").write_text(
             "# 리뷰\n\n아무 말\n", encoding="utf-8")
-        first = cli.run_record(repo, "05", str(bad), reviewer="arch", round_=1,
+        first = cli.run_record(repo, "05", str(bad), reviewer="gen", round_=1,
                                run_id=run_id)
         assert first["exit"] == 8, "1회차는 재제출을 요구한다"
-        second = cli.run_record(repo, "05", str(bad), reviewer="arch", round_=1,
+        second = cli.run_record(repo, "05", str(bad), reviewer="gen", round_=1,
                                 run_id=run_id)
         assert second["exit"] != 8, "2회차는 실패로 확정하고 흐름을 잇는다"
         _p, s = st.load(repo, run_id)
         slot = s["phases"]["05-code-review"]["rounds"]["1"]
-        assert slot["arch"]["keys"] is None
-        assert slot["arch"].get("reason")
+        assert slot["gen"]["keys"] is None
+        assert slot["gen"].get("reason")
 
-    def test_one_failed_reviewer_is_degraded(self, repo, request_file, phases):
-        run_id, paths = self._ready(repo, request_file, phases, ["arch", "test"])
-        env = cli.run_record(repo, "05", None, reviewer="arch", round_=1,
+    def test_the_only_reviewer_failing_is_failed(self, repo, request_file, phases):
+        """리뷰어가 하나라 `degraded` 는 없다 — 실패면 `failed` 다."""
+        run_id, paths = self._ready(repo, request_file, phases, ["gen"])
+        env = cli.run_record(repo, "05", None, reviewer="gen", round_=1,
                              run_id=run_id, failed=True, reason="호출이 타임아웃")
-        assert env["exit"] == 0, env["render"]
-        ok = _reviewer_files(paths, "test", [])
-        cli.run_record(repo, "05", str(ok), reviewer="test", round_=1,
-                       run_id=run_id)
-        _p, s = st.load(repo, run_id)
-        assert s["review05"]["status"] == "degraded"
-        assert s["review05"]["reviewers_planned"] == 2
-        assert s["review05"]["reviewers_ok"] == 1
-        assert s["grade"] != "PASS"
-
-    def test_all_failed_is_failed(self, repo, request_file, phases):
-        run_id, _paths = self._ready(repo, request_file, phases, ["arch"])
-        cli.run_record(repo, "05", None, reviewer="arch", round_=1,
-                       run_id=run_id, failed=True, reason="호출 실패")
+        assert env["exit"] != 8, env["render"]
         _p, s = st.load(repo, run_id)
         assert s["review05"]["status"] == "failed"
+        assert s["review05"]["reviewers_planned"] == 1
+        assert s["review05"]["reviewers_ok"] == 0
+        assert s["grade"] != "PASS"
         assert "review05:failed" in (s.get("gaps") or [])
 
     def test_failure_report_is_refused_when_a_valid_submission_exists(
             self, repo, request_file, phases):
         """이 verb 자체가 자진 신고다 — 확인 가능한 만큼만 받는다 (불변식 8)."""
-        run_id, paths = self._ready(repo, request_file, phases, ["arch"])
-        _reviewer_files(paths, "arch", [])
-        env = cli.run_record(repo, "05", None, reviewer="arch", round_=1,
+        run_id, paths = self._ready(repo, request_file, phases, ["gen"])
+        _reviewer_files(paths, "gen", [])
+        env = cli.run_record(repo, "05", None, reviewer="gen", round_=1,
                              run_id=run_id, failed=True, reason="안 돌았다")
         assert env["exit"] == 8
         assert "제출" in env["render"]
 
 
 class TestReview05EnvelopeContract:
-    """M37·M38 — 봉투가 기계 검사를 다 말하지 않아 제출이 두 번 반려됐다.
+    """M38 — 봉투가 기계 검사를 다 말하지 않아 제출이 반려됐다.
 
-    둘 다 **페이즈 파일이 아니라 `cli.py` 가 조건부로 그리는 문장**이 원인이다.
+    **페이즈 파일이 아니라 `cli.py` 가 조건부로 그리는 문장**이 원인이다.
     페이즈 파일만 고치면 다음 런이 또 밟는다.
     """
-
-    def _routed(self, mode, codes):
-        return {"phases": {"05-code-review": {
-            "mode": mode,
-            "routing": {"reviewers": [{"code": c, "skill": "%s-reviewer" % c,
-                                       "matched_count": 1} for c in codes],
-                        "dropped": [], "capped": False}}}}
-
-    def test_merged_봉투가_리뷰어별_제출을_말한다(self):
-        """M37 — `mode: merged` 가 "제출도 하나" 로 읽혔다."""
-        out = cli._review_render(self._routed("merged", ["data", "sec", "arch"]))
-        # 명령 줄에 `merged` 가 제출자로 등장하면 안 된다. 산문은 그 낱말을
-        # 쓰지만("`--reviewer merged` 를 받지 않는다") 명령은 쓰지 않는다.
-        cmds = [l for l in out.splitlines() if l.startswith("python ")]
-        assert cmds, out
-        assert not [l for l in cmds if "--reviewer merged" in l], out
-        for code in ("data", "sec", "arch"):
-            assert [l for l in cmds if "--reviewer %s" % code in l], out
-        assert "실행 방식" in out, out
-
-    def test_fanout_봉투는_그_문단을_넣지_않는다(self):
-        out = cli._review_render(self._routed("fanout", ["data", "sec"]))
-        assert "실행 방식" not in out, out
-
-    def test_merged_제출은_기계가_거부한다(self, repo, request_file, phases):
-        """성격 규정 — 지금도 통과한다. 봉투가 말하는 규칙이 기계와 같음을 잠근다."""
-        run_id, paths = _enter_05(repo, request_file, phases)
-        cli.run_next(repo, run_id)
-        cli.run_contract_trace(repo, run_id=run_id)
-        paths, s = st.load(repo, run_id)
-        node = s["phases"]["05-code-review"]
-        node["planned"] = ["arch"]
-        node["routing"] = {"reviewers": [{"code": "arch"}], "dropped": [],
-                           "capped": False}
-        node["mode"] = "merged"
-        st.save(paths, s)
-        f = _reviewer_files(paths, "merged", [])
-        env = cli.run_record(repo, "05", str(f), reviewer="merged", round_=1,
-                             run_id=run_id)
-        assert env["exit"] == 8, env["render"]
 
     def test_델타_봉투가_minor_회계_의무를_말한다(self):
         """M38 — 봉투는 "Minor 는 고치지 않는다" 만 적었다."""
@@ -4476,10 +4179,7 @@ class TestReview05DeltaRound:
         cli.run_contract_trace(repo, run_id=run_id)
         paths, s = st.load(repo, run_id)
         node = s["phases"]["05-code-review"]
-        node["planned"] = ["arch", "test"]
-        node["routing"] = {"reviewers": [{"code": "arch"}, {"code": "test"}],
-                           "dropped": [], "capped": False}
-        node["mode"] = "fanout"
+        node["planned"] = ["gen"]
         return run_id, paths, s, node
 
     def test_델타_라운드가_1회차_리뷰어_수를_지우지_않는다(self, repo):
@@ -4632,20 +4332,6 @@ class TestReview05DeltaRound:
         titles = [f["title"] for f in rv.open_findings({"1": r1, "2": r2})]
         assert titles == ["arch 지적 1"], titles
 
-    def test_2인_합치로_오른_severity_가_열린_목록에_반영된다(self, repo):
-        """`review.merge` 는 2인이 같은 것을 내면 한 단계 올린다.
-
-        그 상승을 잃으면 major 로 오른 지적이 「미해결 Minor」에 실린다 —
-        수리 대상인 것을 수리 면제인 것처럼 적는 것이다.
-        """
-        same = dict(category="RESPONSE_SHAPE", role="impl")
-        r1 = {"sec": self._mslot([self._mf("S-1", "같은 지적", **same)]),
-              "data": self._mslot([self._mf("D-1", "같은 지적", **same)])}
-        open_ = rv.open_findings({"1": r1})
-        assert len(open_) == 1, open_
-        assert open_[0]["severity"] == "major", open_[0]
-        assert [f for f in open_ if f["severity"] == "minor"] == []
-
     def test_열린_목록이_라운드를_가로질러_severity_를_올리지_않는다(self, repo):
         """라운드를 섞어 한 번에 merge 하면 여기가 빨간불이 된다.
 
@@ -4714,27 +4400,27 @@ class TestReview05DeltaRound:
 
     def test_delta_round_waits_for_one_reviewer(self, repo, request_file, phases):
         run_id, paths, s, node = self._ready(repo, request_file, phases)
-        node["rounds_planned"] = {"2": ["arch"]}
+        node["rounds_planned"] = {"2": ["gen"]}
         st.save(paths, s)
-        f = _reviewer_files(paths, "arch", [])
-        env = cli.run_record(repo, "05", str(f), reviewer="arch", round_=2,
+        f = _reviewer_files(paths, "gen", [])
+        env = cli.run_record(repo, "05", str(f), reviewer="gen", round_=2,
                              run_id=run_id)
         waiting = (env.get("data") or {}).get("waiting_for") or []
-        assert "test" not in waiting, "델타 라운드는 전원을 기다리지 않는다"
+        assert waiting == [], "델타 라운드는 그 한 명이 끝이다"
 
     def test_a_clean_delta_round_does_not_heal_the_status(
             self, repo, request_file, phases):
         """G-4 재개봉 방지 — status 는 런 안에서 단조 비개선이다."""
         run_id, paths, s, node = self._ready(repo, request_file, phases)
         node["round_status"] = {"1": "degraded"}
-        node["rounds_planned"] = {"2": ["arch"]}
+        node["rounds_planned"] = {"2": ["gen"]}
         s["review05"] = {"status": "degraded", "reviewers_planned": 2,
-                         "reviewers_ok": 1, "mode": "fanout", "major": 0,
+                         "reviewers_ok": 1, "major": 0,
                          "need_more_context": [],
                          "truncated": False}
         st.save(paths, s)
-        f = _reviewer_files(paths, "arch", [])
-        cli.run_record(repo, "05", str(f), reviewer="arch", round_=2,
+        f = _reviewer_files(paths, "gen", [])
+        cli.run_record(repo, "05", str(f), reviewer="gen", round_=2,
                        run_id=run_id)
         _p, s = st.load(repo, run_id)
         assert s["review05"]["status"] == "degraded", \
@@ -4777,80 +4463,23 @@ class TestReview05DeltaRound:
         major = {"id": "F-1", "category": "AUTHZ_MISSING_RULE",
                  "severity": "major", "target_role": "impl",
                  "title": "인가 누락", "quote": "인가 누락"}
-        for code, fs in (("arch", [major]), ("test", [])):
-            j = self._context_file(paths, code, 1,
-                                   ["%s: 그 구간이 diff 밖이라 대조 못 했다" % code],
-                                   findings=fs)
-            cli.run_record(repo, "05", str(j), reviewer=code, round_=1,
-                           run_id=run_id)
+        j = self._context_file(paths, "gen", 1,
+                               ["그 구간이 diff 밖이라 대조 못 했다"], findings=[major])
+        cli.run_record(repo, "05", str(j), reviewer="gen", round_=1, run_id=run_id)
         _p, s = st.load(repo, run_id)
-        assert len(s["review05"]["need_more_context"]) == 2, s["review05"]
+        assert len(s["review05"]["need_more_context"]) == 1, s["review05"]
 
-        s["phases"]["05-code-review"]["rounds_planned"] = {"2": ["arch"]}
+        s["phases"]["05-code-review"]["rounds_planned"] = {"2": ["gen"]}
         st.save(_p, s)
         j = self._context_file(
-            paths, "arch", 2, [],
+            paths, "gen", 2, [],
             resolved=[{"id": "F-1", "resolved_by": "인가 규칙을 넣었다"}])
-        env = cli.run_record(repo, "05", str(j), reviewer="arch", round_=2,
+        env = cli.run_record(repo, "05", str(j), reviewer="gen", round_=2,
                              run_id=run_id)
         assert env["exit"] == 0, (env["exit"], env.get("render"))
         _p, s = st.load(repo, run_id)
         assert "2" in (s["phases"]["05-code-review"].get("rounds") or {}),             "2회차가 슬롯에 안 들어갔으면 이 테스트는 아무것도 안 잰다"
-        assert len(s["review05"]["need_more_context"]) == 2,             "델타 라운드의 빈 배열이 1회차의 둘을 지웠다 (M53)"
-
-    def test_실물_델타_라운드_뒤_본문이_모든_리뷰어의_미해결_Minor_를_담는다(
-            self, repo, request_file, phases):
-        """P8 확인 항목의 문장 그대로다 (M52 · `ROADMAP.md:486`).
-
-        P7 이 실제로 밟은 모양: 1회차에 `arch` 가 major 하나와 minor 하나를,
-        `test` 가 minor 하나를 낸다. 2회차 델타는 `arch` 한 명이고, 그의 회계
-        목록에는 **`test` 의 minor 가 없다**(M21 ③ 때문에 그래야 한다). 그래서
-        2회차 merged 는 `arch` 것뿐이고, 본문이 거기서 나오면 `test` 의 minor 가
-        **원장에는 남은 채 사람이 읽는 자리에서만** 사라진다.
-
-        **헛돎 가드 둘** (M53 이 실제로 밟았다): ① 1회차에 major 가 없으면 05 가
-        그 자리에서 통과해 2회차 `record` 가 exit 3 이고 아무것도 안 밟은 채
-        초록이 된다. ② 2회차가 열린 것을 회계하지 않으면 단조성 검사가 exit 8 을
-        낸다. 둘 다 단언으로 잠근다.
-        """
-        run_id, paths, s, node = self._ready(repo, request_file, phases)
-        st.save(paths, s)
-        major = self._mf("F-1", "인가 누락", "major", "AUTHZ_MISSING_RULE")
-        arch_minor = self._mf("F-2", "arch 가 남긴 미해결 Minor")
-        test_minor = self._mf("T-1", "test 가 남긴 미해결 Minor")
-        for code, fs in (("arch", [major, arch_minor]), ("test", [test_minor])):
-            j = self._context_file(paths, code, 1, [], findings=fs)
-            env = cli.run_record(repo, "05", str(j), reviewer=code, round_=1,
-                                 run_id=run_id)
-        assert env["exit"] == 4, (
-            "1회차가 수리를 요구하지 않으면 델타 라운드가 성립하지 않는다 — "
-            "이 테스트는 아무것도 안 잰다", env["exit"], env.get("render"))
-
-        _p, s = st.load(repo, run_id)
-        s["phases"]["05-code-review"]["rounds_planned"] = {"2": ["arch"]}
-        st.save(_p, s)
-        # 델타는 자기 회계 의무만 진다 — major 를 닫고 자기 minor 를 다시 낸다.
-        # `test` 의 minor 는 애초에 그의 목록에 없다. 그것이 M52 의 기전이다.
-        j = self._context_file(
-            paths, "arch", 2, [], findings=[arch_minor],
-            resolved=[{"id": "F-1", "resolved_by": "인가 규칙을 넣었다"}])
-        env = cli.run_record(repo, "05", str(j), reviewer="arch", round_=2,
-                             run_id=run_id)
-        assert env["exit"] == 0, (env["exit"], env.get("render"))
-        _p, s = st.load(repo, run_id)
-        assert "2" in (s["phases"]["05-code-review"].get("rounds") or {}),             "2회차가 슬롯에 안 들어갔으면 이 테스트는 아무것도 안 잰다"
-
-        # 그 라운드의 영수증은 델타 것만 적는다 — 그것이 그 파일의 뜻이다.
-        got = json.loads((paths.run_dir / "05_review.json").read_text(
-            encoding="utf-8"))
-        assert [f["title"] for f in got["findings"]] == [arch_minor["title"]],             got["findings"]
-
-        body = pr_mod.build_body(repo, paths, s,
-                                 harness._read_json(repo / harness.CONFIG_REL))
-        assert arch_minor["title"] in body, body
-        assert test_minor["title"] in body,             "델타가 안 본 리뷰어의 미해결 Minor 가 본문에서 사라졌다 (M52)"
-        assert major["title"] not in body, "닫힌 지적이 미해결로 되살아났다"
-
+        assert len(s["review05"]["need_more_context"]) == 1,             "델타 라운드의 빈 배열이 1회차의 것을 지웠다 (M53)"
 
 class TestPr06MinorAccounting:
     """M52 — 「미해결 Minor」의 출처는 런 전체이지 마지막 라운드가 아니다."""
@@ -4902,143 +4531,24 @@ class TestPr06MinorAccounting:
 # ---------------------------------------------------------------------------
 
 
-class TestReview05SeverityRaisedGrant:
-    """[[ADR-H048]] 결정 2 — 재상정 승격은 지급이다.
-
-    `728c` 의 05 는 같은 지적이 1라운드 minor → 2라운드 major 로 재상정되며
-    `review_repair` 예산 2 를 소진했다 — 재수리 기회 없이. 심각도 상승은
-    리뷰어가 처음에 낮게 본 것이라 수리자의 잘못이 아니다. 그 비용을 수리자의
-    예산에서 빼지 않는다: `counter_grant("review_repair", 1, "severity_raised")`
-    를 **런당 1회** 지급한다. 새 키가 major 로 나는 것은 새 지적이라 지급이 아니다.
-    """
-
-    RAISED = {"id": "F-2", "category": "CONCURRENCY", "severity": "minor",
-              "target_role": "impl", "title": "동시 갱신에 잠금이 없다",
-              "quote": "잠금이 없다"}
-    BLOCK = {"id": "F-1", "category": "TX_BOUNDARY", "severity": "major",
-             "target_role": "impl", "title": "트랜잭션 경계가 없다",
-             "quote": "트랜잭션이 없다"}
-
-    def _ready(self, repo, request_file, phases):
-        run_id, paths = _enter_05(repo, request_file, phases)
-        cli.run_next(repo, run_id)
-        cli.run_contract_trace(repo, run_id=run_id)
-        paths, s = st.load(repo, run_id)
-        node = s["phases"]["05-code-review"]
-        node["planned"] = ["arch"]
-        node["routing"] = {"reviewers": [{"code": "arch"}], "dropped": [],
-                           "capped": False}
-        node["mode"] = "fanout"
-        st.save(paths, s)
-        return run_id, paths
-
-    def _submit(self, repo, paths, run_id, round_, findings, resolved=()):
-        name = ("05_review_arch.json" if round_ == 1
-                else "05_review_arch_r%d.json" % round_)
-        j = paths.run_dir / name
-        j.write_text(json.dumps({
-            "reviewer": "arch", "round": round_, "status": "ok",
-            "by_checklist": {"전부": list(findings)},
-            "resolved_from_previous": list(resolved),
-            "need_more_context": []}, ensure_ascii=False), encoding="utf-8")
-        body = "".join("## %s\n\n%s\n" % (f["severity"], f["quote"])
-                       for f in findings)
-        j.with_name(name.replace(".json", ".raw.md")).write_text(
-            "# 리뷰\n\n" + body, encoding="utf-8")
-        return cli.run_record(repo, "05", str(j), reviewer="arch",
-                              round_=round_, run_id=run_id)
-
-    def _first_round(self, repo, request_file, phases):
-        run_id, paths = self._ready(repo, request_file, phases)
-        env = self._submit(repo, paths, run_id, 1, [self.BLOCK, self.RAISED])
-        assert env["exit"] == 4, env["render"]
-        return run_id, paths
-
-    def test_같은_키의_심각도가_오르면_한_번_지급한다(self, repo, request_file,
-                                                   phases):
-        run_id, paths = self._first_round(repo, request_file, phases)
-        env = self._submit(repo, paths, run_id, 2,
-                           [dict(self.RAISED, severity="major")],
-                           resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
-        _, s = st.load(repo, run_id)
-        assert not s.get("escalated"), env["render"]
-        assert env["exit"] == 4, env["render"]
-        node = s["counters"]["review_repair"]
-        assert [(g["extra"], g["reason"]) for g in node.get("grants") or []]             == [(1, "severity_raised")], node
-        assert node["used"] == 2 and node["max"] == 3, node
-        grant = s["phases"]["05-code-review"].get("severity_raised_grant")
-        assert grant and grant["round"] == 2, grant
-        assert "severity_raised" in env["render"], env["render"]
-
-    def test_지급은_이벤트로도_남는다(self, repo, request_file, phases):
-        run_id, paths = self._first_round(repo, request_file, phases)
-        self._submit(repo, paths, run_id, 2, [dict(self.RAISED, severity="major")],
-                     resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
-        events = [json.loads(l) for l in
-                  paths.events.read_text(encoding="utf-8").splitlines() if l.strip()]
-        got = [e for e in events if e["kind"] == "counter_grant"
-               and e["data"].get("reason") == "severity_raised"]
-        assert len(got) == 1, [e for e in events if e["kind"] == "counter_grant"]
-
-    def test_새_키가_major_로_나는_것은_지급이_아니다(self, repo, request_file,
-                                                    phases):
-        """새 공격면이 라운드마다 드러나는 경우(`e7ff`)는 새 지적이다 —
-        예산이 모자라면 에스컬레이션이 맞다."""
-        run_id, paths = self._first_round(repo, request_file, phases)
-        new = {"id": "F-3", "category": "TX_BOUNDARY", "severity": "major",
-               "target_role": "impl", "title": "전혀 다른 새 지적",
-               "quote": "새로 찾은 것"}
-        self._submit(repo, paths, run_id, 2, [self.RAISED, new],
-                     resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
-        _, s = st.load(repo, run_id)
-        assert not s["counters"]["review_repair"].get("grants"), s["counters"]
-        assert s.get("escalated"), "예산 2 를 다 썼으면 에스컬레이션이다"
-
-    def test_두_번째_상승은_지급하지_않는다(self, repo, request_file, phases):
-        run_id, paths = self._first_round(repo, request_file, phases)
-        self._submit(repo, paths, run_id, 2, [dict(self.RAISED, severity="major")],
-                     resolved=[{"id": "F-1", "resolved_by": "고쳤다"}])
-        self._submit(repo, paths, run_id, 3,
-                     [dict(self.RAISED, severity="critical")])
-        _, s = st.load(repo, run_id)
-        node = s["counters"]["review_repair"]
-        assert len(node.get("grants") or []) == 1, node
-        assert s.get("escalated"), "실효 상한 3 을 다 썼다"
-
-
 class TestEscalationPlansTheDeltaRound:
-    """미구현 백로그 20 — 에스컬레이션 경로도 다음 라운드의 델타를 세우고 간다.
+    """백로그 20 — 에스컬레이션 경로도 다음 라운드의 델타를 세우고 간다.
 
-    05 판정의 `escalate` 분기가 `rounds_planned[round+1]` 을 쓰기 **전에**
-    return 해서, 재개된 3라운드가 `_planned_for_round` 의 폴백(전원)을 받았다.
-    클론 4런에서 에스컬레이션 2런 모두 `round_reviewers = {"1":4, "2":1, "3":4}`
-    였고 **r3 수확은 major 0 · critical 0** 인 반면 r2(델타 1인)는 둘 다 major
-    1건을 잡았다 — 좁은 재리뷰는 무는데 넓은 재확인은 안 문다.
-
-    **고칠 곳이 둘이다.** 상태(`rounds_planned`)만 고치면 05 패킷은 여전히
-    라우팅 전원을 이름 짓고 `_planned_guard` 가 그중 셋을 exit 8 로 되돌린다 —
-    봉투와 검사가 같은 것을 봐야 한다 (M38).
+    리뷰어가 하나(gen)라 델타도 그 하나다. 상한을 넘으면 **선택지 없이**
+    에스컬레이션한다 (ADR-H075 — 클론 4런의 에스컬레이션 2런 모두 사람이 「기타」를
+    골랐다. 메뉴는 기록이 아니라 장식이었다).
     """
 
     BLOCK = {"id": "F-1", "category": "TX_BOUNDARY", "severity": "major",
              "target_role": "impl", "title": "트랜잭션 경계가 없다",
              "quote": "트랜잭션이 없다"}
 
-    ROUTED = {"reviewers": [{"code": "arch", "skill": "architecture-reviewer",
-                             "matched_count": 1},
-                            {"code": "test", "skill": "test-quality-reviewer",
-                             "matched_count": 1}],
-              "dropped": [], "capped": False}
-
     def _ready(self, repo, request_file, phases):
         run_id, paths = _enter_05(repo, request_file, phases)
         cli.run_next(repo, run_id)
         cli.run_contract_trace(repo, run_id=run_id)
         paths, s = st.load(repo, run_id)
-        node = s["phases"]["05-code-review"]
-        node["planned"] = ["arch", "test"]
-        node["routing"] = json.loads(json.dumps(self.ROUTED))
-        node["mode"] = "fanout"
+        s["phases"]["05-code-review"]["planned"] = ["gen"]
         st.save(paths, s)
         return run_id, paths
 
@@ -5061,73 +4571,27 @@ class TestEscalationPlansTheDeltaRound:
     def test_에스컬레이션_뒤_3라운드도_델타_한_명이다(self, repo, request_file,
                                                     phases):
         run_id, paths = self._ready(repo, request_file, phases)
-        self._submit(repo, paths, run_id, "arch", 1, [self.BLOCK])
-        env = self._submit(repo, paths, run_id, "test", 1, [])
+        env = self._submit(repo, paths, run_id, "gen", 1, [self.BLOCK])
         assert env["exit"] == 4, env["render"]
         _, s = st.load(repo, run_id)
         node = s["phases"]["05-code-review"]
-        assert node["rounds_planned"]["2"] == ["arch"], node["rounds_planned"]
+        assert node["rounds_planned"]["2"] == ["gen"], node["rounds_planned"]
 
-        self._submit(repo, paths, run_id, "arch", 2, [self.BLOCK])
+        self._submit(repo, paths, run_id, "gen", 2, [self.BLOCK])
         _, s = st.load(repo, run_id)
         assert s.get("escalated"), "예산 2 를 다 썼으면 에스컬레이션이다"
         planned = (s["phases"]["05-code-review"].get("rounds_planned") or {}).get("3")
-        assert planned == ["arch"], (
-            "에스컬레이션이 델타를 안 세우면 3라운드가 전원 재팬아웃한다", planned)
+        assert planned == ["gen"], planned
+        assert s["escalation"]["options"] == [], "메뉴가 없다 — 자유 서술로 사람에게"
+        assert "계약" in s["escalation"]["reason"]
 
-    def test_델타_라운드의_패킷은_한_명만_이름_짓는다(self):
-        s = {"counters": {"review_repair": {"used": 2, "max": 2}},
+    def test_패킷은_gen_하나를_스킬_경로로_이름_짓는다(self):
+        s = {"counters": {"review_repair": {"used": 1, "max": 2}},
              "phases": {"05-code-review": {
-                 "mode": "fanout", "planned": ["arch", "test"],
-                 "rounds_planned": {"3": ["arch"]},
-                 "routing": json.loads(json.dumps(self.ROUTED))}}}
+                 "planned": ["gen"], "rounds_planned": {"2": ["gen"]},
+                 "reviewers": [{"code": "gen", "skill": "general-reviewer"}]}}}
         out = cli._review_render(s)
-        assert "architecture-reviewer" in out, out
-        assert "test-quality-reviewer" not in out, (
-            "부르지 않을 리뷰어를 패킷이 이름 지으면 그 제출이 exit 8 로 튕긴다",
-            out)
-
-    def test_1라운드_패킷은_전원을_이름_짓는다(self):
-        """좁히기는 델타 라운드에만 걸린다 — 1라운드는 키가 없어 전원 폴백이다."""
-        s = {"counters": {},
-             "phases": {"05-code-review": {
-                 "mode": "fanout", "planned": ["arch", "test"],
-                 "routing": json.loads(json.dumps(self.ROUTED))}}}
-        out = cli._review_render(s)
-        assert "architecture-reviewer" in out, out
-        assert "test-quality-reviewer" in out, out
-
-
-class TestEscalationMenuHasTheCommonAnswer:
-    """미구현 백로그 30 — 가장 자주 나오는 답이 메뉴에 있어야 한다.
-
-    05 수리 상한 초과의 선택지는 셋(계약 결함 의심 · 이대로 진행 · 중단)인데
-    **클론 4런의 에스컬레이션 2런 모두 사람이 「기타」를 골랐고**, 그 답은 둘 다
-    「좁게 보강하고 진행」 계열이었다. 메뉴가 실제 답을 담지 않으면 선택지는
-    기록이 아니라 장식이다.
-
-    `options` 는 표시 전용이다 — `state.escalate` 가 `ESCALATION.md` 와 상태에
-    적을 뿐 분기하는 코드가 없다. 그래서 **문자열이 곧 전부**이고, 그 문자열이
-    실제로 사람에게 간다는 것만 통합으로 한 번 확인한다.
-    """
-
-    NARROW = "좁게 보강하고 진행한다"
-
-    def test_메뉴에_좁은_보강이_있다(self):
-        assert any(self.NARROW in o for o in cli.REVIEW_ESCALATION_OPTIONS), \
-            cli.REVIEW_ESCALATION_OPTIONS
-
-    def test_에스컬레이션한_런이_그_메뉴를_받는다(self, repo, request_file, phases):
-        """상수가 실제 에스컬레이션까지 간다 — 선언만 있고 안 쓰이는 것을 막는다."""
-        peer = TestEscalationPlansTheDeltaRound()
-        run_id, paths = peer._ready(repo, request_file, phases)
-        peer._submit(repo, paths, run_id, "arch", 1, [peer.BLOCK])
-        peer._submit(repo, paths, run_id, "test", 1, [])
-        peer._submit(repo, paths, run_id, "arch", 2, [peer.BLOCK])
-        _, s = st.load(repo, run_id)
-        assert s.get("escalated"), s.get("run_status")
-        assert s["escalation"]["options"] == list(cli.REVIEW_ESCALATION_OPTIONS), \
-            s["escalation"]["options"]
+        assert "## 리뷰어" in out and "general-reviewer" in out, out
 
 
 class TestFormatRejectCount:
@@ -5372,8 +4836,7 @@ def _enter_06(repo, request_file, phases, grade="PASS"):
     s["phase"] = "06-pr"
     s["grade"] = grade
     s["review05"] = {"status": "ok", "reviewers_planned": 1, "reviewers_ok": 1,
-                     "mode": "merged", "major": 0, "need_more_context": [],
-                     "truncated": False}
+                     "major": 0, "need_more_context": [], "truncated": False}
     config = harness._read_json(repo / harness.CONFIG_REL)
     s["fingerprint"] = st.fingerprint(repo, config)
     st.save(_p, s)
@@ -6164,26 +5627,22 @@ class TestModelsReported:
         cli.run_next(repo, run_id)
         cli.run_contract_trace(repo, run_id=run_id)
         paths, s = st.load(repo, run_id)
-        node = s["phases"]["05-code-review"]
-        node["planned"] = ["arch"]
-        node["routing"] = {"reviewers": [{"code": "arch"}], "dropped": [],
-                           "capped": False}
-        node["mode"] = "fanout"
+        s["phases"]["05-code-review"]["planned"] = ["gen"]
         st.save(paths, s)
-        j = paths.run_dir / "05_review_arch.json"
+        j = paths.run_dir / "05_review_gen.json"
         j.write_text(json.dumps({
-            "reviewer": "arch", "round": 1, "status": "ok",
+            "reviewer": "gen", "round": 1, "status": "ok",
             "model_used": "claude-opus-5",
             "by_checklist": {"전부": []}, "resolved_from_previous": [],
             "need_more_context": []}, ensure_ascii=False), encoding="utf-8")
-        j.with_name("05_review_arch.raw.md").write_text("# 리뷰\n", encoding="utf-8")
-        env = cli.run_record(repo, "05", str(j), reviewer="arch", round_=1,
+        j.with_name("05_review_gen.raw.md").write_text("# 리뷰\n", encoding="utf-8")
+        env = cli.run_record(repo, "05", str(j), reviewer="gen", round_=1,
                              run_id=run_id)
         assert env["exit"] != 8, env["render"]
         _, after = st.load(repo, run_id)
         rounds = after["phases"]["05-code-review"]["rounds"]["1"]
-        assert rounds["arch"]["model_used"] == "claude-opus-5", rounds
-        assert after["models"]["reported"]["05:r1:arch"] == "claude-opus-5"
+        assert rounds["gen"]["model_used"] == "claude-opus-5", rounds
+        assert after["models"]["reported"]["05:r1:gen"] == "claude-opus-5"
 
     def test_문자열이_아니면_거부한다(self, repo):
         got = rv.check(repo, _config(repo), _sub(model_used=5), RAW_ONE, [])
@@ -6757,27 +6216,6 @@ class TestConvergenceThreshold:
         assert st.phase_status(after, "01-plan") != "passed"
 
 
-class TestMergedModeCountsOnce:
-    """05 `merged` 는 한 에이전트다 — 계수도 하나다. 제출은 M37 대로 갈라진다."""
-
-    def _node(self, repo, request_file, phases, mode):
-        run_id, paths = _enter_05(repo, request_file, phases)
-        paths, s = st.load(repo, run_id)
-        node = s["phases"].setdefault("05-code-review", {})
-        node["planned"] = ["arch", "test"]
-        node["mode"] = mode
-        return s, cli.build_context(repo, paths, s)
-
-    def test_merged_counts_one_instruction(self, repo, request_file, phases):
-        s, ctx = self._node(repo, request_file, phases, "merged")
-        assert cli._instruction_keys(s, "05-code-review", ctx) == ["05:r1:merged"]
-
-    def test_fanout_counts_each_reviewer(self, repo, request_file, phases):
-        s, ctx = self._node(repo, request_file, phases, "fanout")
-        assert cli._instruction_keys(s, "05-code-review", ctx) == \
-            ["05:r1:arch", "05:r1:test"]
-
-
 class TestInlineBudgetIsEnforced:
     """`review.inline_max` 는 정의만 있고 아무도 안 읽었다 — 봉투가 정한다."""
 
@@ -7142,7 +6580,7 @@ class TestGateTestsByFile:
 class TestFixLane:
     """`fix` 레인 (ADR-H053). 사용자가 `init --profile fix` 로 선언한다.
 
-    절차: 01 1라운드 → 03 impl·test → 05 cap 1(`gen`).
+    절차: 01 1라운드 → 03 impl → 05 gen.
     """
 
     def test_a_user_fix_profile_is_kept_at_init(self, repo, phases):
@@ -7167,25 +6605,15 @@ class TestFixLane:
         assert "01:max_rounds=1" in after["profile"]["applied"]
         assert after.get("grade") in (None, "PASS"), after.get("gaps")
 
-    def test_05_cap_routes_gen_only(self):
-        cfg = _cfg()
-        assert cfg["review"]["profile_caps"]["fix"] == 1
-        routed = rv.route(cfg, ["src/lib/schemas.ts", "src/app/api/x/route.ts"], "fix")
-        assert [r["code"] for r in routed["reviewers"]] == ["gen"], routed
-        assert routed["capped"] is True
-
 class TestReviewDepth:
-    """05 의 리뷰 범위는 레인별로 봉투가 찍는다 (`review.depth`).
+    """05 의 리뷰 범위는 `review.depth` 하나다 — `diff+refs` (ADR-H059 · ADR-H075).
 
     FR-007 의 동시성 결함은 05 가 diff 만 봐서 놓쳤고 07 이 기존 `transition()`
-    과의 상호작용에서 잡았다 — 리뷰 범위가 레인과 무관하게 고정돼 있었다.
-    `normal` 은 `diff+refs`(계약이 참조하는 기존 파일까지), 나머지는 `diff`.
+    과의 상호작용에서 잡았다. 레인별 표는 지웠다 — 값이 하나라 표가 뜻이 없다.
     """
 
-    def test_config_declares_a_depth_per_lane(self):
-        cfg = _cfg()
-        assert cfg["review"]["depth"] == {"docs": "diff", "fix": "diff",
-                                          "normal": "diff+refs"}
+    def test_config_declares_one_depth(self):
+        assert _cfg()["review"]["depth"] == "diff+refs"
 
     def test_schema_and_config_are_paired(self):
         """스키마 없이 config 만 고치면 doctor 가 기동 전에 거부한다."""
@@ -7197,49 +6625,27 @@ class TestReviewDepth:
         errs = harness.validate(cfg, without)
         assert any("depth" in e for e in errs), errs
         bad = json.loads(json.dumps(cfg))
-        bad["review"]["depth"]["normal"] = "everything"
+        bad["review"]["depth"] = "everything"
         assert harness.validate(bad, schema), "어휘 밖 값은 거부다"
 
     def test_05_entry_freezes_the_depth_and_the_envelope_says_it(
             self, repo, request_file, phases):
         run_id, paths = _enter_05(repo, request_file, phases)
-        _p, s = st.load(repo, run_id)
-        # 계약 유닛 수 재판정에 밀리지 않게 사람이 정한 normal 로 둔다.
-        s["profile"] = {"name": "normal", "source": "user"}
-        st.save(_p, s)
         (repo / "src" / "app" / "api" / "x").mkdir(parents=True)
         (repo / "src" / "app" / "api" / "x" / "route.ts").write_text(
             "export async function POST() {}\n", encoding="utf-8")
         env = cli.run_next(repo, run_id)
         _p, s = st.load(repo, run_id)
         assert s["phases"]["05-code-review"]["depth"] == "diff+refs"
+        assert s["phases"]["05-code-review"]["planned"] == ["gen"]
         assert "리뷰 범위: **diff+refs**" in env["render"], env["render"]
 
-    def test_fix_lane_reviews_the_diff_only(self, repo, request_file, phases):
-        run_id, paths = _enter_05(repo, request_file, phases)
-        _p, s = st.load(repo, run_id)
-        s["profile"] = {"name": "fix", "source": "user"}
-        st.save(_p, s)
-        (repo / "src" / "lib" / "match.ts").write_text("export const x = 1\n",
-                                                        encoding="utf-8")
-        env = cli.run_next(repo, run_id)
-        _p, s = st.load(repo, run_id)
-        assert s["phases"]["05-code-review"]["depth"] == "diff"
-        assert [r["code"] for r in s["phases"]["05-code-review"]["routing"]["reviewers"]] == ["gen"]
-        assert "리뷰 범위: **diff**" in env["render"], env["render"]
-        assert "리뷰 범위: **diff+refs**" not in env["render"]
-
-    def test_render_explains_each_depth(self):
-        def node(depth):
-            return {"phases": {"05-code-review": {
-                "mode": "fanout", "depth": depth,
-                "routing": {"reviewers": [{"code": "gen", "skill": "general-reviewer",
-                                           "matched_count": 1}],
-                            "dropped": [], "capped": False}}}}
-        wide = cli._review_render(node("diff+refs"))
-        assert "리뷰 범위: **diff+refs**" in wide and "참조" in wide, wide
-        narrow = cli._review_render(node("diff"))
-        assert "리뷰 범위: **diff**" in narrow and "diff+refs" not in narrow, narrow
+    def test_render_explains_the_depth(self):
+        node = {"phases": {"05-code-review": {
+            "planned": ["gen"], "depth": "diff+refs",
+            "reviewers": [{"code": "gen", "skill": "general-reviewer"}]}}}
+        out = cli._review_render(node)
+        assert "리뷰 범위: **diff+refs**" in out and "참조" in out, out
 
     def test_depth_lands_in_review05_and_the_report(self):
         s, node = {}, {"depth": "diff+refs"}
@@ -7250,5 +6656,3 @@ class TestReviewDepth:
                   "counters": {}, "budget": {}, "profile": {"name": "normal"}})
         text, _missing = rep_mod.build(s, {})
         assert "05 리뷰 범위" in text and "diff+refs" in text, text
-
-

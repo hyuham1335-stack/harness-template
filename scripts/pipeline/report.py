@@ -150,20 +150,11 @@ def _false_positive_count(state):
 
 
 def _counter_cell(node):
-    """`used / max` 와, 지급이 있었으면 그 사실까지.
-
-    지급(`counter_grant`)은 상한만 올리고 `used` 는 안 건드린다. 그래서 `used`
-    만 적으면 왕복 뒤 예산을 더 받았다는 것이 보고서에서 사라진다 (M32).
-    """
+    """`used / max` 와 무엇에 썼는지."""
     if not node:
         return None
     used, max_ = node.get("used"), node.get("max")
     cell = "%s / %s" % (used, max_) if max_ is not None else used
-    grants = node.get("grants") or []
-    if grants:
-        cell = "%s (왕복 뒤 %d 지급: %s)" % (
-            cell, sum(g.get("extra") or 0 for g in grants),
-            "; ".join(g.get("reason") or "" for g in grants))
     # **무엇에 썼는지가 드러나야 한다** (M47). `used` 만 적으면 "수리 2회로
     # 안 됐다"와 "형식으로 2회 튕겼다"가 보고서에서 같은 칸이 된다 — P6 이
     # 정확히 그랬고, 실제로는 수리를 한 번도 시도하기 전에 에스컬레이션했다.

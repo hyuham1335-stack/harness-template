@@ -1279,59 +1279,55 @@ def _roles_for(front, ctx, s):
 
 
 def _plan_05_review(root, paths, s, ctx):
-    """05 진입 시 **누가 리뷰할지를 여기서 확정한다.**
+    """05 진입 시 **누가 리뷰할지를 여기서 확정한다.** 리뷰어는 하나다 (ADR-H075).
 
-    모델이 정하지 않는다. `when` glob 이 정하는 결정론이고, 모델이 정하면 같은
-    diff 가 런마다 다른 리뷰를 받는다.
+    모델이 정하지 않는다. `config.reviewers` 의 하나(`gen`)를 소스 변경이 있으면
+    계획하고(docs 레인은 문서 변경만으로도), 없으면 0명이다 — 0명은 `review05.status`
+    가 `failed` 다. 워킹트리에 소스 변경이 없는데 커밋에는 있으면 라우팅 실패가
+    아니라 절차 오류라 exit 3 으로 되돌린다.
     """
     import precheck as pc
     import review as review_mod
 
     # 04 수리 중 계약 델타가 적용됐을 수 있다 — 해시와 버려진 줄을 다시 적는다.
     noted = _note_contract(root, s, ctx)
-    # **라우팅은 `worktree` 다** (M40 · ADR-H028). 예산은 PR 전체를 재지만
-    # 라우팅까지 넓히면 05 가 브랜치의 앞선 커밋(캘리브레이션·문서 등)까지
-    # 리뷰어 매칭에 넣는다. 그것은 근거가 따로 필요한 별개 결정이다.
+    # **변경 집합은 `worktree` 다** (M40 · ADR-H028). 예산은 PR 전체를 재지만
+    # 여기까지 넓히면 05 가 브랜치의 앞선 커밋까지 리뷰 대상에 넣는다.
     changed = pc.changed_files(root, "worktree", ctx["config"])
     profile = (s.get("profile") or {}).get("name") or "normal"
-    routed = review_mod.route(ctx["config"], changed, profile)
-    if routed["source_changed"] and profile == "docs":
+    source_changed = review_mod._source_changed(ctx["config"], changed)
+    if source_changed and profile == "docs":
         # docs 선언인데 소스가 바뀌었다. 03 이 못 잡은 경로(예: 04 수리 중
-        # 메인이 소스를 고쳤다)를 라우팅 직전에 한 번 더 묻는다 (ADR-H044).
+        # 메인이 소스를 고쳤다)를 계획 직전에 한 번 더 묻는다 (ADR-H044).
         if _docs_lane_source_check(root, paths, s, ctx, "05-code-review",
                                    source_changed=True, cmd="next"):
             profile = "normal"
-            routed = review_mod.route(ctx["config"], changed, profile)
+    reviewers = [{"code": r["code"], "skill": r["skill"]}
+                 for r in ctx["config"].get("reviewers") or []]
+    # 메인 소유 파일(`harness/**`·`.claude/**`)만 더러운 워킹트리에서 gen 을
+    # 계획하면 「커밋만 있으면 exit 3」 거부 경로가 죽는다 — 소스 변경으로 판정한다.
+    planned = ([r["code"] for r in reviewers]
+               if (source_changed or (profile == "docs" and changed)) else [])
     node = s.setdefault("phases", {}).setdefault("05-code-review", {})
     # **계획된 리뷰어는 줄지 않는다.** `next --phase 05` 는 여러 번 불릴 수
     # 있고 그때마다 변경 집합을 다시 읽는다. 줄어든 집합으로 덮으면 계획이
-    # 조용히 작아진다 — `review05` 가
-    # "런 안에서 좋아지지 않는다" 를 지키는 것과 같은 규율이다.
-    kept = [c for c in (node.get("planned") or [])
-            if c not in [r["code"] for r in routed["reviewers"]]]
-    node["planned"] = [r["code"] for r in routed["reviewers"]] + kept
-    node["routing"] = routed
+    # 조용히 작아진다 — `review05` 가 "런 안에서 좋아지지 않는다" 를 지키는 것과
+    # 같은 규율이다.
+    kept = [c for c in (node.get("planned") or []) if c not in planned]
+    node["planned"] = planned + kept
+    node["reviewers"] = reviewers
     node["contract_dropped"] = noted.get("dropped") or []
-    node["mode"] = review_mod.mode(ctx["config"],
-                                   pc._changed_lines(root, changed))
-    # **리뷰 범위도 레인이 정한다** (ADR-H059). FR-007 의 동시성 결함은 05 가
-    # diff 만 봐서 놓쳤다 — 기존 `transition()` 과의 상호작용은 누구의
-    # 체크리스트에도 없었다. `normal` 은 계약이 참조하는 기존 파일까지 본다.
-    node["depth"] = (((ctx["config"].get("review") or {}).get("depth") or {})
-                     .get(profile) or "diff")
-    # **인라인 상한은 기계가 정한다** (ADR-H042). `review.inline_max` 는
-    # 정의만 있고 아무도 안 읽어 큰 diff 가 리뷰어 수만큼 인라인됐다.
+    # **리뷰 범위는 하나다** (ADR-H059 · ADR-H075). FR-007 의 동시성 결함은 05 가
+    # diff 만 봐서 놓쳤다 — 계약이 참조하는 기존 파일까지 본다.
+    node["depth"] = (ctx["config"].get("review") or {}).get("depth") or "diff+refs"
+    # **인라인 상한은 기계가 정한다** (ADR-H042).
     node["inline"] = review_mod.inline_budget(ctx["config"],
                                               _diff_text(root, changed))
     if not node["planned"]:
         # **커밋만 있고 워킹트리가 깨끗하면 라우팅 실패가 아니라 절차 오류다**
         # (ADR-H046). 파일럿 40dc 가 05 통과 전에 커밋해 여기서 0명이 되고
-        # `review05:failed` 가 append-only 로 박혔다 — 되돌려 4/4 리뷰를
-        # 정상 수행했는데도 gap 은 남았다. 라우팅 scope 는 그대로 worktree 다
-        # (ADR-H028); 다만 `pr` scope 에 변경이 있으면 failed 를 쓰지 않고
-        # 호출자(`run_next`)가 exit 3 을 낸다.
-        # **커밋에만 있는 변경** = pr scope − worktree scope. 워킹트리의 미커밋
-        # 파일(리뷰어 glob 밖이라 라우팅 0 이 된 것)은 여기서 상쇄된다.
+        # `review05:failed` 가 append-only 로 박혔다. `pr` scope 에 변경이 있으면
+        # failed 를 쓰지 않고 호출자(`run_next`)가 exit 3 을 낸다.
         committed = sorted(set(pc.changed_files(root, "pr", ctx["config"]))
                            - set(changed))
         if committed:
@@ -1339,8 +1335,6 @@ def _plan_05_review(root, paths, s, ctx):
             return node
         # **여기서 확정하지 않으면 아무도 확정하지 않는다.** 리뷰어가 0명이면
         # 제출도 0건이고 `_judge_05` 가 아예 안 불린다 — 05 가 조용히 지나간다.
-        # 봉투는 이 사실을 이미 산문으로 말하고 있었고, 그것을 쓰는 코드가
-        # 없다는 것이 G-4 의 절반이었다.
         _write_review05(s, node, planned=[], ok=0, merged=[], slot={})
     node.pop("routing_refused", None)
     # **지시 시점의 지문을 라운드에 남긴다** (ADR-H046). `record` 가 이것과
@@ -1448,7 +1442,6 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
         "reviewers_planned": max(r["planned"] for r in seen),
         "reviewers_ok": max(r["ok"] for r in seen),
         "reviewers_failed": sorted({c for r in seen for c in r["failed"]}),
-        "mode": node.get("mode") or "fanout",
         # 지시된 범위다 — 리뷰어가 실제로 참조 파일을 읽었는지는 실행기가 못 본다.
         "depth": node.get("depth"),
         "major": sum(1 for f in merged if f.get("severity") in verdict.BLOCKING),
@@ -1483,40 +1476,23 @@ def _contract_drift_lines(node, s):
 def _review_render(s):
     """봉투가 **누가 리뷰하는지와 무엇이 빠졌는지**를 말한다.
 
-    **이 라운드의 계획만 이름 짓는다** (백로그 20). 라우팅은 런 단위로
-    얼어 있고 델타 재리뷰는 그중 한 명이다 — 전원을 나열하면 봉투가 부르는
-    사람과 `_planned_guard` 가 받는 사람이 갈라져 나머지 제출이 exit 8 로
-    튕긴다. 1라운드는 `rounds_planned` 에 키가 없어 전원 폴백이다.
+    **이 라운드의 계획만 이름 짓는다** (백로그 20). 델타 재리뷰는 같은 한 명이다 —
+    봉투가 부르는 사람과 `_planned_guard` 가 받는 사람이 같아야 한다.
     """
     node = (s.get("phases") or {}).get("05-code-review") or {}
-    routed = node.get("routing")
-    if not routed:
+    if "planned" not in node:
         return ""
-    lines = ["## 리뷰어 라우팅 (결정론 — 네가 정하지 않는다)", ""]
+    lines = ["## 리뷰어 (결정론 — 네가 정하지 않는다)", ""]
     lines += _contract_drift_lines(node, s)
-    if not routed["reviewers"]:
-        lines += ["**매칭된 리뷰어가 0개다.** 그러면 `review05.status` 는 "
-                  "`failed` 이고 등급이 `PASS_WITH_GAPS` 로 떨어진다 — "
-                  "아무도 안 부른 것은 통과가 아니라 미수행이다.",
-                  "",
-                  "변경 경로가 `config.reviewers[].when` 어디에도 걸리지 않았다. "
-                  "라우팅 결함일 수 있으니 보고서에 남긴다."]
+    if not node.get("planned"):
+        lines += ["**계획된 리뷰어가 0명이다.** 소스 변경이 없다 — `review05.status` 는 "
+                  "`failed` 이고 등급이 `PASS_WITH_GAPS` 로 떨어진다. 아무도 안 부른 것은 "
+                  "통과가 아니라 미수행이다."]
         return "\n".join(lines)
-    # **이 라운드의 계획으로 좁힌다** (백로그 20). 라우팅에 없는 코드가
-    # 계획에 오르면(`next` 가 여러 번 불려 집합이 줄어든 경우) 좁히지
-    # 않는다 — 스킬 경로를 모르는 이름을 지우는 것보다 전원을 적는 쪽이 덜
-    # 나쁘고, 그 불일치는 `_planned_guard` 가 그 자리에서 말한다.
     round_ = ((s.get("counters") or {}).get("review_repair") or {}).get("used", 0) + 1
     planned = _planned_for_round(node, round_)
-    narrowed = [r for r in routed["reviewers"] if r["code"] in planned]
-    if narrowed and len(narrowed) == len(planned):
-        routed = dict(routed, reviewers=narrowed)
-    lines.append("모드: **%s** (%s)"
-                 % (node.get("mode"),
-                    "단일 에이전트가 체크리스트를 순차 적용한다"
-                    if node.get("mode") == "merged" else
-                    "관점별 병렬 fan-out"))
-    depth = node.get("depth") or "diff"
+    by_code = {r.get("code"): r for r in node.get("reviewers") or []}
+    depth = node.get("depth") or "diff+refs"
     if depth == "diff+refs":
         lines.append("리뷰 범위: **diff+refs** — 계약 `## 유닛` 이 참조하는 **기존** "
                      "파일을 리뷰어 패킷에 경로로 넣어라. diff 밖 상호작용(낙관적 "
@@ -1526,36 +1502,16 @@ def _review_render(s):
         lines.append("리뷰 범위: **%s** — 인라인 diff · 계약 · `05_trace.json` 만. "
                      "그 밖의 파일은 패킷에 넣지 않는다." % depth)
     lines.append("")
-    if node.get("mode") == "merged":
-        # **M37.** 봉투가 `merged` 만 적으면 "제출도 하나" 로 읽힌다. 기계는
-        # 그렇지 않다 — `_planned_guard` 가 라우팅에 없는 제출자를 exit 8 로
-        # 되돌리고, `merged` 는 라우팅된 코드가 아니다. P5 가 제출 1회를
-        # 여기서 잃었다.
-        lines += ["**`merged` 는 실행 방식이지 제출 형태가 아니다.** 한 "
-                  "에이전트가 관점을 순차로 적용하되 **제출은 라우팅된 코드 "
-                  "수만큼 그대로 갈라진다** — `05_review_{code}.json` 과 "
-                  "`.raw.md` 한 쌍씩이다. `record` 는 `--reviewer merged` 를 "
-                  "받지 않는다:", ""]
-        lines += ["```"]
-        lines += ["python scripts/pipeline/cli.py record --phase 05 "
-                  "--file <...>/05_review_%s.json --reviewer %s --round 1"
-                  % (r["code"], r["code"]) for r in routed["reviewers"]]
-        lines += ["```", ""]
-    for r in routed["reviewers"]:
-        lines.append("- `%s` → `.claude/skills/%s/SKILL.md` (매칭 %d개)"
-                     % (r["code"], r["skill"], r.get("matched_count", 0)))
-    if routed.get("dropped"):
-        lines += ["", "**상한으로 빠진 리뷰어**: %s — 조용히 사라진 것이 아니라 "
-                      "예산 때문이고, 보고서에 남는다."
-                  % ", ".join("`%s`" % d["code"] for d in routed["dropped"])]
-    lines += ["", "프롬프트 첫 줄은 **스킬 파일을 읽으라는 지시**다. "
-                  "본문을 복사하지 마라 — 리뷰어 수만큼 고정비가 곱해진다."]
+    for code in planned:
+        skill = (by_code.get(code) or {}).get("skill") or code
+        lines.append("- `%s` → `.claude/skills/%s/SKILL.md`" % (code, skill))
+    lines += ["", "프롬프트 첫 줄은 **스킬 파일을 읽으라는 지시**다. 본문을 복사하지 마라."]
     inline = node.get("inline") or {}
     if inline and not inline.get("inline"):
         lines += ["", "**diff 를 인라인하지 마라 — 경로로 전달한다.** 인라인 "
                       "상한(`review.inline_max`)을 넘었다: %s. 리뷰어 패킷의 "
                       "`## 변경` 절에 diff 대신 변경 파일 경로 목록을 싣고, "
-                      "리뷰어가 그 파일만 읽게 한다. 이 사실은 원장에 남는다."
+                      "리뷰어가 그 파일만 읽게 한다. 이 사실은 상태에 남는다."
                   % " · ".join(inline.get("over") or [])]
     return "\n".join(lines)
 
@@ -1840,10 +1796,6 @@ def _instruction_keys(s, pid, ctx, front=None):
         node = (s.get("phases") or {}).get("05-code-review") or {}
         r = used("review_repair") + 1
         planned = _planned_for_round(node, r)
-        # `merged` 는 한 에이전트가 관점을 순차 적용한다 — 기동 지시도 하나다.
-        # 제출은 M37 대로 리뷰어 수만큼 갈라지지만 그것은 계수가 아니다.
-        if r == 1 and node.get("mode") == "merged" and len(planned) > 1:
-            return ["05:r1:merged"]
         return ["05:r%d:%s" % (r, c) for c in planned]
     if pid == "07-pr-review":
         # `/code-review` 1회. 스킬 호출이라 `record --reviewer` 를 남기지 않는다 —
@@ -2483,18 +2435,6 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
 REVIEW_SUBMIT_TRIES = 2
 
 
-# 05 수리 상한 초과의 선택지 (백로그 30). **가장 자주 나오는 답이 메뉴에 있어야
-# 한다** — 클론 4런의 에스컬레이션 2런 모두 사람이 「기타」를 골랐고 그 답은 둘 다
-# 「좁게 보강하고 진행」 계열이었다. 분기하는 코드는 없고 사람이 읽는 문자열이다.
-REVIEW_ESCALATION_OPTIONS = (
-    "계약 결함을 먼저 의심한다 — 같은 지적이 반복되면 코드가 아니라 "
-    "계약이 틀렸을 수 있다",
-    "좁게 보강하고 진행한다 — 남은 지적 중 좁은 것만 고치고 나머지는 안고 간다",
-    "이대로 진행한다(미해결 지적을 안고 간다)",
-    "중단한다",
-)
-
-
 def _dispatch_fingerprint_stale(root, ctx, node, round_):
     """지시 시점 지문 vs 지금. 다르면 저장된 지문을, 같거나 없으면 None.
 
@@ -2610,7 +2550,7 @@ def _record_05_failure_slot(root, paths, s, phase_item, ctx, node, reviewer,
 
 
 def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
-    """전원이 모였다. 병합 → 원장 → 수리 판정."""
+    """제출이 모였다. 접기 → 영수증 → 수리 판정."""
     import review as review_mod
 
     subs = [dict(v, reviewer=code) for code, v in slot.items()
@@ -2634,32 +2574,18 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
     if blocking:
         front = phase_item["front"]
         max_decl = _loop_max(front)
-        # **재상정 승격은 지급이다** (ADR-H048). 같은 `finding_key` 가 이전
-        # 라운드보다 높은 심각도로 다시 오면 리뷰어가 처음에 낮게 본 것이지
-        # 수리자의 잘못이 아니다 — 그 비용을 수리자의 예산에서 빼지 않는다.
-        # 런당 1회다. 새 키가 major 로 나는 것은 새 지적이라 지급이 아니다.
-        raised = _severity_raised(node.get("rounds") or {}, round_, blocking)
-        if raised and "severity_raised_grant" not in node:
-            st.counter_grant(s, _loop_counter(front), 1, "severity_raised")
-            st.append_event(paths, "counter_grant", cmd="record",
-                            phase="05-code-review", counter=_loop_counter(front),
-                            extra=1, reason="severity_raised")
-            node["severity_raised_grant"] = {"round": round_, "keys": raised}
         used, _max, exceeded = st.counter_inc(s, _loop_counter(front), max_decl,
                                               "review_blocking", paths=paths)
         # **다음 라운드의 델타는 에스컬레이션 여부보다 앞에서 정한다** (백로그 20).
-        # 전에는 이 두 줄이 `if exceeded:` 뒤에 있어 에스컬레이션 경로가 키를
-        # 안 세우고 return 했고, 재개된 라운드가 `_planned_for_round` 의
-        # 폴백(전원)을 받아 **리뷰어 전원이 다시 돌았다.** 사람이 「이대로
-        # 진행한다」를 골라 돌아와도 수리 대상은 같으므로 델타도 같다.
-        delta = _delta_reviewer(blocking, planned, slot)
+        # 리뷰어가 하나라 델타도 그 하나다 — 재개된 라운드가 같은 한 명을 받는다.
+        delta = planned[0] if planned else None
         node.setdefault("rounds_planned", {})[str(round_ + 1)] = [delta]
         if exceeded:
             _loop_on_exceed(front)
             st.escalate(paths, s,
-                        "05 의 Critical/Major %d건이 %d회 안에 해소되지 않았다"
+                        "05 의 Critical/Major %d건이 %d회 안에 해소되지 않았다 — "
+                        "같은 지적이 반복되면 코드가 아니라 계약이 틀렸을 수 있다"
                         % (len(blocking), max_decl),
-                        list(REVIEW_ESCALATION_OPTIONS),
                         phase="05-code-review")
             return _escalation_envelope("record", paths, s)
         # 다음 회차에 델타가 회계해야 할 목록이다. `record` 가 같은 인자로
@@ -2675,76 +2601,20 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             "record", False, 4, s,
             {"blocking": len(blocking), "findings": blocking,
              "review05": s["review05"], "delta_reviewer": delta},
-            _review_repair_render(blocking, used + 1, delta, prev_open,
-                                  raised=raised if node.get(
-                                      "severity_raised_grant", {}).get(
-                                      "round") == round_ else None),
+            _review_repair_render(blocking, used + 1, delta, prev_open),
             "python scripts/pipeline/cli.py gate --phase 04 --stage scoped "
             "--run-id %s" % s["run_id"])
 
     return _advance_to_next(root, paths, s, phase_item, ctx)
 
 
-def _severity_raised(rounds, round_, blocking):
-    """이전 라운드보다 심각도가 오른 blocking 지적의 `finding_key` 목록.
-
-    비교 재료는 `rounds[r][code].keys[] = {key, severity}` 다 — 같은 라운드
-    안의 2인 합치 상승(`review.merge` 의 `severity_raised_from`)은 대상이
-    아니다. 그것은 라운드를 가로지른 재상정이 아니다.
-    """
-    import review as review_mod
-    rank = review_mod.SEVERITY_RANK
-    best = {}
-    for rn, subs in rounds.items():
-        if int(rn) >= round_:
-            continue
-        for sub in subs.values():
-            for k in sub.get("keys") or []:
-                r = rank.get(k.get("severity"), -1)
-                if r > best.get(k["key"], -1):
-                    best[k["key"]] = r
-    out = []
-    for f in blocking:
-        key = verdict.finding_key(f)
-        if key in best and rank.get(f.get("severity"), -1) > best[key]:
-            out.append(key)
-    return out
-
-
-def _delta_reviewer(blocking, planned, slot):
-    """델타 재리뷰를 맡을 **한 명**. 결정론이다 — 모델이 고르지 않는다.
-
-    막은 지적을 가장 많이 낸 리뷰어이고, 동률이면 `planned` 순서다. 모델이
-    고르면 라우팅 결정론(§3.5)이 델타 라운드에서만 무너진다.
-
-    성공한 리뷰어만 후보다 — 실패한 리뷰어를 다시 지목하면 그 라운드가
-    구조적으로 또 실패한다.
-    """
-    alive = [c for c in planned if (slot.get(c) or {}).get("keys") is not None]
-    if not alive:
-        alive = list(planned)
-    scores = {}
-    for f in blocking:
-        for c in f.get("reported_by") or []:
-            if c in alive:
-                scores[c] = scores.get(c, 0) + 1
-    return max(alive, key=lambda c: (scores.get(c, 0), -alive.index(c)))
-
-
-def _review_repair_render(blocking, round_no, delta=None, previous_open=None,
-                          raised=None):
+def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
     lines = ["## 수리가 필요하다 (%d회차)" % round_no, "",
-             "Critical/Major %d건. **Minor 는 고치지 않는다** — 원장에 쌓이고 "
-             "보고서로 간다." % len(blocking), ""]
-    if raised:
-        lines += ["이전 라운드의 지적 %d건이 더 높은 심각도로 재상정됐다 — "
-                  "`review_repair` 를 **1 지급했다** (`severity_raised`, 런당 "
-                  "1회). 리뷰어가 처음에 낮게 본 비용을 수리자의 예산에서 빼지 "
-                  "않는다 (ADR-H048)." % len(raised), ""]
+             "Critical/Major %d건. **Minor 는 고치지 않는다** — 보고서로 간다."
+             % len(blocking), ""]
     if delta:
-        lines += ["수리 뒤 **델타 재리뷰는 `%s` 한 명**이다. 전원을 다시 "
-                  "부르지 않는다 — 그리고 그 한 명이 깨끗해도 앞선 라운드의 "
-                  "`degraded`·`failed` 는 지워지지 않는다." % delta, ""]
+        lines += ["수리 뒤 **델타 재리뷰는 `%s` 한 명**이다 — 그 한 명이 깨끗해도 "
+                  "앞선 라운드의 `degraded`·`failed` 는 지워지지 않는다." % delta, ""]
     # **M38.** 수리 면제와 회계 면제는 다르다. `verdict.check_review` 는
     # 심각도를 가리지 않고 열린 지적 전부를 회계하라 요구하고, 하나라도 빠지면
     # "조용히 증발했다" 로 exit 8 을 낸다. 봉투가 그 의무를 안 적어 P5 가
@@ -2764,12 +2634,8 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None,
                   for f in previous_open]
         lines += [""]
     for f in blocking:
-        raised = (" *(2인 합치로 %s → %s)*"
-                  % (f["severity_raised_from"], f["severity"])
-                  if f.get("severity_raised_from") else "")
-        lines.append("- **%s** → `%s`: %s%s"
-                     % (f.get("severity"), f.get("target_role"),
-                        f.get("title"), raised))
+        lines.append("- **%s** → `%s`: %s"
+                     % (f.get("severity"), f.get("target_role"), f.get("title")))
     contract_defect = [f for f in blocking
                        if f.get("category") == "CONTRACT_DEFECT"]
     if contract_defect:
@@ -2777,7 +2643,7 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None,
                       "에스컬레이션이다 — 계약은 메인 단독 소유다."]
     lines += ["", "제출이 **내용은 그대로이고 회계 필드만** 틀려 exit 8 로 되돌아오면 "
                   "(`resolved_from_previous` · `reraised_from_previous`) 메인이 "
-                  "`local_repair` 로 그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·"
+                  "그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·"
                   "severity 는 여전히 손대지 않는다 (ADR-H052).",
               "", "고친 뒤 `gate --phase 04 --stage scoped` 로 재게이트하고, "
                   "델타 재리뷰 1명을 돌린 다음 다시 제출한다.",

@@ -59,30 +59,14 @@
     ".env*"
   ],
 
-  "_reviewers_note": "when glob 이 변경 파일에 걸리면 그 리뷰어가 켜진다. when_role_owned 가 참이면 glob 대신 roles[].owns 가 소유한 파일이 바뀌었을 때 켜진다 — gen 이 그렇다. 우선순위는 배열 순서다 — test 가 arch 앞이다 (ADR-H062). skill 은 .claude/skills/{skill}/SKILL.md 를 가리키고, doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치면 거부한다 — 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
+  "_reviewers_note": "리뷰어는 하나다 (덜어내기 Wave 4 · ADR-H075) — 소스 변경이 있으면(docs 레인은 문서 변경만으로도) 계획되고 델타 재리뷰도 같은 하나다. 늘리면 라우팅이 아니라 planned 가 배열 순서로 전원을 부른다. skill 은 .claude/skills/{skill}/SKILL.md 를 가리키고, doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치면 거부한다 — 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
   "reviewers": [
-    {"code": "gen", "skill": "general-reviewer", "priority": 0,
-     "when_role_owned": true},
-    {"code": "data", "skill": "data-layer-reviewer", "priority": 1,
-     "when": ["src/lib/schemas.*", "src/services/**"]},
-    {"code": "sec", "skill": "security-reviewer", "priority": 2,
-     "when": ["src/app/api/**", "src/lib/env.*", "src/lib/auth.*",
-              ".env*", "*.config.*"]},
-    {"code": "test", "skill": "test-quality-reviewer", "priority": 3,
-     "when": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.golden.test.ts",
-              "e2e/**"]},
-    {"code": "arch", "skill": "architecture-reviewer", "priority": 4,
-     "when": ["src/app/**", "src/components/**", "src/lib/**",
-              "src/services/**", "src/types/**"]},
-    {"code": "docs", "skill": "docs-reviewer", "priority": 5,
-     "when": ["docs/**", "*.md"], "only_when_no_source_change": true}
+    {"code": "gen", "skill": "general-reviewer"}
   ],
 
-  "_review_note": "아래 여섯 값은 전부 **미검증 상속값**이다 — 원본 명세에서 왔고 이 리포에서 재본 적이 없다. 실측이 이 값을 검사한다: 절단이 한 번도 안 걸리면 findings_max 가 헐거운 것이다. 값을 재기 전에 굳히지 않는다. profile_caps 는 gen 을 넣으며 각 1 올렸다 (1→2 · 3→4, ADR-H043) — 여전히 미검증이다.",
+  "_review_note": "findings_max·inline_max 는 **미검증 상속값**이다 — 절단이 한 번도 안 걸리면 findings_max 가 헐거운 것이다. depth 는 diff+refs 하나다 — 05 가 diff 만 봐서 놓친 FR-007 이 근거다 (ADR-H059).",
   "review": {
-    "merge_below_diff_lines": 150,
-    "profile_caps": {"docs": 1, "fix": 1, "normal": 4},
-    "depth": {"docs": "diff", "fix": "diff", "normal": "diff+refs"},
+    "depth": "diff+refs",
     "findings_max": 50,
     "inline_max": {"lines": 600, "bytes": 25000}
   },
