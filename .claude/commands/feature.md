@@ -157,6 +157,9 @@ Minor 를 포함해 전부 다시 내거나 `resolved_from_previous`·
 `reraised_from_previous` 로 처리한다. 빠지면 "조용히 증발했다"로 exit 8 이다.
 회계할 목록은 수리 봉투가 적어 준다 — 네가 재구성하지 마라.
 
+수리 뒤 순서는 봉투의 `next_command` 다: `gate --phase 05 --stage loop` → `next`(델타
+지시·지문 갱신) → 델타 리뷰 → `record`. 재게이트를 건너뛰면 `next`·`record` 가 exit 6 이다.
+
 ### 05 와 06 사이 — **여기서 커밋한다**
 
 **파이프라인은 `git commit` 을 하지 않는다.** 그런데 06 의 `pr` 은 push 를 하고
@@ -169,7 +172,7 @@ PR 본문의 diff 통계는 `main...HEAD`(커밋된 것)를 읽는다. **03 이 
 | 시점 | 되는가 | 이유 |
 |---|---|---|
 | 04 게이트 전 | ✗ | 05 의 변경 파일 목록이 미커밋만 보므로 계획된 리뷰어가 0명이 되고 `review05.status` 가 `failed` 가 된다 |
-| **05 통과 직후** | **✓** | `record --phase 05` 는 지문을 검사하지 않는다. 지문을 대조하는 것은 `pr` 이다 |
+| **05 통과 직후** | **✓** | `record --phase 05` 는 게이트 영수증 지문을 대조한다(재게이트 누락 → exit 6). 커밋은 내용 해시라 지문을 바꾸지 않는다 |
 | `approve` 이후 | ✗ | `approve` 가 그 시점 지문을 박고 `pr` 이 push 직전에 다시 대조한다 → exit 6 재승인 |
 
 > **~~이 커밋이 04 게이트의 영수증을 낡게 만든다~~ — 닫혔다 (M25, 2026-09-04).**
@@ -199,7 +202,9 @@ python scripts/pipeline/cli.py pr --run-id <id>      # 이번엔 push 까지 간
 ```
 
 - **exit 3** — 브랜치가 규약과 안 맞거나 보호 브랜치 위다. **브랜치를 만들지 마라**
-- **exit 6** — 승인 뒤 코드가 바뀌었다. 재승인이다
+- **exit 3 (`approve`)** — 전체 회귀가 지금 코드에서 안 돌았다. `gate --phase 05 --stage full` 뒤 다시 친다
+- **exit 6 (`approve`)** — 05 수리 뒤 재게이트가 없었다. `gate --phase 05 --stage loop` 뒤 다시 친다
+- **exit 6 (`pr`)** — 승인 뒤 코드가 바뀌었다. 재승인이다
 - **exit 10** — non-fast-forward 다. **force-push 는 금지**이고 에스컬레이션이다
 
 `pr` 이 exit 0 이면 push 가 끝났고 `06_pr_req.json` 이 있다. **PR 은 네가 만든다:**

@@ -1745,6 +1745,22 @@ class TestLoopDeclarationsAreRead:
         _rewrite(phases / "04-gate.md", lambda f: f["loop"].pop("max"))
         assert _fails(_lint(repo), "loop_max"), _lint(repo)
 
+    def test_normal_상한이_없으면_폴백_없이_거부한다(self, run01):
+        """A9 — `or 5`. 04·05 가 M36 이라 부른 그 폴백이 01 에만 남아 있었다.
+        `max_by_profile` 에 없는 레인은 선언 없이 5라운드를 받았다."""
+        repo, paths, s = run01
+
+        def mutate(f):
+            for key in ("converge", "loop"):
+                f[key]["max_by_profile"] = {"fix": 1}
+        _rewrite(self._p01(repo), mutate)
+        _submit_plan(repo, paths, _plan())
+        env = self._critical_round(repo, paths)
+        assert env["exit"] == 2, env["render"]
+        assert env["data"]["key"] == "loop.max_by_profile", env["data"]
+        _, after = st.load(repo, paths.run_id)
+        assert not after.get("escalated")
+
 
 HEADING_ONLY_CONTRACT = """# 계약: 제목 유사도
 
@@ -2957,7 +2973,9 @@ class TestContractTraceNoContract:
 
 class TestContractTraceCli:
 
-    def test_cli_emits_a_single_envelope_and_writes_the_file(self, repo, request_file):
+    def test_cli_emits_a_single_envelope_and_writes_the_file(self, repo, request_file,
+                                                             phases):
+        """`phases` — Critical 이면 05 의 `trace_loop` 선언을 읽는다 (A8)."""
         _write_contract(repo)
         init = cli.run_init(repo, "x", request_file)
         run_id = init["run_id"]
@@ -2969,7 +2987,7 @@ class TestContractTraceCli:
         assert out.exists()
         assert json.loads(out.read_text(encoding="utf-8"))["checks_run"]
 
-    def test_cli_reports_utf8_without_escaping(self, repo, request_file):
+    def test_cli_reports_utf8_without_escaping(self, repo, request_file, phases):
         _write_contract(repo, CONTRACT.replace("matchTitle", "제목맞추기"))
         init = cli.run_init(repo, "x", request_file)
         run_id = init["run_id"]
@@ -3048,6 +3066,34 @@ class TestPrecheckScope:
         _branch(repo, "feat-x")
         with pytest.raises(ValueError):
             pc.run(repo, scope="staged")
+
+
+class TestChangedFilesPaths:
+    """A10 — 변경 집합이 `-z` 없이 git 출력을 읽었다.
+
+    `core.quotepath` 기본값이면 `src/한글.ts` 가 8진 이스케이프 문자열로 들어와
+    예산이 그 파일을 열지 못했고, `git status` 의 `R old -> new` 는 통째로 한
+    경로가 됐다. 지문(`state._candidate_files`)은 `-z` 를 쓰므로 둘이 다른
+    파일 집합을 봤다.
+    """
+
+    def test_한글_파일명이_그대로_잡힌다(self, repo):
+        _branch(repo, "feat-x")
+        (repo / "src" / "lib" / "한글.ts").write_text("export const k = 1\n",
+                                                      encoding="utf-8")
+        assert pc.changed_files(repo, "worktree") == ["src/lib/한글.ts"]
+        got = pc.run(repo, scope="pr")
+        assert got["budget"]["files"] == 1, got["budget"]
+        assert got["budget"]["lines"] == 1, "경로를 못 열면 줄 수가 0 이 된다"
+
+    def test_rename_은_새_경로만_잡힌다(self, repo):
+        _branch(repo, "feat-x")
+        _bulk_change(repo, 1)
+        _commit_all(repo)
+        _git(repo, "mv", "src/lib/f0.ts", "src/lib/g0.ts")
+        assert pc.changed_files(repo, "worktree") == ["src/lib/g0.ts"]
+        config = harness._read_json(repo / harness.CONFIG_REL)
+        assert pc.changed_files(repo, "pr", config) == ["src/lib/g0.ts"]
 
 
 def _probe_policy(repo, name, value):
@@ -3653,7 +3699,22 @@ def _enter_05(repo, request_file, phases):
     c = repo / "_workspace" / ("contract_%s.md" % "x")
     c.parent.mkdir(parents=True, exist_ok=True)
     c.write_text(CONTRACT, encoding="utf-8")
+    _stamp_receipt(repo, run_id)
     return run_id, paths
+
+
+def _stamp_receipt(repo, run_id, full=False):
+    """게이트가 **지금 코드**에서 통과했다고 영수증을 찍는다.
+
+    `_enter_05` 는 04 를 상태로 위조하므로 04 가 남겼을 지문도 같이 위조한다.
+    소유 범위 파일을 쓴 뒤에는 다시 찍는다 — 실물에서는 그 쓰기가 04 앞이다.
+    """
+    config = harness._read_json(repo / harness.CONFIG_REL)
+    paths, s = st.load(repo, run_id)
+    s["fingerprint"] = st.fingerprint(repo, config)
+    if full:
+        s.setdefault("tests", {})["fingerprint"] = s["fingerprint"]
+    st.save(paths, s)
 
 
 def _reviewer_files(paths, code, findings, raw=None):
@@ -3678,6 +3739,7 @@ class TestPhase05Wiring:
         (repo / "src" / "app" / "api" / "x").mkdir(parents=True)
         (repo / "src" / "app" / "api" / "x" / "route.ts").write_text(
             "export async function POST() {}\n", encoding="utf-8")
+        _stamp_receipt(repo, run_id)
         env = cli.run_next(repo, run_id)
         _paths, s = st.load(repo, run_id)
         node = s["phases"]["05-code-review"]
@@ -3732,12 +3794,13 @@ class TestReview05RoutingRefusesCommittedOnly:
     깨끗한 것은 라우팅 실패가 아니라 **절차 오류**이고, exit 3 으로 되돌린다.
     """
 
-    def _commit_only(self, repo):
+    def _commit_only(self, repo, run_id):
         _git(repo, "branch", "-M", "main")
         _git(repo, "checkout", "-qb", "feat-x")
         (repo / "src" / "lib" / "match.ts").write_text(
             "export function matchTitle(a: string, b: string): number { return 1 }\n",
             encoding="utf-8")
+        _stamp_receipt(repo, run_id)     # 04 는 이 코드를 게이트했다 — 커밋은 지문을 안 바꾼다
         # 소유 범위 파일만 커밋한다 — `-A` 면 픽스처가 뒤에 깐 `.claude/**` 도
         # 커밋돼 "커밋에만 있는 변경" 에 섞인다.
         _git(repo, "add", "src/lib/match.ts")
@@ -3746,7 +3809,7 @@ class TestReview05RoutingRefusesCommittedOnly:
     def test_커밋만_있으면_exit_3_이고_failed_를_쓰지_않는다(self, repo,
                                                             request_file, phases):
         run_id, paths = _enter_05(repo, request_file, phases)
-        self._commit_only(repo)
+        self._commit_only(repo, run_id)
         env = cli.run_next(repo, run_id)
         assert env["exit"] == 3, env["render"]
         assert "커밋" in env["render"] and "reset --mixed" in env["render"]
@@ -3757,7 +3820,7 @@ class TestReview05RoutingRefusesCommittedOnly:
 
     def test_되돌린_뒤에는_정상_라우팅된다(self, repo, request_file, phases):
         run_id, paths = _enter_05(repo, request_file, phases)
-        self._commit_only(repo)
+        self._commit_only(repo, run_id)
         _git(repo, "reset", "-q", "--mixed", "HEAD~1")
         env = cli.run_next(repo, run_id)
         assert env["exit"] == 0, env["render"]
@@ -3790,6 +3853,7 @@ class TestReview05DispatchFingerprint:
         (repo / "src" / "lib" / "match.ts").write_text(
             "export function matchTitle(a: string, b: string): number { return 1 }\n",
             encoding="utf-8")
+        _stamp_receipt(repo, run_id)
         cli.run_next(repo, run_id)
         cli.run_contract_trace(repo, run_id=run_id)
         return run_id, paths
@@ -3840,6 +3904,273 @@ class TestReview05DispatchFingerprint:
         env = cli.run_record(repo, "05", str(f), reviewer=code, round_=1,
                              run_id=run_id)
         assert "리뷰 뒤에 바뀌었다" not in env["render"]
+
+
+class TestGateReceiptIsEnforced:
+    """A2·A4 — `s["fingerprint"]` 는 04 가 쓰기만 하고 아무도 읽지 않았다.
+
+    05 「재게이트 없이 넘어가면 06 이 자동으로 막는다」와 `cli.py` 의 「재게이트를
+    잊을 수 없다」는 기계가 집행하지 않는 산문이었다 — 05 수리 뒤 재게이트 없이
+    `next → 리뷰 → record → approve → pr` 이 전부 통과했다. 전체 회귀도 마찬가지로
+    05 수리 뒤 다시 도는 명령이 없어 PR 본문이 수리 전 코드의 테스트 수를 증언했다.
+
+    영수증은 둘이다 — `s["fingerprint"]`(loop: compile·scoped 가 이 코드에서 통과)와
+    `s["tests"]["fingerprint"]`(full: 전체 회귀가 이 코드에서 돌았다).
+    """
+
+    EDIT = "export function matchTitle(a: string, b: string): number { return 7 }\n"
+
+    def _cfg(self, repo):
+        return harness._read_json(repo / harness.CONFIG_REL)
+
+    def _edit(self, repo):
+        (repo / "src" / "lib" / "match.ts").write_text(self.EDIT, encoding="utf-8")
+
+    def _gate05(self, repo, run_id, stage, stages=None):
+        return cli.run_gate_cmd(repo, phase="05", only_stage=stage, run_id=run_id,
+                                runner=_stub_runner(dict(stages or ALL_PASS)))
+
+    # --- 갱신: 어느 게이트가 어느 영수증을 찍는가 ---
+
+    def test_stage_loop_통과가_게이트_지문을_갱신한다(self, repo, request_file,
+                                                    phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _, before = st.load(repo, run_id)
+        self._edit(repo)
+        env = self._gate05(repo, run_id, "loop")
+        assert env["exit"] == 0, env["render"]
+        _, s = st.load(repo, run_id)
+        assert st.fingerprint_matches(s["fingerprint"],
+                                      st.fingerprint(repo, self._cfg(repo)))
+        assert not st.fingerprint_matches(before["fingerprint"], s["fingerprint"])
+        assert (s.get("tests") or {}).get("fingerprint") is None, (
+            "loop 는 전체 회귀 영수증이 아니다")
+
+    def test_stage_loop_실패는_지문을_안_남긴다(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _, before = st.load(repo, run_id)
+        self._edit(repo)
+        env = self._gate05(repo, run_id, "loop", dict(ALL_PASS, compile={"exit": 1}))
+        assert env["exit"] == 4, env["render"]
+        _, s = st.load(repo, run_id)
+        assert st.fingerprint_matches(before["fingerprint"], s["fingerprint"])
+
+    def test_stage_full_통과가_회귀_지문을_남긴다(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _, before = st.load(repo, run_id)
+        _report(repo)
+        self._edit(repo)
+        env = self._gate05(repo, run_id, "full")
+        assert env["exit"] == 0, env["render"]
+        _, s = st.load(repo, run_id)
+        fresh = st.fingerprint(repo, self._cfg(repo))
+        assert st.fingerprint_matches(s["tests"]["fingerprint"], fresh)
+        assert s["tests"]["ran"] == 1300
+        assert st.fingerprint_matches(before["fingerprint"], s["fingerprint"]), (
+            "full 만 돌린 것은 compile 을 안 봤다 — 게이트 지문은 그대로다")
+
+    def test_stage_full_에서_shrank_는_실패다(self, repo, request_file, phases):
+        """전체 게이트만 잡던 하한을 05 의 full 재실행이 우회하면 반만 닫힌다."""
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _finished_run(repo, "prev", "2026-01-01T00:00:00+0900", ran=1300)
+        _report(repo, tests=100)
+        env = self._gate05(repo, run_id, "full")
+        assert env["exit"] == 4, env["render"]
+        assert "하한" in env["render"]
+        _, s = st.load(repo, run_id)
+        assert (s.get("tests") or {}).get("fingerprint") is None
+
+    def test_04_전체_게이트_통과가_두_지문을_남긴다(self, gated):
+        repo, paths, s = gated
+        _report(repo)
+        env = _gate(repo, dict(ALL_PASS))
+        assert env["exit"] in (0, 11), env["render"]
+        _, after = st.load(repo, paths.run_id)
+        fresh = st.fingerprint(repo, self._cfg(repo))
+        assert st.fingerprint_matches(after["fingerprint"], fresh)
+        assert st.fingerprint_matches(after["tests"]["fingerprint"], fresh)
+
+    # --- 집행: 누가 영수증을 읽는가 ---
+
+    def test_재게이트_없이_next_는_리뷰어를_보내지_않는다(self, repo, request_file,
+                                                        phases):
+        """리뷰어는 모델 호출이다 — 게이트 안 된 코드에 보내면 그 호출이 낭비다."""
+        run_id, paths = _enter_05(repo, request_file, phases)
+        self._edit(repo)
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 6, env["render"]
+        assert "gate --phase 05 --stage loop" in env["render"]
+        assert "gate --phase 05 --stage loop" in env["next_command"]
+        _, s = st.load(repo, run_id)
+        assert not (s["phases"].get("05-code-review") or {}).get("dispatched_fp")
+        assert self._gate05(repo, run_id, "loop")["exit"] == 0
+        assert cli.run_next(repo, run_id)["exit"] == 0
+
+    def test_재게이트_없이_record_는_거부한다(self, repo, request_file, phases):
+        """`next` 를 건너뛴 워커도 막는다 — 슬롯을 쓰기 전에 거부해야 재게이트 뒤
+        같은 제출을 다시 낼 수 있다."""
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        cli.run_contract_trace(repo, run_id=run_id)
+        _p, s = st.load(repo, run_id)
+        s["phases"]["05-code-review"]["planned"] = ["gen"]
+        s["phases"]["05-code-review"].pop("dispatched_fp", None)
+        st.save(_p, s)
+        self._edit(repo)
+        f = _reviewer_files(paths, "gen", [])
+        env = cli.run_record(repo, "05", str(f), reviewer="gen", round_=1,
+                             run_id=run_id)
+        assert env["exit"] == 6, env["render"]
+        assert "gate --phase 05 --stage loop" in env["render"]
+        _p, s = st.load(repo, run_id)
+        assert not s["phases"]["05-code-review"].get("rounds")
+        assert not (s.get("counters") or {}).get("review_repair")
+
+    def test_재게이트_없이_approve_는_exit_6(self, repo, request_file, phases):
+        run_id, paths = _enter_06(repo, request_file, phases)
+        self._edit(repo)
+        env = cli.run_approve(repo, "06", run_id=run_id)
+        assert env["exit"] == 6, env["render"]
+        assert "gate --phase 05 --stage loop" in env["render"]
+        _, s = st.load(repo, run_id)
+        assert not (s.get("approval") or {}).get("06", {}).get("granted")
+
+    def test_전체_회귀_없이_approve_는_exit_3(self, repo, request_file, phases):
+        """05 수리 런의 경로 그 자체 — loop 는 다시 돌았는데 full 은 안 돌았다."""
+        run_id, paths = _enter_06(repo, request_file, phases)
+        self._edit(repo)
+        assert self._gate05(repo, run_id, "loop")["exit"] == 0
+        env = cli.run_approve(repo, "06", run_id=run_id)
+        assert env["exit"] == 3, env["render"]
+        assert "gate --phase 05 --stage full" in env["render"]
+        _report(repo)
+        assert self._gate05(repo, run_id, "full")["exit"] == 0
+        env = cli.run_approve(repo, "06", run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+
+    def test_수리가_없던_런은_그대로_통과한다(self, repo, request_file, phases):
+        run_id, paths = _enter_06(repo, request_file, phases)
+        assert cli.run_approve(repo, "06", run_id=run_id)["exit"] == 0
+
+
+class TestGateNeedsStageOutside04:
+    """A3 — `gate --phase 05` 를 `--stage` 없이 치면 05 체인(compile·scoped·full)이
+    돌고 `04_gate_report.json` 을 덮어쓴 뒤 05 를 passed 로 올려 06 으로 갔다.
+    precheck·contract-trace·리뷰 없이 05 통과 — 페이즈 전이는 04 의 전체 게이트만 한다."""
+
+    def test_05_전체_게이트는_stage_없이_거부된다(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _report(repo)
+        env = cli.run_gate_cmd(repo, phase="05", only_stage=None, run_id=run_id,
+                               runner=_stub_runner(dict(ALL_PASS)))
+        assert env["exit"] == 2, env["render"]
+        assert "--stage" in env["render"]
+        assert not (paths.run_dir / "04_gate_report.json").exists()
+        _, s = st.load(repo, run_id)
+        assert s["phase"] == "05-code-review"
+        assert st.phase_status(s, "05-code-review") != "passed"
+
+    def test_04_전체_게이트는_04_밖에서_거부된다(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _report(repo)
+        env = cli.run_gate_cmd(repo, phase="04", run_id=run_id,
+                               runner=_stub_runner(dict(ALL_PASS)))
+        assert env["exit"] == 2, env["render"]
+        assert not (paths.run_dir / "04_gate_report.json").exists()
+        _, s = st.load(repo, run_id)
+        assert s["phase"] == "05-code-review"
+
+
+class TestRecordOnPassedPhase:
+
+    def test_이미_통과한_페이즈는_next_를_안내한다(self, repo, request_file, phases):
+        """A6 — 봉투가 Wave 1 에서 지워진 `retry` 를 안내했다."""
+        run_id, paths = _enter_05(repo, request_file, phases)
+        f = paths.run_dir / "01_plan.md"
+        f.write_text(_plan(), encoding="utf-8")
+        env = cli.run_record(repo, "01", str(f), run_id=run_id)
+        assert env["exit"] == 3, env["render"]
+        assert "retry" not in env["render"]
+        assert "next --run-id %s" % run_id in env["render"]
+
+
+class TestRepairRendersSayLoop:
+    """A1 의 render 둘 — 수리 봉투와 계약 대조 봉투가 옛 명령을 말하지 않는다."""
+
+    def test_review_repair_render(self):
+        out = cli._review_repair_render([dict(TestEscalationPlansTheDeltaRound.BLOCK)], 2)
+        assert "gate --phase 05 --stage loop" in out, out
+        assert "--stage scoped" not in out and "gate --phase 04" not in out, out
+
+    def test_trace_render(self):
+        got = {"status": "ok", "checks_run": ["missing_impl"], "skipped": [],
+               "findings": [{"code": "missing_impl", "severity": "critical",
+                             "target_role": "impl", "title": "matchTitle 이 없다"}]}
+        out = cli._trace_render(got, "c.md")
+        assert "gate --phase 05 --stage loop" in out, out
+        assert "--stage scoped" not in out and "gate --phase 04" not in out, out
+
+
+class TestTraceRepairLoop:
+    """A8 — `contract-trace` 선수리 루프에 상한이 없었다. 파이프라인에서 유일하게
+    천장 없는 루프이고 반복마다 작성자 호출 1 + 재게이트 1 이다. 05 가 `trace_loop`
+    로 선언하고 코드가 그것을 읽는다 — 다른 루프와 같은 규칙(M36)."""
+
+    def _critical(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        (repo / "src" / "lib" / "match.ts").write_text(
+            "export function 다른것(): number { return 0 }\n", encoding="utf-8")
+        return run_id, paths
+
+    def test_Critical_이_카운터를_소모하고_loop_재게이트를_지시한다(
+            self, repo, request_file, phases):
+        run_id, paths = self._critical(repo, request_file, phases)
+        env = cli.run_contract_trace(repo, run_id=run_id)
+        assert env["exit"] == 8, env["render"]
+        assert "gate --phase 05 --stage loop" in env["render"]
+        assert "gate --phase 05 --stage loop" in (env["next_command"] or "")
+        _, s = st.load(repo, run_id)
+        assert s["counters"]["trace_repair"]["used"] == 1, s.get("counters")
+        assert s["counters"]["trace_repair"]["max"] == 2
+
+    def test_두_번째_Critical_은_에스컬레이션이다(self, repo, request_file, phases):
+        run_id, paths = self._critical(repo, request_file, phases)
+        assert cli.run_contract_trace(repo, run_id=run_id)["exit"] == 8
+        env = cli.run_contract_trace(repo, run_id=run_id)
+        assert env["exit"] == 10, env["render"]
+        _, s = st.load(repo, run_id)
+        assert s["escalated"] is True
+        assert s["counters"]["trace_repair"]["used"] == 2
+        assert "계약" in s["escalation"]["reason"]
+
+    def test_Critical_0건은_카운터를_안_태운다(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        # 픽스처에 있는 것만 적은 계약 — 진입점·오류 어휘는 픽스처에 없다.
+        (repo / "_workspace" / "contract_x.md").write_text(
+            "# 계약: 유사도\n\n## 유닛\n"
+            "- `lib/match.ts · matchTitle(a: string, b: string): number`\n"
+            "  - 정상: 0~1 을 돌려준다\n", encoding="utf-8")
+        env = cli.run_contract_trace(repo, run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        _, s = st.load(repo, run_id)
+        assert not (s.get("counters") or {}).get("trace_repair")
+
+    def test_선언이_없으면_exit_2(self, repo, request_file, phases):
+        _rewrite(phases / "05-code-review.md", lambda f: f.pop("trace_loop", None))
+        run_id, paths = self._critical(repo, request_file, phases)
+        env = cli.run_contract_trace(repo, run_id=run_id)
+        assert env["exit"] == 2, env["render"]
+        assert env["data"]["key"] == "trace_loop.counter", env["data"]
+
+    def test_상한이_없으면_lint_가_거부한다(self, repo, phases):
+        _rewrite(phases / "05-code-review.md",
+                 lambda f: f["trace_loop"].pop("max"))
+        assert _fails(_lint(repo), "loop_max"), _lint(repo)
+
+    def test_trace_repair_는_카운터_어휘다(self, repo, request_file):
+        _, s = st.create_run(repo, "demo", request_file)
+        assert st.counter_inc(s, "trace_repair", 2, "trace_blocking") == (1, 2, False)
+        assert st.counter_inc(s, "trace_repair", 2, "trace_blocking") == (2, 2, True)
 
 
 class TestReview05Denominator:
@@ -3965,6 +4296,21 @@ class TestReview05Failure:
                              run_id=run_id, failed=True, reason="안 돌았다")
         assert env["exit"] == 8
         assert "제출" in env["render"]
+
+    def test_2회차_제출_파일이_실재해도_실패_신고를_거부한다(
+            self, repo, request_file, phases):
+        """A7 — 가드가 2회차에 `05_review_{code}_r2.json` 을 찾았다. 페이즈 파일이
+        말하는 이름은 접미사 없는 하나이므로 실재하는 제출을 못 보고 허위 신고를
+        받았다."""
+        run_id, paths = self._ready(repo, request_file, phases, ["gen"])
+        _p, s = st.load(repo, run_id)
+        s["phases"]["05-code-review"]["rounds_planned"] = {"2": ["gen"]}
+        st.save(_p, s)
+        _reviewer_files(paths, "gen", [])
+        env = cli.run_record(repo, "05", None, reviewer="gen", round_=2,
+                             run_id=run_id, failed=True, reason="안 돌았다")
+        assert env["exit"] == 8, env["render"]
+        assert "05_review_gen.json" in env["render"]
 
 
 class TestReview05EnvelopeContract:
@@ -4200,9 +4546,12 @@ class TestReview05DeltaRound:
             "깨끗한 델타 라운드가 앞선 결손을 지우면 E1 가드가 옆문으로 다시 열린다")
 
     def _context_file(self, paths, code, round_, need, findings=(), resolved=()):
-        """`_reviewer_files` 는 `need_more_context` 를 `[]` 로 박아 쓴다."""
-        name = ("05_review_%s.json" % code if round_ == 1
-                else "05_review_%s_r%d.json" % (code, round_))
+        """`_reviewer_files` 는 `need_more_context` 를 `[]` 로 박아 쓴다.
+
+        파일 이름은 라운드와 무관하게 하나다 — 페이즈 파일이 그렇게 말하고,
+        `record` 가 원문·findings 를 슬롯에 옮기므로 덮어써도 잃는 것이 없다 (A7).
+        """
+        name = "05_review_%s.json" % code
         j = paths.run_dir / name
         j.write_text(json.dumps(
             {"reviewer": code, "round": round_, "status": "ok",
@@ -4255,6 +4604,31 @@ class TestReview05DeltaRound:
             "2회차가 슬롯에 안 들어갔으면 이 테스트는 아무것도 안 잰다")
         assert len(s["review05"]["need_more_context"]) == 1, (
             "델타 라운드의 빈 배열이 1회차의 것을 지웠다 (M53)")
+
+    def test_2회차가_같은_파일명을_덮어써도_1회차_findings_는_남는다(
+            self, repo, request_file, phases):
+        """A7 — 제출 파일은 `05_review_{code}.json` 하나다. 원문·findings 는
+        `record` 가 라운드 슬롯에 옮기므로 2회차가 덮어써도 1회차는 상태에 있다."""
+        run_id, paths, s, node = self._ready(repo, request_file, phases)
+        st.save(paths, s)
+        major = {"id": "F-1", "category": "AUTHZ_MISSING_RULE",
+                 "severity": "major", "target_role": "impl",
+                 "title": "인가 누락", "quote": "인가 누락"}
+        j1 = self._context_file(paths, "gen", 1, [], findings=[major])
+        env = cli.run_record(repo, "05", str(j1), reviewer="gen", round_=1,
+                             run_id=run_id)
+        assert env["exit"] == 4, env["render"]
+        j2 = self._context_file(
+            paths, "gen", 2, [],
+            resolved=[{"id": "F-1", "resolved_by": "인가 규칙을 넣었다"}])
+        assert j2 == j1, "같은 이름을 덮어쓴다"
+        env = cli.run_record(repo, "05", str(j2), reviewer="gen", round_=2,
+                             run_id=run_id)
+        assert env["exit"] == 0, (env["exit"], env.get("render"))
+        _p, s = st.load(repo, run_id)
+        rounds = s["phases"]["05-code-review"]["rounds"]
+        assert [f["title"] for f in rounds["1"]["gen"]["findings"]] == ["인가 누락"]
+        assert rounds["2"]["gen"]["findings"] == []
 
 
 class TestPr06MinorAccounting:
@@ -4329,8 +4703,7 @@ class TestEscalationPlansTheDeltaRound:
         return run_id, paths
 
     def _submit(self, repo, paths, run_id, code, round_, findings, resolved=()):
-        name = ("05_review_%s.json" % code if round_ == 1
-                else "05_review_%s_r%d.json" % (code, round_))
+        name = "05_review_%s.json" % code      # 라운드와 무관하게 하나 (A7)
         j = paths.run_dir / name
         j.write_text(json.dumps({
             "reviewer": code, "round": round_, "status": "ok",
@@ -4360,6 +4733,20 @@ class TestEscalationPlansTheDeltaRound:
         assert planned == ["gen"], planned
         assert s["escalation"]["options"] == [], "메뉴가 없다 — 자유 서술로 사람에게"
         assert "계약" in s["escalation"]["reason"]
+
+    def test_수리_봉투가_05_loop_재게이트를_지시한다(self, repo, request_file,
+                                                    phases):
+        """A1 — 봉투가 `gate --phase 04 --stage scoped` 를 냈다. 페이즈 파일과
+        feature.md 는 `05 --stage loop`(ADR-H046)인데 워커는 봉투를 따르므로
+        scoped 만 돌아 타입 에러가 PR 로 새는 결함이 그대로 재현된다."""
+        run_id, paths = self._ready(repo, request_file, phases)
+        env = self._submit(repo, paths, run_id, "gen", 1, [self.BLOCK])
+        assert env["exit"] == 4, env["render"]
+        assert env["next_command"] == (
+            "python scripts/pipeline/cli.py gate --phase 05 --stage loop "
+            "--run-id %s" % run_id), env["next_command"]
+        assert "--stage scoped" not in env["render"]
+        assert "gate --phase 05 --stage loop" in env["render"]
 
     def test_패킷은_gen_하나를_스킬_경로로_이름_짓는다(self):
         s = {"counters": {"review_repair": {"used": 1, "max": 2}},
@@ -4615,6 +5002,8 @@ def _enter_06(repo, request_file, phases, grade="PASS"):
                      "major": 0, "need_more_context": [], "truncated": False}
     config = harness._read_json(repo / harness.CONFIG_REL)
     s["fingerprint"] = st.fingerprint(repo, config)
+    # 04 의 전체 회귀가 이 코드에서 돌았다 — `approve` 가 두 영수증을 본다.
+    s["tests"] = {"fingerprint": s["fingerprint"]}
     st.save(_p, s)
     return run_id, paths
 
@@ -5993,6 +6382,7 @@ class TestInlineBudgetIsEnforced:
         big = repo / "src" / "lib" / "huge.ts"
         big.parent.mkdir(parents=True, exist_ok=True)
         big.write_text("export const x = 1;\n" * 2000, encoding="utf-8")
+        _stamp_receipt(repo, run_id)
         env = cli.run_next(repo, run_id)
         assert env["exit"] == 0, env["render"]
         _, s = st.load(repo, run_id)
@@ -6006,6 +6396,7 @@ class TestInlineBudgetIsEnforced:
         small = repo / "src" / "lib" / "small.ts"
         small.parent.mkdir(parents=True, exist_ok=True)
         small.write_text("export const x = 1;\n", encoding="utf-8")
+        _stamp_receipt(repo, run_id)
         cli.run_next(repo, run_id)
         _, s = st.load(repo, run_id)
         assert s["phases"]["05-code-review"]["inline"]["inline"] is True
@@ -6402,6 +6793,7 @@ class TestReviewDepth:
         (repo / "src" / "app" / "api" / "x").mkdir(parents=True)
         (repo / "src" / "app" / "api" / "x" / "route.ts").write_text(
             "export async function POST() {}\n", encoding="utf-8")
+        _stamp_receipt(repo, run_id)
         env = cli.run_next(repo, run_id)
         _p, s = st.load(repo, run_id)
         assert s["phases"]["05-code-review"]["depth"] == "diff+refs"

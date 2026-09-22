@@ -29,6 +29,7 @@ sys.path.insert(0, str(_HERE.parent))
 
 import harness  # noqa: E402
 import adapters  # noqa: E402
+import state as st  # noqa: E402  — `nul_split`: 지문과 같은 `-z` 파서
 
 
 # `--scope` 의 어휘. **셋째 값을 만들지 않는다** — 소비자 없는 어휘를 두는
@@ -123,22 +124,33 @@ def changed_files(root, scope="worktree", config=None):
     동작을 그대로 원하기 때문이다. 범위를 넓히면 05 가 브랜치의 앞선 커밋까지
     리뷰 라우팅에 넣게 되고, 그것은 근거가 따로 필요한 별개 결정이다.
     """
+    # **`-z` 로 읽는다.** `core.quotepath` 기본값이면 비ASCII 경로가 8진
+    # 이스케이프로 오고, 따옴표만 벗겨서는 `src/한글.ts` 를 열지 못한다. 지문
+    # (`state._candidate_files`)이 이미 `-z` 라 같은 파서를 쓴다 (A10).
     out = set()
     if scope == "pr":
         base = ((config or {}).get("vcs") or {}).get("base_branch") or "main"
-        r = harness._git(root, "diff", "--name-only", base)
+        r = harness._git(root, "diff", "--name-only", "-z", base)
         if r is not None and r.returncode == 0:
-            for line in r.stdout.splitlines():
-                if line.strip():
-                    out.add(line.strip().strip('"').replace("\\", "/"))
+            for rel in st.nul_split(r):
+                out.add(rel.replace("\\", "/"))
     # `-uall` 이 없으면 git 이 **새 디렉터리를 한 줄로 뭉친다**(`?? src/x/`).
     # 그러면 파일 열 개짜리 새 폴더가 예산에 1 로 잡히고, 03 이 만든 새
     # 모듈이 정확히 그 형태다 — 예산이 사실보다 작게 잡히는 경로다.
-    r = harness._git(root, "status", "--porcelain", "-uall")
+    r = harness._git(root, "status", "--porcelain", "-z", "-uall")
     if r is not None and r.returncode == 0:
-        for line in r.stdout.splitlines():
-            if len(line) > 3:
-                out.add(line[3:].strip().strip('"').replace("\\", "/"))
+        entries = st.nul_split(r)
+        i = 0
+        while i < len(entries):
+            entry = entries[i]
+            i += 1
+            if len(entry) < 4:
+                continue
+            xy, rel = entry[:2], entry[3:]
+            # rename·copy 는 `XY new\0old\0` — 원래 경로는 건너뛰고 새 경로만 센다.
+            if "R" in xy or "C" in xy:
+                i += 1
+            out.add(rel.replace("\\", "/"))
     return sorted(out)
 
 

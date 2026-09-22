@@ -614,6 +614,51 @@ class ProfileParityTest(unittest.TestCase):
         self.assertEqual([], harness.validate(prof, schema))
 
 
+class HookTest(unittest.TestCase):
+    """A5 — settings.json 의 훅이 `$CLAUDE_TOOL_INPUT` 을 읽고 exit 1 로 막으려 했다.
+
+    훅 입력은 **stdin JSON** 뿐이고(`tool_input.command`), 차단은 **exit 2** 다.
+    README 의 「훅 1개 — 위험한 셸 명령 차단」이 참이려면 이 셋이 실제로 돌아야 한다.
+    """
+
+    HOOK = ROOT / ".claude" / "hooks" / "block_dangerous.py"
+
+    def _command(self):
+        cfg = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        bash = [h for h in cfg["hooks"]["PreToolUse"] if h.get("matcher") == "Bash"]
+        self.assertEqual(1, len(bash))
+        return bash[0]["hooks"][0]["command"]
+
+    def _run(self, stdin):
+        return subprocess.run(
+            [sys.executable, str(self.HOOK)], input=stdin, cwd=str(ROOT),
+            capture_output=True, text=True, encoding="utf-8")
+
+    def test_settings_points_at_a_stdin_reading_script(self):
+        cmd = self._command()
+        self.assertNotIn("CLAUDE_TOOL_INPUT", cmd)
+        self.assertIn("block_dangerous.py", cmd)
+        self.assertTrue(self.HOOK.exists(), self.HOOK)
+
+    def test_dangerous_commands_are_blocked_with_exit_2(self):
+        for command in ("rm -rf build", "git push --force origin main",
+                        "git reset --hard HEAD~1", "psql -c 'DROP TABLE users'"):
+            r = self._run(json.dumps({"tool_name": "Bash",
+                                      "tool_input": {"command": command}}))
+            self.assertEqual(2, r.returncode, command)
+            self.assertTrue(r.stderr.strip(), command)
+
+    def test_harmless_command_passes(self):
+        r = self._run(json.dumps({"tool_name": "Bash",
+                                  "tool_input": {"command": "ls -la && git status"}}))
+        self.assertEqual(0, r.returncode, r.stderr)
+
+    def test_unparsable_input_does_not_block(self):
+        """차단 훅이 무해한 명령을 막으면 그것이 새 결함이다."""
+        r = self._run("not json")
+        self.assertEqual(0, r.returncode, r.stderr)
+
+
 class RealRepoTest(unittest.TestCase):
     """실물 리포에서도 통과해야 한다 — 픽스처만 통과하는 것은 의미가 없다."""
 

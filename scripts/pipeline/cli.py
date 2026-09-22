@@ -46,8 +46,8 @@ PRODUCES_KINDS = ("json", "markdown")
 PRODUCES_KEYS = ("key", "path", "kind", "owner", "min_bytes", "must_contain",
                  "unless")
 FRONT_KEYS = ("id", "index", "owner", "approval", "docs", "requires", "produces",
-              "review", "converge", "submit_checks", "gate", "loop", "allow",
-              "on_success")
+              "review", "converge", "submit_checks", "gate", "loop", "trace_loop",
+              "allow", "on_success")
 REQUIRED_SECTIONS = ("## 목적", "## 진입 조건", "## 절차",
                      "## 제출 형식", "## 금지", "## 실패 시")
 ROLE_TEMPLATE_SECTION = "## 역할 프롬프트 템플릿"
@@ -157,47 +157,48 @@ class ConfigDeclarationError(ValueError):
             "`%s` 의 `%s.%s` %s" % (phase_id, scope, key, detail))
 
 
-def _loop_counter(front):
-    """`loop.counter`. 어휘는 `state.COUNTERS` 다."""
-    got = (front.get("loop") or {}).get("counter")
+def _loop_counter(front, key="loop"):
+    """`loop.counter`. 어휘는 `state.COUNTERS` 다. `key` 는 05 의 `trace_loop` 처럼
+    같은 모양의 둘째 루프 선언을 읽을 때 준다."""
+    got = (front.get(key) or {}).get("counter")
     if not got:
-        raise ConfigDeclarationError(front.get("id"), "counter", "가 없다")
+        raise ConfigDeclarationError(front.get("id"), "counter", "가 없다", key)
     if got not in st.COUNTERS:
         raise ConfigDeclarationError(
             front.get("id"), "counter",
-            "가 어휘 밖이다: %r (%s)" % (got, ", ".join(st.COUNTERS)))
+            "가 어휘 밖이다: %r (%s)" % (got, ", ".join(st.COUNTERS)), key)
     return got
 
 
-def _loop_max(front, profile=None):
+def _loop_max(front, profile=None, key="loop"):
     """`loop.max`, 또는 프로파일별이면 `loop.max_by_profile[profile]`."""
-    loop = front.get("loop") or {}
+    loop = front.get(key) or {}
     by = loop.get("max_by_profile")
     if by:
         got = by.get(profile) or by.get("normal")
         if not got:
             raise ConfigDeclarationError(
                 front.get("id"), "max_by_profile",
-                "에 %r 도 `normal` 도 없다" % (profile,))
+                "에 %r 도 `normal` 도 없다" % (profile,), key)
         return got
     got = loop.get("max")
     if not got:
         raise ConfigDeclarationError(front.get("id"), "max",
-                                     "도 `max_by_profile` 도 없다")
+                                     "도 `max_by_profile` 도 없다", key)
     return got
 
 
-def _loop_on_exceed(front):
+def _loop_on_exceed(front, key="loop"):
     """`loop.on_exceed`. **어휘가 하나뿐인 것은 사실이다** — 둘째 동작이 없다.
 
     값을 늘리는 것은 그 동작을 구현한 뒤의 일이다. 지금 늘리면 선언이 다시
     기계 사실을 참칭한다.
     """
-    got = (front.get("loop") or {}).get("on_exceed")
+    got = (front.get(key) or {}).get("on_exceed")
     if got not in LOOP_ON_EXCEED:
         raise ConfigDeclarationError(
             front.get("id"), "on_exceed",
-            "가 어휘 밖이다: %r (%s)" % (got, ", ".join(LOOP_ON_EXCEED)))
+            "가 어휘 밖이다: %r (%s)" % (got, ", ".join(LOOP_ON_EXCEED)), key)
     return got
 
 
@@ -795,6 +796,7 @@ def lint_phases(root, phases_dir=None):
                 seen_keys[key] = pid
         _lint_submit_checks(name, front, declared_checks, add)
         _lint_loop(name, pid, front, loaded, add)
+        _lint_loop(name, pid, front, loaded, add, key="trace_loop")
         _lint_converge(name, front, add)
         _lint_conditions(name, front, add)
         _lint_requires(name, front, loaded, add)
@@ -950,39 +952,40 @@ def _lint_conditions(name, front, add):
             add(name, "%s_unless" % key, "FAIL", "%s.unless: %s" % (key, exc))
 
 
-def _lint_loop(name, pid, front, loaded, add):
+def _lint_loop(name, pid, front, loaded, add, key="loop"):
     """루프 선언이 **읽히는 값**인가.
 
     M36: `on_exceed` · 상한이 프론트매터에만 있고 코드는
     하드코딩을 썼다. 이제 코드가 읽으므로, 선언이 어휘 밖이면 런 중간이 아니라
     **여기서** 안다. 검사하지 않으면 exit 2 를 런 한복판에서 만난다.
     """
-    loop = front.get("loop") or {}
+    loop = front.get(key) or {}
     if not loop:
         return
     counter = loop.get("counter")
     if not counter:
-        add(name, "counter", "FAIL", "loop.counter 가 없다 — 무엇을 세는지 "
-                                     "코드가 읽을 자리가 없다")
+        add(name, "counter", "FAIL", "%s.counter 가 없다 — 무엇을 세는지 "
+                                     "코드가 읽을 자리가 없다" % key)
     elif counter not in st.COUNTERS:
         add(name, "counter", "FAIL",
             "알 수 없는 카운터: %r (%s)" % (counter, ", ".join(st.COUNTERS)))
 
     if not loop.get("max") and not loop.get("max_by_profile"):
         add(name, "loop_max", "FAIL",
-            "loop.max 도 loop.max_by_profile 도 없다 — 상한이 코드에만 남는다")
+            "%s.max 도 %s.max_by_profile 도 없다 — 상한이 코드에만 남는다"
+            % (key, key))
 
     on_exceed = loop.get("on_exceed")
     if on_exceed is not None and on_exceed not in LOOP_ON_EXCEED:
         add(name, "on_exceed", "FAIL",
-            "loop.on_exceed 가 어휘 밖이다: %r (%s) — **없는 동작을 어휘로 "
+            "%s.on_exceed 가 어휘 밖이다: %r (%s) — **없는 동작을 어휘로 "
             "예고하지 않는다.** 늘리려면 그 동작을 먼저 만든다"
-            % (on_exceed, ", ".join(LOOP_ON_EXCEED)))
+            % (key, on_exceed, ", ".join(LOOP_ON_EXCEED)))
 
     # 01 은 `converge` 와 `loop` 가 같은 초과 동작을 선언한다. 코드는 `loop` 를
     # 읽으므로 둘이 갈리면 `converge` 쪽이 조용히 무시된다.
     conv_exceed = (front.get("converge") or {}).get("on_exceed")
-    if conv_exceed is not None and conv_exceed != on_exceed:
+    if key == "loop" and conv_exceed is not None and conv_exceed != on_exceed:
         add(name, "on_exceed", "FAIL",
             "converge.on_exceed(%r) 와 loop.on_exceed(%r) 가 다르다 — "
             "코드는 loop 를 읽는다" % (conv_exceed, on_exceed))
@@ -1158,6 +1161,12 @@ def run_next(root, run_id=None):
             "## %s 진입 거부\n\n선행 조건이 채워지지 않았다.\n\n%s%s"
             % (pid, "\n".join("- %s" % c["message"] for c in failed), ""),
             None)
+
+    if pid == "05-code-review":
+        # 리뷰어는 모델 호출이다 — 게이트 안 된 코드에 보내면 그 호출이 낭비다.
+        stale = _receipt_stale(root, ctx["config"], s)
+        if stale:
+            return _receipt_envelope("next", s, stale)
 
     st.set_phase_status(s, pid, "running")
     st.append_event(paths, "phase_enter", cmd="next", phase=pid)
@@ -1707,9 +1716,10 @@ def run_record(root, phase, file, reviewer=None, round_=None, run_id=None,
     if st.phase_status(s, pid) == "passed":
         return st.envelope(
             "record", False, 3, s, {"phase": pid},
-            "`%s` 는 이미 통과했다. **record 는 멱등이 아니다** — 재작업은 "
-            "`retry --phase %s --counter <이름> --reason <사유>` 로만 한다."
-            % (pid, pid.split("-")[0]), None)
+            "`%s` 는 이미 통과했다. **record 는 멱등이 아니다** — "
+            "`next --run-id %s` 로 현재 페이즈의 지시를 본다."
+            % (pid, s["run_id"]),
+            "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
 
     phase_item = loaded[pid]
     ctx = build_context(root, paths, s)
@@ -2081,10 +2091,11 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
     subs = [dict(v, code=k) for k, v in slot.items()]
     ok, reason = verdict.converged(subs, blocking)
 
-    conv = front.get("converge") or {}
     profile = (s.get("profile") or {}).get("name") or "normal"
-    max_rounds = (conv.get("max_by_profile") or {}).get(profile) or 5
-    if profile != "normal" and (conv.get("max_by_profile") or {}).get(profile):
+    # 선언이 없으면 exit 2 다 — `or 5` 폴백은 곧 새 하드코딩이다 (M36).
+    max_rounds = _loop_max(front, profile)
+    if profile != "normal" and \
+            ((front.get("loop") or {}).get("max_by_profile") or {}).get(profile):
         # 라운드 상한이 레인의 양보다 — 선언이 빗나가면 gap 이름에 들어간다.
         _note_applied(s, "01:max_rounds=%d" % max_rounds)
 
@@ -2119,7 +2130,7 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
     next_keys = ["01:r%d:%s" % (used, code) for code in planned]
     st.count_instructions(s, "01-plan", next_keys)
     st.save(paths, s)
-    focus = conv.get("focus_round_2") or ""
+    focus = (front.get("converge") or {}).get("focus_round_2") or ""
     env = st.envelope(
         "record", True, 0, s,
         {"round": used + 1, "reason": reason, "planned": planned},
@@ -2356,6 +2367,11 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
             "쳐 리뷰 입력(인라인 diff·지문)을 갱신하고 그 diff 로 리뷰어를 부른다."
             % (round_, s["run_id"], round_),
             "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
+    # `next` 를 건너뛴 워커도 막는다 — 슬롯을 쓰기 전에 거부해야 재게이트 뒤
+    # 같은 제출을 다시 낼 수 있다.
+    stale = _receipt_stale(root, ctx["config"], s)
+    if stale:
+        return _receipt_envelope("record", s, stale)
     planned = _planned_for_round(node, round_)
 
     rounds = node.setdefault("rounds", {})
@@ -2411,6 +2427,48 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
 # 규약 위반 제출을 몇 번까지 되돌려 보내는가. 페이즈 파일의 "재제출 1회 →
 # 2회 실패 시 스킵 + degrade" 를 숫자로 옮긴 것이다.
 REVIEW_SUBMIT_TRIES = 2
+
+
+def _receipt_stale(root, config, s, need_full=False):
+    """게이트 영수증 vs 지금. `("loop", saved, fresh)` · `("full", …)` · None.
+
+    영수증은 둘이다 — `s["fingerprint"]` 는 loop(compile·scoped)가, `s["tests"]
+    ["fingerprint"]` 는 전체 회귀가 **이 코드에서** 돌았다는 증거다. 04 가 쓰기만
+    하고 아무도 읽지 않아 「재게이트를 잊을 수 없다」가 산문이었다 (ADR-H076).
+    **없는 영수증은 stale 이다** — 04 가 통과했으면 반드시 있다.
+    """
+    fresh = st.fingerprint(root, config)
+    if not st.fingerprint_matches(s.get("fingerprint") or {}, fresh):
+        return "loop", s.get("fingerprint"), fresh
+    if need_full:
+        saved = (s.get("tests") or {}).get("fingerprint") or {}
+        if not st.fingerprint_matches(saved, fresh):
+            return "full", saved, fresh
+    return None
+
+
+# loop 은 전이 거부(지문 stale)이고, full 은 선행 조건(전체 회귀)이다.
+_RECEIPT_EXIT = {"loop": 6, "full": 3}
+
+
+def _receipt_envelope(cmd, s, stale):
+    kind, saved, fresh = stale
+    if kind == "loop":
+        text = ("## 소스가 게이트 뒤에 바뀌었다\n\n"
+                "마지막 게이트 영수증의 지문과 지금 소유 범위 파일의 지문이 다르다 — "
+                "수리한 코드가 compile·scoped 를 안 거쳤다. 재게이트 없이는 리뷰도 "
+                "승인도 **게이트 안 된 코드**에 대한 것이 된다.")
+    else:
+        text = ("## 전체 회귀가 지금 코드에서 돌지 않았다\n\n"
+                "회귀 영수증의 지문이 지금과 다르다 — 05 수리 뒤 loop 만 다시 돌았다. "
+                "PR 본문의 「전체 회귀 실행됨」이 수리 전 코드를 증언하지 않도록 "
+                "06 전에 한 번 돈다.")
+    next_cmd = ("python scripts/pipeline/cli.py gate --phase 05 --stage %s "
+                "--run-id %s" % (kind, s["run_id"]))
+    return st.envelope(cmd, False, _RECEIPT_EXIT[kind], s,
+                       {"receipt": kind, "saved": saved, "fresh": fresh},
+                       "%s\n\n`gate --phase 05 --stage %s` 뒤에 이 명령을 다시 친다."
+                       % (text, kind), next_cmd)
 
 
 def _dispatch_fingerprint_stale(root, ctx, node, round_):
@@ -2485,9 +2543,9 @@ def _record_05_failed(root, paths, s, phase_item, ctx, reviewer, round_, reason)
     if guard is not None:
         return guard
 
+    # 제출 파일은 라운드와 무관하게 하나다 — 페이즈 파일이 그렇게 말하고, 원문과
+    # findings 는 `record` 가 슬롯에 옮기므로 다음 회차가 덮어써도 잃지 않는다.
     f = paths.run_dir / ("05_review_%s.json" % reviewer)
-    if round_ > 1:
-        f = paths.run_dir / ("05_review_%s_r%d.json" % (reviewer, round_))
     if f.exists():
         return st.envelope(
             "record", False, 8, s, {"submission": paths.rel(f)},
@@ -2580,7 +2638,7 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             {"blocking": len(blocking), "findings": blocking,
              "review05": s["review05"], "delta_reviewer": delta},
             _review_repair_render(blocking, used + 1, delta, prev_open),
-            "python scripts/pipeline/cli.py gate --phase 04 --stage scoped "
+            "python scripts/pipeline/cli.py gate --phase 05 --stage loop "
             "--run-id %s" % s["run_id"])
 
     return _advance_to_next(root, paths, s, phase_item, ctx)
@@ -2623,10 +2681,10 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
                   "(`resolved_from_previous` · `reraised_from_previous`) 메인이 "
                   "그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·"
                   "severity 는 여전히 손대지 않는다 (ADR-H052).",
-              "", "고친 뒤 `gate --phase 04 --stage scoped` 로 재게이트하고, "
-                  "델타 재리뷰 1명을 돌린 다음 다시 제출한다.",
-              "**수리하면 지문이 바뀌어 영수증이 낡는다** — 06 이 자동으로 막으므로 "
-              "재게이트를 잊을 수 없다."]
+              "", "고친 뒤 `gate --phase 05 --stage loop` 로 재게이트하고, "
+                  "`next` 로 델타 지시를 받아 재리뷰 1명을 돌린 다음 다시 제출한다.",
+              "**수리하면 지문이 바뀌어 영수증이 낡는다** — `next`·`record`·`approve` 가 "
+              "자동으로 막으므로 재게이트를 잊을 수 없다."]
     return "\n".join(lines)
 
 
@@ -2810,6 +2868,18 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
     phase_item = loaded[pid]
     ctx = build_context(root, paths, s)
 
+    # **페이즈 전이는 04 의 전체 게이트만 한다.** `gate --phase 05` 를 `--stage`
+    # 없이 치면 05 체인이 돌고 04 리포트를 덮어쓴 뒤 05 가 passed 로 올라갔다 —
+    # precheck·contract-trace·리뷰 없이 05 통과다. 04 도 04 에 있을 때만 전체를 돈다.
+    if not only_stage and (pid != "04-gate" or s.get("phase") != pid):
+        return st.envelope(
+            "gate", False, 2, s, {"phase": pid, "current": s.get("phase")},
+            "`gate --phase %s` 는 `--stage` 가 필요하다 — 전체 게이트로 페이즈를 "
+            "닫는 것은 `04-gate` 에서 `gate --phase 04` 뿐이다(지금 페이즈: `%s`).\n\n"
+            "- 수리 뒤 재게이트: `gate --phase 05 --stage loop`\n"
+            "- 06 진입 전 전체 회귀: `gate --phase 05 --stage full`"
+            % (pid.split("-")[0], s.get("phase")), None)
+
     if not only_stage:
         checks = check_requires(root, phase_item["front"].get("requires"), ctx, s)
         failed = [c for c in checks if not c["ok"]]
@@ -2863,11 +2933,26 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
         failed = [x for x in stages
                   if x.get("state") == "ran" and x.get("exit") != 0]
         ok = not failed
+        render = "\n".join(_stage_render(x) for x in stages)
+        if ok and (report.get("tests") or {}).get("status") == "shrank":
+            # 전체 게이트만 잡던 하한을 05 의 full 재실행이 우회하면 반만 닫힌다.
+            ok = False
+            render += ("\n\n테스트 수가 하한 아래로 떨어졌다(%s < %s) — 전체 회귀 "
+                       "영수증을 남기지 않는다."
+                       % (report["tests"].get("ran"), report["tests"].get("expected_min")))
+        if ok:
+            # **영수증은 둘이다.** loop 는 compile·scoped 가, full 은 전체 회귀가
+            # **이 코드에서** 돌았다는 증거다. `next`·`record`·`approve` 가 읽는다.
+            fresh = st.fingerprint(root, config)
+            if only_stage == "loop":
+                s["fingerprint"] = fresh
+            elif only_stage == "full":
+                s.setdefault("tests", {})["fingerprint"] = fresh
+            st.save(paths, s)
         # `stage` 는 옛 소비자용 단수 키 — 실패한 첫 스테이지, 없으면 마지막.
         stage = failed[0] if failed else stages[-1]
         return st.envelope("gate", ok, 0 if ok else 4, s,
-                           {"stage": stage, "stages": stages},
-                           "\n".join(_stage_render(x) for x in stages), None)
+                           {"stage": stage, "stages": stages}, render, None)
 
     _write_json(paths.run_dir / "04_gate_report.json", report)
 
@@ -2887,6 +2972,8 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
                               round_no, log_text, reason="테스트 수가 하한 아래로 떨어졌다")
         st.demote(s, report.get("grade") or st.GRADES[1])
         s["fingerprint"] = st.fingerprint(root, config)
+        # 전체 게이트는 full 까지 돌았다 — 회귀 영수증도 같은 지문이다.
+        s.setdefault("tests", {})["fingerprint"] = s["fingerprint"]
         st.append_event(paths, "stage_done", cmd="gate", phase=pid,
                         grade=s["grade"])
         st.save(paths, s)
@@ -3141,6 +3228,11 @@ def run_approve(root, phase="06", revoke=False, auto=False, run_id=None):
                            None)
 
     config, _adapter = adapters.load(root)
+    # 승인은 **게이트된 코드**에 대한 것이다 — loop 영수증(exit 6)과 전체 회귀
+    # 영수증(exit 3)을 여기서 본다. `pr` 은 승인 지문을 대조하므로 전이적으로 덮인다.
+    stale = _receipt_stale(root, config, s, need_full=True)
+    if stale:
+        return _receipt_envelope("approve", s, stale)
     node.update({
         "granted": True,
         "mode": "auto" if auto else "user",
@@ -3598,9 +3690,31 @@ def run_contract_trace(root, contract=None, run_id=None):
     st.save(paths, s)
 
     exit_ = 8 if got.get("blocking") else 0
+    if exit_:
+        # **선수리 루프에도 천장이 있다.** 05 의 `trace_loop` 가 선언하고 여기서
+        # 읽는다 — 반복마다 작성자 호출 1 + 재게이트 1 이고, 같은 Critical 이
+        # 반복되면 코드가 아니라 계약이 틀렸을 수 있다 (ADR-H076).
+        front = (load_phases(root)[0].get("05-code-review") or {}).get("front") or {}
+        try:
+            used, max_, exceeded = st.counter_inc(
+                s, _loop_counter(front, "trace_loop"),
+                _loop_max(front, key="trace_loop"), "trace_blocking", paths=paths)
+            if exceeded:
+                _loop_on_exceed(front, "trace_loop")
+        except ConfigDeclarationError as exc:
+            return _declaration_envelope("contract-trace", s, exc)
+        st.save(paths, s)
+        if exceeded:
+            st.escalate(paths, s,
+                        "계약 대조의 Critical %d건이 %d회 안에 해소되지 않았다 — "
+                        "같은 지적이 반복되면 코드가 아니라 계약이 틀렸을 수 있다"
+                        % (got["blocking"], max_),
+                        phase="05-code-review")
+            return _escalation_envelope("contract-trace", paths, s)
     return st.envelope("contract-trace", exit_ == 0, exit_, s, got,
                        _trace_render(got, rel),
-                       None if exit_ else
+                       "python scripts/pipeline/cli.py gate --phase 05 --stage loop "
+                       "--run-id %s" % s["run_id"] if exit_ else
                        "python scripts/pipeline/cli.py record --phase 05 "
                        "--file <리뷰 json> --reviewer <code> --run-id %s" % s["run_id"])
 
@@ -3624,7 +3738,7 @@ def _trace_render(got, rel):
         for f in blocking:
             lines.append("- `%s` → **%s**: %s"
                          % (f["code"], f["target_role"], f["title"]))
-        lines += ["", "고친 뒤 `gate --phase 04 --stage scoped` 로 재게이트하고 "
+        lines += ["", "고친 뒤 `gate --phase 05 --stage loop` 로 재게이트하고 "
                       "이 명령을 다시 친다."]
     else:
         lines += ["", "Critical 0건. 리뷰어 라우팅으로 넘어간다."]
