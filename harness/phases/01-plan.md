@@ -2,9 +2,6 @@
 {
   "id": "01-plan",
   "index": 1,
-  "owner": "main",
-  "approval": "none",
-  "docs": ["${config.project.instruction_file}"],
   "requires": [
     {"kind": "file", "path": "${run.dir}/00_original_request.md", "min_bytes": 1,
      "sha256_pointer": "request.sha256"},
@@ -15,21 +12,14 @@
     {"key": "plan", "path": "${run.dir}/01_plan.md", "kind": "markdown", "min_bytes": 200}
   ],
   "review": {
-    "parallel": true,
     "unless": "state.profile.name == \"docs\"",
     "reviewers": [
-      {"code": "plan", "agent": "plan-reviewer", "kind": "internal",
-       "raw": "${run.dir}/01_review_r{n}.raw.md",
-       "json": "${run.dir}/01_review_r{n}.json"}
+      {"code": "plan", "agent": "plan-reviewer"}
     ]
   },
   "converge": {
-    "counter": "round",
-    "max_by_profile": {"fix": 1, "normal": 2},
     "blocking_severities": ["critical"],
-    "one_round_allowed_when": "blocking_free",
-    "focus_round_2": "요청의 요구 중 플랜이 가리키지 않은 것 · 범위 밖 항목 · 인수 조건의 검증 가능성",
-    "on_exceed": "escalate"
+    "focus_round_2": "요청의 요구 중 플랜이 가리키지 않은 것 · 범위 밖 항목 · 인수 조건의 검증 가능성"
   },
   "submit_checks": [
     {"id": "reviewer_not_main", "on_fail": 8},

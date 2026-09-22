@@ -2,8 +2,6 @@
 {
   "id": "07-pr-review",
   "index": 7,
-  "owner": "main",
-  "approval": "inherited:06",
   "requires": [
     {"kind": "state", "pointer": "phases.06-pr.status", "equals": "passed"},
     {"kind": "state", "pointer": "pr.pushed", "equals": true}
@@ -30,8 +28,8 @@
 
 ## 진입 조건
 
-- 06 이 `passed` 이고 `state.pr.pushed` 가 참이다. 승인은 **06 에서 상속한다**
-  (`inherited:06`) — 07 이 따로 받지 않는다
+- 06 이 `passed` 이고 `state.pr.pushed` 가 참이다. 승인은 **06 의 것을 그대로 쓴다** —
+  07 이 따로 받지 않는다
 - **PR 상태를 먼저 본다.** 닫혔거나 머지됐으면 리뷰도 수리도 하지 않고 `record`
   로 정상 종료한다 — 등급은 `pr_closed`/`pr_merged` 로 내려간다 (§E8)
 

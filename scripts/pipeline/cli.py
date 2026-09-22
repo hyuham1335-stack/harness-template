@@ -45,9 +45,19 @@ PRODUCES_KINDS = ("json", "markdown")
 # 없었다 (ADR-H073). 집합을 닫아야 근거 없는 어휘가 되돌아오지 못한다.
 PRODUCES_KEYS = ("key", "path", "kind", "owner", "min_bytes", "must_contain",
                  "unless")
-FRONT_KEYS = ("id", "index", "owner", "approval", "docs", "requires", "produces",
-              "review", "converge", "submit_checks", "gate", "loop", "trace_loop",
-              "allow", "on_success")
+# `produces[].owner` — 누가 쓰는가. `executor` 는 실행기 산출물이라 봉투의 「쓸 파일」에
+# 싣지 않는다 (ADR-H076 B′). 없으면 `main` 이다.
+PRODUCES_OWNERS = ("main", "executor")
+FRONT_KEYS = ("id", "index", "requires", "produces", "review", "converge",
+              "submit_checks", "gate", "loop", "trace_loop", "allow", "on_success")
+# 하위 키도 닫는다 — 최상위만 닫혀 있어 `rerun_failed_once`·`assert_tests_ran` 같은
+# 키가 네 페이즈에 살면서 한 번도 안 읽혔다 (ADR-H076 B).
+REVIEW_KEYS = ("unless", "reviewers")
+REVIEWER_KEYS = ("code", "agent")
+GATE_KEYS = ("runner", "fail_fast", "steps")
+GATE_STEP_KEYS = ("id", "tests_from", "loop_stage")
+CONVERGE_KEYS = ("blocking_severities", "focus_round_2")
+LOOP_KEYS = ("counter", "max", "max_by_profile", "on_exceed")
 REQUIRED_SECTIONS = ("## 목적", "## 진입 조건", "## 절차",
                      "## 제출 형식", "## 금지", "## 실패 시")
 ROLE_TEMPLATE_SECTION = "## 역할 프롬프트 템플릿"
@@ -782,18 +792,30 @@ def lint_phases(root, phases_dir=None):
                 add(name, "produces_kind", "FAIL",
                     "알 수 없는 produces kind: %r (%s)"
                     % (prod.get("kind"), ", ".join(PRODUCES_KINDS)))
-            unknown_pk = [k for k in prod if k not in PRODUCES_KEYS]
-            if unknown_pk:
-                add(name, "produces_keys", "FAIL",
-                    "produces 에 알 수 없는 키: %s (%s) — 읽는 코드가 없는 키는 "
-                    "선언이 아니라 장식이다 (ADR-H073)"
-                    % (", ".join(sorted(unknown_pk)), ", ".join(PRODUCES_KEYS)))
+            _lint_closed(name, "produces_keys", prod, PRODUCES_KEYS, add, "produces")
+            owner = prod.get("owner")
+            if owner is not None and owner not in PRODUCES_OWNERS:
+                add(name, "produces_owner", "FAIL",
+                    "produces.owner 가 어휘 밖이다: %r (%s)"
+                    % (owner, ", ".join(PRODUCES_OWNERS)))
             key = prod.get("key")
             if key in seen_keys:
                 add(name, "produces_key", "FAIL",
                     "produces.key %r 가 %s 와 겹친다" % (key, seen_keys[key]))
             else:
                 seen_keys[key] = pid
+        review = front.get("review") or {}
+        _lint_closed(name, "review_keys", review, REVIEW_KEYS, add, "review")
+        for r in review.get("reviewers") or []:
+            _lint_closed(name, "reviewer_keys", r, REVIEWER_KEYS, add, "review.reviewers[]")
+        gate = front.get("gate") or {}
+        _lint_closed(name, "gate_keys", gate, GATE_KEYS, add, "gate")
+        for step in gate.get("steps") or []:
+            _lint_closed(name, "gate_step_keys", step, GATE_STEP_KEYS, add, "gate.steps[]")
+        _lint_closed(name, "converge_keys", front.get("converge"), CONVERGE_KEYS, add,
+                     "converge")
+        _lint_closed(name, "loop_keys", front.get("loop"), LOOP_KEYS, add, "loop")
+        _lint_closed(name, "loop_keys", front.get("trace_loop"), LOOP_KEYS, add, "trace_loop")
         _lint_submit_checks(name, front, declared_checks, add)
         _lint_loop(name, pid, front, loaded, add)
         _lint_loop(name, pid, front, loaded, add, key="trace_loop")
@@ -936,6 +958,17 @@ def _lint_converge(name, front, add):
         add(name, "blocking_severities", "FAIL", str(exc))
 
 
+def _lint_closed(name, rule, obj, keys, add, label):
+    """키 집합을 닫는다 — 읽는 코드가 없는 키는 선언이 아니라 장식이다 (ADR-H073)."""
+    if not isinstance(obj, dict):
+        return
+    unknown = [k for k in obj if k not in keys]
+    if unknown:
+        add(name, rule, "FAIL",
+            "%s 에 알 수 없는 키: %s (%s) — 읽는 코드가 없는 키는 선언이 아니라 "
+            "장식이다 (ADR-H073)" % (label, ", ".join(sorted(unknown)), ", ".join(keys)))
+
+
 def _lint_conditions(name, front, add):
     """`review.unless` · `allow.unless` 가 조건식 문법인가 (ADR-H044).
 
@@ -981,14 +1014,6 @@ def _lint_loop(name, pid, front, loaded, add, key="loop"):
             "%s.on_exceed 가 어휘 밖이다: %r (%s) — **없는 동작을 어휘로 "
             "예고하지 않는다.** 늘리려면 그 동작을 먼저 만든다"
             % (key, on_exceed, ", ".join(LOOP_ON_EXCEED)))
-
-    # 01 은 `converge` 와 `loop` 가 같은 초과 동작을 선언한다. 코드는 `loop` 를
-    # 읽으므로 둘이 갈리면 `converge` 쪽이 조용히 무시된다.
-    conv_exceed = (front.get("converge") or {}).get("on_exceed")
-    if key == "loop" and conv_exceed is not None and conv_exceed != on_exceed:
-        add(name, "on_exceed", "FAIL",
-            "converge.on_exceed(%r) 와 loop.on_exceed(%r) 가 다르다 — "
-            "코드는 loop 를 읽는다" % (conv_exceed, on_exceed))
 
 
 def _index_prefix(phase_id):
@@ -3258,7 +3283,7 @@ def run_approve(root, phase="06", revoke=False, auto=False, run_id=None):
                        % s["run_id"])
 
 
-# 승인은 그 앞 페이즈가 끝난 뒤에만 뜻이 있다. 07 은 `inherited:06` 이라
+# 승인은 그 앞 페이즈가 끝난 뒤에만 뜻이 있다. 07 은 06 의 승인을 그대로 쓰고
 # 자기 승인을 따로 받지 않는다 — 그래서 여기 없다.
 _APPROVE_REQUIRES = {"06-pr": "05-code-review"}
 

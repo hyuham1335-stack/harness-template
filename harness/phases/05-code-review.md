@@ -2,8 +2,6 @@
 {
   "id": "05-code-review",
   "index": 5,
-  "owner": "main",
-  "approval": "none",
   "requires": [
     {"kind": "state", "pointer": "phases.04-gate.status", "equals": "passed"},
     {"kind": "file", "path": "${run.contract_file}", "min_bytes": 200,
@@ -14,16 +12,12 @@
     {"key": "trace", "path": "${run.dir}/05_trace.json", "kind": "json"},
     {"key": "review", "path": "${run.dir}/05_review.json", "kind": "json"}
   ],
-  "review": {
-    "reviewer": "config.reviewers[0]",
-    "depth": "config.review.depth"
-  },
   "gate": {
-    "runner": "adapter", "fail_fast": true, "rerun_failed_once": true,
+    "runner": "adapter", "fail_fast": true,
     "steps": [
       {"id": "compile", "loop_stage": true},
       {"id": "scoped", "tests_from": "contract", "loop_stage": true},
-      {"id": "full", "once_after_loop": true, "assert_tests_ran": true}
+      {"id": "full"}
     ]
   },
   "submit_checks": [

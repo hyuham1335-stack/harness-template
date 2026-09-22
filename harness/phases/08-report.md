@@ -2,8 +2,6 @@
 {
   "id": "08-report",
   "index": 8,
-  "owner": "main",
-  "approval": "none",
   "requires": [
     {"kind": "state", "pointer": "phases.07-pr-review.status",
      "equals": "passed"},
