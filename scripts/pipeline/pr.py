@@ -122,7 +122,8 @@ def push(root, config, branch):
 
 def _read(p, limit=None):
     try:
-        t = io.open(p, encoding="utf-8").read()
+        with io.open(p, encoding="utf-8") as fh:
+            t = fh.read()
     except (OSError, UnicodeDecodeError):
         return ""
     return t[:limit] if limit else t

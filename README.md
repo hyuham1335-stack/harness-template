@@ -133,7 +133,7 @@ python scripts/pipeline/cli.py doctor
 2. **어댑터 `stages.e2e` 에 `cmd` 를 채웁니다.** 관련 파일이 바뀐 런에서만 돌게 하려면
    `when_touched` 를 함께 적습니다 — 예: `["e2e/**", "src/app/**"]`. 안 걸리면 `not_touched` 로 건너뜁니다
 3. **테스트 DB 처럼 외부 자원이 필요하면 `infra_preflight` 에 프로브를 둡니다**
-   (`kind`: `tcp` · `cmd` · `env`, `required_when_touched` 로 조건부). `on_missing` 을 안 적으면
+   (`kind`: `tcp` · `env`, `required_when_touched` 로 조건부). `on_missing` 을 안 적으면
    `fail` 이라 exit 10 으로 멈추고, `warn` 이면 `infra_skipped:<프로브 이름>` gap 으로 등급만
    내립니다 — `warn` 은 `why` 에 사유를 적어야 합니다
 4. **스펙 위치를 어댑터 `attribution` 에 알립니다.** `test_file_globs` 에 스펙(`e2e/**/*.spec.ts`),

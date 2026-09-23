@@ -3033,6 +3033,11 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
         _note_contract(root, s, ctx)
     round_no = ((s.get("counters") or {}).get("repair") or {}).get("used", 0) + 1
     log_path = paths.gates / ("gr-%d.stdout.log" % round_no)
+    if not only_stage and log_path.exists():
+        # 전체 게이트는 이번 호출의 출력만 인프라 분류에 넣는다 — 인프라 에스컬레이션은
+        # 카운터를 안 써서 `resume` 뒤 재실행이 같은 라운드 번호로 지난 출력에 붙는다.
+        # `--stage` 는 04 통과 로그를 지우지 않게 지금처럼 뒤에 붙인다.
+        log_path.unlink()
 
     st.append_event(paths, "stage_start", cmd="gate", phase=pid, round=round_no)
     report = gate_mod.run_gate(root, config, adapter, s,

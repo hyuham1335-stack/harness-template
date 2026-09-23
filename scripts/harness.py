@@ -424,7 +424,7 @@ def _can_print_non_ascii():
         except (UnicodeEncodeError, LookupError):
             if attempt == 0:
                 try:
-                    sys.stdout.reconfigure(encoding="utf-8")
+                    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
                 except (AttributeError, ValueError):
                     return False
     return False
@@ -970,7 +970,7 @@ def run_init(root, adapter, name, force=False):
 
 def main(argv=None):
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
 
