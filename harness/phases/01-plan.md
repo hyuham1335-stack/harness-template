@@ -9,7 +9,7 @@
      "mode": "warn"}
   ],
   "produces": [
-    {"key": "plan", "path": "${run.dir}/01_plan.md", "kind": "markdown", "min_bytes": 200}
+    {"key": "plan", "path": "${run.dir}/01_plan.md", "kind": "markdown"}
   ],
   "review": {
     "unless": "state.profile.name == \"docs\"",
@@ -59,7 +59,7 @@
 1. **요청을 읽는다.** 요약하지 말고 그대로 읽는다.
 2. **플랜을 쓴다.** 요청의 요구 하나하나가 플랜의 어느 절에 있는지 사람이 찾을 수
    있게 절을 나눈다 — 범위 밖으로 두는 것도 적는다. 리뷰어가 커버리지를 이것으로
-   본다. 200바이트 미만이면 제출이 거부된다.
+   본다. 200바이트 미만이면 03 진입(`next`)이 거부된다.
 3. **plan-reviewer** 를 돌린다 (ADR-H045). 리뷰어는 요청 원문 · 플랜 · **플랜이
    가리키는 리포 파일(읽기만)** 을 본다. **2라운드부터는 열린 Critical 이 있을
    때만** 다시 온다 — 봉투의 `planned` 가 누구인지 말한다.

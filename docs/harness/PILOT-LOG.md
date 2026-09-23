@@ -71,9 +71,11 @@
 
 ### 스테이지 실측
 
-08 은 스테이지 단위를 내지 않는다. `04_gate_report.json` 의 `stages[]`(`id` · `sec` ·
-`exit` · `state`)에서 사람이 옮긴다. **04 마지막 회차만 남고, 05 의 재게이트
-(`--stage loop|full`) 소요는 어디에도 기록되지 않는다** — 그 칸은 「미측정」이다.
+08 은 스테이지 단위를 내지 않는다. 사람이 런 디렉터리에서 옮긴다 — **게이트
+호출마다 `events.jsonl` 의 `gate_stages` 이벤트** 하나(`phase` · `selector` ·
+`stages[]` 의 `id` · `state` · `exit` · `sec`)가 남는다. 04 의 앞 회차와 05 의
+재게이트(`--stage loop|full`)도 여기 있다. 테스트 수는 `04_gate_report.json`
+(04 마지막 회차)이나 `state.tests`(마지막 full)에서 본다.
 
 | 스테이지 | 소요 | 종료 코드 | 테스트 | 비고 |
 |---|---:|---:|---:|---|

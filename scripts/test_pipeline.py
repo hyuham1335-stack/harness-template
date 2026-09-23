@@ -4723,6 +4723,42 @@ class TestEscalationPlansTheDeltaRound:
         assert "--stage scoped" not in env["render"]
         assert "gate --phase 05 --stage loop" in env["render"]
 
+    DEFECT = {"id": "F-2", "category": "CONTRACT_DEFECT", "severity": "major",
+              "target_role": "impl", "title": "계약의 반환형이 실제 정의와 다르다",
+              "quote": "반환형이 정의와 다르다"}
+
+    def test_차단_CONTRACT_DEFECT_는_수리가_아니라_에스컬레이션이다(
+            self, repo, request_file, phases):
+        """05 「실패 시」는 「멈추고 사람에게 보고」라 적었는데 실행기는 다른 차단
+        지적처럼 exit 4 수리 봉투를 냈다 — 계약은 메인 단독 소유라 작성자가 못 고친다."""
+        run_id, paths = self._ready(repo, request_file, phases)
+        env = self._submit(repo, paths, run_id, "gen", 1, [self.BLOCK, self.DEFECT])
+        assert env["exit"] == 10, env["render"]
+        _, s = st.load(repo, run_id)
+        assert s["escalated"] is True
+        assert s["counters"]["review_repair"]["used"] == 1
+        assert s["phases"]["05-code-review"]["rounds_planned"]["2"] == ["gen"]
+        reason = s["escalation"]["reason"]
+        for needle in ("CONTRACT_DEFECT", self.DEFECT["title"], self.BLOCK["title"],
+                       "resume"):
+            assert needle in reason, (needle, reason)
+
+    def test_초과와_CONTRACT_DEFECT_가_겹치면_사유를_둘_다_싣는다(
+            self, repo, request_file, phases):
+        run_id, paths = self._ready(repo, request_file, phases)
+        assert self._submit(repo, paths, run_id, "gen", 1, [self.BLOCK])["exit"] == 4
+        env = self._submit(repo, paths, run_id, "gen", 2, [self.BLOCK, self.DEFECT])
+        assert env["exit"] == 10, env["render"]
+        reason = st.load(repo, run_id)[1]["escalation"]["reason"]
+        assert "해소되지 않았다" in reason and "CONTRACT_DEFECT" in reason, reason
+
+    def test_Minor_CONTRACT_DEFECT_는_보고서로_간다(self, repo, request_file, phases):
+        """리뷰어가 차단이 아니라고 본 것이다 — 멈추지 않는다."""
+        run_id, paths = self._ready(repo, request_file, phases)
+        env = self._submit(repo, paths, run_id, "gen", 1,
+                           [dict(self.DEFECT, severity="minor")])
+        assert not st.load(repo, run_id)[1].get("escalated"), env["render"]
+
     def test_패킷은_gen_하나를_에이전트로_이름_짓는다(self):
         """리뷰어는 에이전트 파일이다 (ADR-H076 결정 7 · D1) — 스킬 파일을 읽으라는
         지시가 아니라 Agent 호출의 `subagent_type` 을 준다. 모델·effort 는 프론트매터."""
@@ -5272,15 +5308,42 @@ class TestPr06Push:
         _pp, s = st.load(repo, run_id)
         assert s["pr"]["pushed"] is True
 
-    def test_원격이_없으면_exit_9_삼지선다(self, repo, request_file, phases):
+    def test_원격이_없으면_exit_9_이고_선택지는_둘이다(self, repo, request_file,
+                                                     phases):
+        """「② 로컬 커밋까지만 하고 종료(`PASS_WITH_GAPS`)」는 고를 수단이 없었다 —
+        `pr` 에 그 플래그가 없고, 잠그지 않으니 `resume` 도 받지 않는다 (ADR-H076)."""
         _branch(repo, "feat-x")
         run_id, _p = _enter_06(repo, request_file, phases)
         cli.run_approve(repo, "06", run_id=run_id)
         env = cli.run_pr(repo, run_id=run_id)
         assert env["exit"] == 9
-        assert "원격" in env["render"]
-        for opt in ("①", "②", "③"):
+        assert "원격" in env["render"] and "중단" in env["render"]
+        for opt in ("①", "②"):
             assert opt in env["render"]
+        for gone in ("③", "로컬", "PASS_WITH_GAPS"):
+            assert gone not in env["render"], gone
+
+    def test_base_가_원격에_없으면_exit_9_이고_push_하지_않는다(self, repo,
+                                                           request_file, phases,
+                                                           tmp_path):
+        """base 가 원격에서 지워졌다 — 로컬 추적 ref 는 남아 있어 fetch·rev-parse 로는
+        못 본다. 06 은 base 를 보지 않았고 doctor 만 「06 이 exit 9 로 멈춘다」고 적었다."""
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        cli.run_approve(repo, "06", run_id=run_id)
+        bare = _remote(repo, tmp_path)
+        _git(bare, "update-ref", "-d", "refs/heads/main")
+        assert _git(repo, "rev-parse", "--verify", "-q",
+                    "refs/remotes/origin/main").returncode == 0, "낡은 추적 ref 는 남는다"
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 9, env["render"]
+        assert "base" in env["render"] and "`main`" in env["render"], env["render"]
+        assert _git(bare, "rev-parse", "--verify", "-q",
+                    "refs/heads/feat-x").returncode != 0, "push 하지 않는다"
+        assert (repo / "_workspace" / "contract_x.md").exists()
+        seen = [(e["kind"], (e.get("data") or {}).get("reason"))
+                for e in st.read_events(paths)]
+        assert ("waiting_human", "no_base") in seen, seen
 
     def test_non_fast_forward_는_에스컬레이션이다(self, repo, request_file,
                                                  phases, tmp_path):
@@ -5329,7 +5392,7 @@ class TestPr06ContractLifetime:
         import shutil
         shutil.rmtree(str(tmp_path / "origin.git"), ignore_errors=True)
         env = cli.run_pr(repo, run_id=run_id)
-        assert env["exit"] != 0, env["render"]
+        assert env["exit"] == 10, env["render"]
         c = repo / "_workspace" / "contract_x.md"
         assert c.exists(), "push 실패 뒤에 05 로 재개할 길이 남아야 한다"
 
@@ -6168,11 +6231,11 @@ class TestGapVocabulary:
 class TestDoctorRemote:
 
     def test_원격이_없으면_WARN_이고_막지는_않는다(self, repo):
-        """원격 없이 로컬까지만 가는 것도 정당한 선택이고, 그 선택은 사람의 것이다."""
+        """원격을 붙이는 것은 사람의 일이다 — doctor 는 06 이 멈출 것을 미리 알린다."""
         config = harness._read_json(repo / harness.CONFIG_REL)
         got = cli._check_remote(repo, config)
         assert got["status"] == "WARN"
-        assert "3지선다" in got["message"]
+        assert "exit 9" in got["message"] and "3지선다" not in got["message"]
 
     def test_원격과_base_가_있으면_PASS(self, repo, tmp_path):
         _branch(repo, "feat-x")
@@ -6836,12 +6899,27 @@ class TestUnreadDeclarationsAreGone:
         ("05-code-review.md", lambda f: f["trace_loop"].__setitem__("retry", 1), "loop_keys"),
         ("03-implement.md", lambda f: f["produces"][0].__setitem__("owner", "model"),
          "produces_owner"),
+        ("03-implement.md", lambda f: f["produces"][1].__setitem__("min_bytes", 1),
+         "produces_keys"),
+        ("05-code-review.md",
+         lambda f: f["submit_checks"][0].__setitem__("unless", "state.x == 1"),
+         "submit_check_keys"),
     ])
     def test_하위_키_집합이_닫혀_있다(self, repo, phases, phase, mutate, rule):
         """`FRONT_KEYS` 가 최상위에 하는 일을 하위 키에도 한다 — 최상위만 닫혀 있어
         `rerun_failed_once` 같은 키가 네 페이즈에 살면서 한 번도 안 읽혔다."""
         _rewrite(phases / phase, mutate)
         assert _fails(_lint(repo), rule), _fails(_lint(repo))
+
+    def test_produces_와_submit_checks_에_읽히지_않는_키가_없다(self):
+        """`min_bytes`·`must_contain` 은 다음 페이즈 `requires` 가, 03 `tests_required` 의
+        `from`·`unless` 는 `_tests_required` 가 집행한다 — 선언은 장식이었다."""
+        for pid in PHASE_IDS:
+            f = _front(ROOT / "harness" / "phases" / ("%s.md" % pid))
+            for p in f.get("produces") or []:
+                assert not {"min_bytes", "must_contain"} & set(p), (pid, p)
+            for c in f.get("submit_checks") or []:
+                assert set(c) == {"id", "on_fail"}, (pid, c)
 
     def test_01_리뷰어_에이전트_부재는_lint_가_잡는다(self, repo, phases):
         """`plan-reviewer.md` 의 실재는 아무도 검사하지 않았다 — `_lint_agents` 는
@@ -7086,3 +7164,164 @@ class TestExitCodeVocabulary:
                 if m and "쓰지 않습니다" not in meaning:
                     codes.add(int(m.group(1)))
         assert codes == set(cli.EXIT_CODES), sorted(codes)
+
+
+class TestContractChangeIn05:
+    """계약 sha256 은 03·04·05 가 쓰기만 하고 아무도 대조하지 않았다 — 05 「실패 시」
+    는 「바뀌었다면 멈추고 사람에게 알린다」를 미구현으로 적었다 (ADR-H076 fix 2).
+
+    기준은 04 전체 게이트의 계약이고, 05 에서 사람이 `resume` 하면 그 시점의 계약이다.
+    사람의 답에 따라 계약을 고치면 **resume 전에** 고친다.
+    """
+
+    def _change(self, repo, line="- 늦게 붙은 줄"):
+        c = repo / "_workspace" / "contract_x.md"
+        c.write_text(c.read_text(encoding="utf-8") + "\n" + line + "\n",
+                     encoding="utf-8")
+
+    def test_05_에서_계약이_바뀌면_next_가_멈춘다(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        assert cli.run_next(repo, run_id)["exit"] == 0
+        self._change(repo)
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 10, env["render"]
+        _, s = st.load(repo, run_id)
+        assert s["escalated"] is True
+        assert "계약" in s["escalation"]["reason"], s["escalation"]
+        assert paths.escalation.exists()
+
+    def test_계약이_그대로면_멈추지_않는다(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        assert cli.run_next(repo, run_id)["exit"] == 0
+        assert cli.run_next(repo, run_id)["exit"] == 0
+
+    def test_resume_이_그_시점의_계약을_새_기준으로_적는다(self, repo, request_file,
+                                                        phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        self._change(repo)
+        assert cli.run_next(repo, run_id)["exit"] == 10
+        env = cli.run_resume(repo, ack=True, run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        assert env["data"].get("contract_rebaselined") is True, env["data"]
+        assert "계약" in env["render"], env["render"]
+        assert cli.run_next(repo, run_id)["exit"] == 0
+
+    def test_resume_뒤에_고치면_한_번_더_멈춘다(self, repo, request_file, phases):
+        """사람의 답에 따른 수정은 resume **전**이다 — 뒤에 고치면 한 번 더 묻는다."""
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        self._change(repo)
+        cli.run_next(repo, run_id)
+        cli.run_resume(repo, ack=True, run_id=run_id)
+        assert cli.run_next(repo, run_id)["exit"] == 0
+        self._change(repo, "- resume 뒤에 붙은 줄")
+        assert cli.run_next(repo, run_id)["exit"] == 10
+
+    def test_no_contract_는_대조하지_않는다(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        s["contract"] = {"mode": "no_contract", "present": False, "sha256": "0" * 64}
+        st.save(_p, s)
+        assert cli.run_next(repo, run_id)["exit"] == 0
+
+    def test_lane_miss_로_계약_모드가_되면_옛_해시를_기준으로_삼지_않는다(
+            self, repo, request_file, phases):
+        """docs 런의 경로에 남은 옛 계약 — 그 해시가 기준이 되면 메인이 진짜 계약을
+        쓰는 순간 오탐이다."""
+        run_id, paths = _enter_05(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        s["profile"] = {"name": "docs", "source": "user"}
+        s["contract"] = {"mode": "no_contract", "present": False}
+        st.save(_p, s)
+        (repo / "src" / "lib" / "match.ts").write_text(TestGateReceiptIsEnforced.EDIT,
+                                                       encoding="utf-8")
+        _stamp_receipt(repo, run_id)
+        cli.run_next(repo, run_id)
+        _, s = st.load(repo, run_id)
+        assert s["contract"]["mode"] == "contract", "lane_miss 가 났다"
+        self._change(repo, "- 메인이 쓴 진짜 계약")
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 0, env["render"]
+
+
+class TestPr06SecretFilesMissing:
+    """비밀 파일 부재는 경고이지 실패가 아니다 — 그런데 그 사실이 아무 데도 안
+    남았다(`build_body` 가 `secret_files_missing` 을 버렸다, ADR-H076 fix 2).
+
+    설정된 파일이 **하나도** 없을 때만 gap 이다. 기본 설정은 `.env.local`·`.env` 둘이라
+    한쪽만 있는 것이 보통이고, 그때는 있는 파일의 값이 가려진다.
+    """
+
+    def _pr(self, repo, request_file, phases, tmp_path):
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        cli.run_approve(repo, "06", run_id=run_id)
+        _remote(repo, tmp_path)
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        return run_id, paths, env
+
+    def test_비밀_파일이_하나도_없으면_비강등_gap_이다(self, repo, request_file,
+                                                     phases, tmp_path):
+        run_id, paths, env = self._pr(repo, request_file, phases, tmp_path)
+        _, s = st.load(repo, run_id)
+        assert "secret_files_missing" in s["gaps"], s.get("gaps")
+        assert s["grade"] == "PASS", "경고이지 실패가 아니다"
+        assert env["data"]["secret_files_missing"] == [".env.local", ".env"]
+        req = json.loads((paths.run_dir / "06_pr_req.json").read_text(encoding="utf-8"))
+        assert "secret_files_missing" in req["gaps"]
+        body = (paths.run_dir / "06_pr_body.md").read_text(encoding="utf-8")
+        assert "secret_files_missing" in body.strip().splitlines()[0], (
+            "본문 머리와 요청서의 gap 이 갈라지지 않는다")
+
+    def test_한쪽만_있으면_gap_이_아니다(self, repo, request_file, phases, tmp_path):
+        _secrets(repo, K="아주비밀한값0123")
+        run_id, paths, env = self._pr(repo, request_file, phases, tmp_path)
+        _, s = st.load(repo, run_id)
+        assert "secret_files_missing" not in (s.get("gaps") or [])
+        assert env["data"]["secret_files_missing"] == [".env"]
+
+
+class TestGateStagesEvent:
+    """05 재게이트(`--stage loop|full`)의 스테이지 소요는 어디에도 남지 않았다 —
+    `sec` 는 재지만 `04_gate_report.json` 만 싣고, 그 파일은 04 매 회차 덮어쓰이며
+    `--stage` 경로는 쓰지도 않는다 (ADR-H076 fix 2). 이벤트는 추가만 된다.
+    """
+
+    def _events(self, paths):
+        return [e for e in st.read_events(paths) if e["kind"] == "gate_stages"]
+
+    def test_05_재게이트가_스테이지_소요를_남긴다(self, gated):
+        repo, paths, s = TestGateLoopStage()._at_05(gated)
+        env = cli.run_gate_cmd(repo, phase="05", only_stage="loop",
+                               runner=_stub_runner(dict(ALL_PASS)))
+        assert env["exit"] == 0, env["render"]
+        evs = self._events(paths)
+        assert len(evs) == 1, evs
+        ev = evs[0]
+        assert ev["phase"] == "05-code-review"
+        assert ev["data"]["selector"] == "loop"
+        assert [x["id"] for x in ev["data"]["stages"]] == ["compile", "scoped"]
+        assert all("sec" in x for x in ev["data"]["stages"]), ev
+        assert all(set(x) <= {"id", "state", "exit", "sec", "reason"}
+                   for x in ev["data"]["stages"]), "출력 전문은 싣지 않는다"
+
+    def test_04_의_앞_회차도_남고_스킵은_소요가_없다(self, gated):
+        repo, paths, s = gated
+        assert _gate(repo, dict(ALL_PASS, lint={"exit": 1}))["exit"] == 4
+        _report(repo)
+        _gate(repo, dict(ALL_PASS))
+        evs = self._events(paths)
+        assert len(evs) == 2, evs
+        assert evs[0]["data"]["selector"] == "all"
+        assert [x["id"] for x in evs[0]["data"]["stages"]] == ["compile", "lint"]
+        skipped = [x for x in evs[1]["data"]["stages"] if x["state"] == "skipped"]
+        assert skipped and all("sec" not in x and x.get("reason") for x in skipped), evs[1]
+
+    def test_돈_스테이지가_없으면_남기지_않는다(self, gated):
+        repo, paths, s = TestGateLoopStage()._at_05(gated)
+        env = cli.run_gate_cmd(repo, phase="05", only_stage="없는스테이지",
+                               runner=_stub_runner(dict(ALL_PASS)))
+        assert env["exit"] == 2, env["render"]
+        assert self._events(paths) == []

@@ -57,11 +57,14 @@ GAP_REASONS = {
     "test_report_missing": ("테스트 리포트를 한 건도 찾지 못했다 — 리포터 "
                             "경로 설정 오류일 수 있어 인프라로 다룬다"),
     "tests_ran_zero": "테스트가 0개 돌았다 — 빈 스위트의 초록불은 통과가 아니다",
+    "secret_files_missing": ("설정된 비밀 파일이 하나도 없어 PR 본문에 패턴 마스킹만 "
+                             "적용했다 — 경고이고 등급은 내리지 않는다"),
 }
 
-# 등급을 내리지 않는 gap. 정확 일치 목록은 비었고 `stage_na:<id>` 접두만 남았다
-# (ADR-H047 추기). 어휘를 늘리려면 그 gap 을 내는 자리를 먼저 만든다 (ADR-H025).
-NON_DEMOTING_GAPS = ()
+# 등급을 내리지 않는 gap. 정확 일치는 06 이 내는 `secret_files_missing` 하나이고
+# (ADR-H076 fix 2), 나머지는 `stage_na:<id>` 접두다 (ADR-H047 추기). 어휘를 늘리려면
+# 그 gap 을 내는 자리를 먼저 만든다 (ADR-H025).
+NON_DEMOTING_GAPS = ("secret_files_missing",)
 
 
 def is_non_demoting(gap):

@@ -43,8 +43,9 @@ PRODUCES_KINDS = ("json", "markdown")
 # `produces[]` 의 키 집합도 닫는다 — `FRONT_KEYS` 가 최상위에 하는 일과 대칭이다.
 # 한때 여기 `schema` 가 열 곳에 있었는데 읽는 코드도 그 이름의 아티팩트도
 # 없었다 (ADR-H073). 집합을 닫아야 근거 없는 어휘가 되돌아오지 못한다.
-PRODUCES_KEYS = ("key", "path", "kind", "owner", "min_bytes", "must_contain",
-                 "unless")
+# `min_bytes`·`must_contain` 도 같은 부류였다 — 크기와 절은 다음 페이즈의 `requires`
+# 가 집행한다 (ADR-H076 fix 2).
+PRODUCES_KEYS = ("key", "path", "kind", "owner", "unless")
 # `produces[].owner` — 누가 쓰는가. `executor` 는 실행기 산출물이라 봉투의 「쓸 파일」에
 # 싣지 않는다 (ADR-H076 B′). 없으면 `main` 이다.
 PRODUCES_OWNERS = ("main", "executor")
@@ -58,6 +59,9 @@ GATE_KEYS = ("runner", "fail_fast", "steps")
 GATE_STEP_KEYS = ("id", "tests_from", "loop_stage")
 CONVERGE_KEYS = ("blocking_severities", "focus_round_2")
 LOOP_KEYS = ("counter", "max", "max_by_profile", "on_exceed")
+# `submit_checks[]` 는 레지스트리를 가리키는 id 와 종료 코드뿐이다. 조건(`unless`)과
+# 입력(`from`)은 구현이 갖는다 — 03 에 선언돼 있었지만 읽는 코드가 없었다.
+SUBMIT_CHECK_KEYS = ("id", "on_fail")
 REQUIRED_SECTIONS = ("## 목적", "## 진입 조건", "## 절차",
                      "## 제출 형식", "## 금지", "## 실패 시")
 ROLE_TEMPLATE_SECTION = "## 역할 프롬프트 템플릿"
@@ -127,7 +131,8 @@ SUBMIT_CHECKS = {
                "경로를 근거로 대야 한다 — 기록 없는 기각은 지적의 증발이다"},
     "tests_required": {
         "exit": 8, "impl": ("cli:_tests_required",),
-        "why": "계약의 유닛·진입점·오류 어휘에 대응하는 테스트가 있는가"},
+        "why": "계약의 유닛·진입점·오류 어휘에 대응하는 테스트가 있는가 — 계약 없는 "
+               "런(`no_contract`)은 건너뛴다. 그 조건은 `_tests_required` 가 갖는다"},
     "pr_number_is_int": {
         "exit": 8, "impl": ("cli:_record_06",),
         "why": "PR 번호가 정수인가 — 문자열 번호는 뒤에서 조용히 안 맞는다"},
@@ -607,9 +612,9 @@ def _pipeline_checks(root):
     #    시점은 리뷰어를 이미 띄운 뒤다. **기동 전에, 무료로 잡는다**.
     out.append(_check_reviewers(root, config))
 
-    # ⑥ 원격과 base. 06 이 진입할 때 exit 9(3지선다)로 멈추는 것을 **기동 전에,
-    #    무료로** 알려 준다 (06-pr.md 「실패 시」). 여기서 막지는 않는다 — 원격 없이 로컬까지만
-    #    가는 것도 정당한 선택이고, 그 선택은 사람의 것이다.
+    # ⑥ 원격과 base. 06 이 exit 9 로 멈추는 것을 **기동 전에, 무료로** 알려 준다
+    #    (06-pr.md 「실패 시」). 여기서 막지는 않는다 — 원격을 붙이는 것은 사람의 일이고
+    #    01~05 는 원격 없이 돈다. 무료라 로컬 추적 ref 를 본다 — 06 은 원격에 직접 묻는다.
     out.append(_check_remote(root, config))
     return out
 
@@ -620,13 +625,14 @@ def _check_remote(root, config):
         return {"name": name, "status": "SKIP", "message": "config 를 읽지 못했다"}
     vcs = config.get("vcs") or {}
     remote = vcs.get("remote") or "origin"
-    base = vcs.get("base_branch")
+    base = vcs.get("base_branch") or "main"
     r = harness._git(root, "remote")
     names = (r.stdout.split() if r is not None and r.returncode == 0 else [])
     if remote not in names:
         return {"name": name, "status": "WARN",
-                "message": "원격 %r 이 없다 — 06 이 exit 9 3지선다로 멈춘다. "
-                           "**자동으로 만들지 않는다** (06-pr.md 「실패 시」)." % remote}
+                "message": "원격 %r 이 없다 — 06 이 exit 9 로 멈춘다(원격을 붙이거나 "
+                           "중단). **자동으로 만들지 않는다** (06-pr.md 「실패 시」)."
+                           % remote}
     v = harness._git(root, "rev-parse", "--verify", "-q",
                      "refs/remotes/%s/%s" % (remote, base))
     if v is None or v.returncode != 0:
@@ -941,6 +947,8 @@ def _lint_submit_checks(name, front, declared, add):
             add(name, "submit_check_shape", "FAIL",
                 "submit_checks 항목은 `id` 와 `on_fail` 을 갖는다: %r" % (c,))
             continue
+        _lint_closed(name, "submit_check_keys", c, SUBMIT_CHECK_KEYS, add,
+                     "submit_checks[%s]" % c["id"])
         cid, got = c["id"], c["on_fail"]
         spec = SUBMIT_CHECKS.get(cid)
         if spec is None:
@@ -1218,6 +1226,19 @@ def run_next(root, run_id=None):
         stale = _receipt_stale(root, ctx["config"], s)
         if stale:
             return _receipt_envelope("next", s, stale)
+        # **05 에서 계약은 고정이다** (ADR-H076 fix 2). 해시는 03·04·05 가 적기만
+        # 하고 아무도 대조하지 않았다 — 「바뀌었다면 멈춘다」는 산문이었다.
+        moved = _contract_moved(root, s, ctx)
+        if moved:
+            st.escalate(paths, s,
+                        "계약이 기준 뒤에 바뀌었다 (sha256 `%s` → `%s`). 05 에서 계약은 "
+                        "고정이다 — 기준은 04 전체 게이트의 계약이거나 마지막 `resume` "
+                        "시점의 계약이다. 이 변경을 받아들이면 `resume` 이 지금 계약을 새 "
+                        "기준으로 적는다. 사람의 답에 따라 계약을 더 고친다면 **`resume` "
+                        "전에** 고친다 — 뒤에 고치면 다음 `next` 가 한 번 더 멈춘다."
+                        % (moved[0][:12], moved[1][:12]),
+                        phase="05-code-review")
+            return _escalation_envelope("next", paths, s)
 
     st.set_phase_status(s, pid, "running")
     st.append_event(paths, "phase_enter", cmd="next", phase=pid)
@@ -1310,8 +1331,10 @@ def _docs_lane_source_check(root, paths, s, ctx, where, source_changed=None,
         after["applied"] = before["applied"]
     after["lane_miss"] = _note_lane_miss(paths, s, before, after, where, cmd)
     s["profile"] = after
+    # docs 런의 경로에 남은 옛 계약의 해시를 기준으로 두면 메인이 진짜 계약을
+    # 쓰는 순간 05 가 멈춘다 — 기준은 다음 `_note_contract` 가 세운다.
     s["contract"] = dict(s.get("contract") or {}, mode="contract",
-                         reason="lane_miss")
+                         reason="lane_miss", sha256=None)
     st.append_event(paths, "profile_reconfirmed", cmd=cmd, was="docs",
                     became="normal", units=None)
     st.save(paths, s)
@@ -1347,7 +1370,8 @@ def _plan_05_review(root, paths, s, ctx):
     import precheck as pc
     import review as review_mod
 
-    # 04 수리 중 계약 델타가 적용됐을 수 있다 — 해시와 버려진 줄을 다시 적는다.
+    # 해시와 버려진 줄을 적는다. 기준이 있으면 같다 — 다르면 `run_next` 가 이 앞에서
+    # 멈췄다. 기준이 없으면(lane_miss 직후) 여기서 선다 (ADR-H076 fix 2).
     noted = _note_contract(root, s, ctx)
     # **변경 집합은 `worktree` 다** (ADR-H028). 예산은 PR 전체를 재지만
     # 여기까지 넓히면 05 가 브랜치의 앞선 커밋까지 리뷰 대상에 넣는다.
@@ -1973,8 +1997,8 @@ def _record_01(root, paths, s, phase_item, ctx, file, reviewer, round_):
 
 
 def _record_01_plan(root, paths, s, phase_item, ctx, file):
-    """플랜 제출. 기계가 보는 것은 파일의 존재와 크기(`produces`)뿐이다 —
-    내용은 plan-reviewer 가 리포를 읽으며 본다."""
+    """플랜 제출. 기계가 보는 것은 파일의 존재뿐이다 — 크기는 03 의 `requires` 가
+    03 진입에서 보고, 내용은 plan-reviewer 가 리포를 읽으며 본다."""
     if not file.exists():
         return st.envelope("record", False, 3, s, {}, "산출물이 없다: %s" % file, None)
     node = s.setdefault("phases", {}).setdefault("01-plan", {})
@@ -2367,7 +2391,7 @@ def _note_contract(root, s, ctx):
 
     `dropped` 는 파서가 `컨테이너 · 심볼` 쌍이 아니라서 유닛으로 안 센 줄이다 —
     그 사실을 읽는 곳이 없으면 실제 계약이 유닛 셋을 흘려도 아무도 말하지
-    않는다 (P3 의 델타 D-2). 03 제출 · 04 수리 라운드 · 05 진입이 부른다.
+    않는다 (P3 의 델타 D-2). 03 제출 · 04 수리 라운드 · 05 진입 · 05 `resume` 이 부른다.
     프로파일은 건드리지 않는다 — 레인은 `init` 의 선언이다.
     """
     import contract as contract_mod
@@ -2380,6 +2404,22 @@ def _note_contract(root, s, ctx):
     s["contract"] = dict(s.get("contract") or {}, present=True, path=rel,
                          sha256=_sha256(full), dropped=parsed.get("dropped") or [])
     return {"dropped": s["contract"]["dropped"]}
+
+
+def _contract_moved(root, s, ctx):
+    """기준 해시 뒤에 계약이 바뀌었으면 (기준, 지금). 아니면 None.
+
+    기준이 없으면(`no_contract` · 아직 안 적힘 · lane_miss 로 비움) 대조하지 않는다 —
+    없는 기준과 다르다는 것은 사실이 아니다.
+    """
+    node = s.get("contract") or {}
+    if node.get("mode") == "no_contract" or not node.get("sha256"):
+        return None
+    full = Path(root) / resolve("${run.contract_file}", ctx)
+    if not full.exists():
+        return None
+    now = _sha256(full)
+    return (node["sha256"], now) if now != node["sha256"] else None
 
 
 def _sha256(path):
@@ -2697,12 +2737,16 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
         # 리뷰어가 하나라 델타도 그 하나다 — 재개된 라운드가 같은 한 명을 받는다.
         delta = planned[0] if planned else None
         node.setdefault("rounds_planned", {})[str(round_ + 1)] = [delta]
-        if exceeded:
-            _loop_on_exceed(front)
+        # **`CONTRACT_DEFECT` 는 수리가 아니라 에스컬레이션이다** (ADR-H076 fix 2) —
+        # 계약은 메인 단독 소유라 작성자가 못 고친다. 예전에는 다른 차단 지적처럼
+        # exit 4 수리 봉투에 한 줄로 적혔다. 카운터는 위에서 이미 썼다 — 차단 지적이
+        # 있던 회차 수가 곧 카운터이고, 초과 경로도 소모 뒤 멈춘다.
+        defect = [f for f in blocking if f.get("category") == "CONTRACT_DEFECT"]
+        if exceeded or defect:
+            if exceeded:
+                _loop_on_exceed(front)
             st.escalate(paths, s,
-                        "05 의 Critical/Major %d건이 %d회 안에 해소되지 않았다 — "
-                        "같은 지적이 반복되면 코드가 아니라 계약이 틀렸을 수 있다"
-                        % (len(blocking), max_decl),
+                        _review_escalation_reason(blocking, defect, exceeded, max_decl),
                         phase="05-code-review")
             return _escalation_envelope("record", paths, s)
         # 다음 회차에 델타가 회계해야 할 목록이다. `record` 가 같은 인자로
@@ -2723,6 +2767,25 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             "--run-id %s" % s["run_id"])
 
     return _advance_to_next(root, paths, s, phase_item, ctx)
+
+
+def _review_escalation_reason(blocking, defect, exceeded, max_decl):
+    """05 에스컬레이션 사유. 초과와 계약 결함이 겹치면 둘 다 — 하나만 적으면 다른
+    하나가 사유에서 빠진다. 수리 봉투를 안 내므로 이 회차의 차단 지적도 여기 싣는다."""
+    parts = []
+    if exceeded:
+        parts.append("05 의 Critical/Major %d건이 %d회 안에 해소되지 않았다 — 같은 "
+                     "지적이 반복되면 코드가 아니라 계약이 틀렸을 수 있다"
+                     % (len(blocking), max_decl))
+    if defect:
+        parts.append("리뷰어가 `CONTRACT_DEFECT` %d건을 냈다 — 계약은 메인 단독 소유라 "
+                     "수리 대상이 아니다. 계약을 고칠지는 사람이 정한다. 고치라는 답이면 "
+                     "**`resume` 전에** 고친다 — `resume` 이 그 계약을 05 의 새 기준으로 "
+                     "적는다" % len(defect))
+    lines = ["\n\n".join(parts), "", "이 회차의 차단 지적:"]
+    lines += ["- **%s** `%s`: %s" % (f.get("severity"), f.get("category"), f.get("title"))
+              for f in blocking]
+    return "\n".join(lines)
 
 
 def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
@@ -2753,11 +2816,6 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
     for f in blocking:
         lines.append("- **%s** → `%s`: %s"
                      % (f.get("severity"), f.get("target_role"), f.get("title")))
-    contract_defect = [f for f in blocking
-                       if f.get("category") == "CONTRACT_DEFECT"]
-    if contract_defect:
-        lines += ["", "**`CONTRACT_DEFECT` 가 있다.** 이것은 수리 대상이 아니라 "
-                      "에스컬레이션이다 — 계약은 메인 단독 소유다."]
     lines += ["", "제출이 **내용은 그대로이고 회계 필드만** 틀려 exit 8 로 되돌아오면 "
                   "(`resolved_from_previous` · `reraised_from_previous`) 메인이 "
                   "그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·"
@@ -2985,6 +3043,13 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
     report["run_id"] = s["run_id"]
     report["round"] = round_no
     report["log"] = paths.rel(log_path)
+    if report["stages"]:
+        # 출력 전문은 로그에 있다 — 원장에는 소요와 종료 코드만. 스킵은 `sec` 가 없다
+        # (못 잰 칸은 만들지 않는다). `round` 는 05 에서 04 의 repair+1 이라 싣지 않는다.
+        st.append_event(paths, "gate_stages", cmd="gate", phase=pid,
+                        selector=only_stage or "all", log=report["log"],
+                        stages=[{k: x[k] for k in ("id", "state", "exit", "sec", "reason")
+                                 if k in x} for x in report["stages"]])
 
     if only_stage:
         # 단일 스테이지는 카운터를 소모하지 않고 리포트를 덮어쓰지 않는다.
@@ -3354,7 +3419,8 @@ def cmd_report(root, args):
 
 
 def run_report(root, out=None, run_id=None):
-    """08 — 결정론 표 조립 + 필수 섹션 검사. 종료 코드 **0 / 3 / 6**.
+    """08 — 결정론 표 조립 + 필수 섹션 검사. 종료 코드 **0 / 3 / 8 / 11** —
+    3 은 런·입력이 없거나 `INCOMPLETE`, 8 은 서술 하한 미달, 11 은 런을 닫았다.
 
     **보고서는 파이프라인을 실패시키지 않는다.** 섹션이 빠져도 산출하고
     원장에 기록만 한다 — 보고서가 런을 실패시키면 안 쓰는 것이 이득이 된다.
@@ -3525,13 +3591,18 @@ def run_pr(root, run_id=None):
                 % (pr_mod.NOTES_FILE, "\n".join("- %s" % p for p in problems),
                    pr_mod.NOTES_EXAMPLE),
                 "python scripts/pipeline/cli.py pr --run-id %s" % s["run_id"])
-    # 3. 원격 상태 — 없으면 3지선다, non-FF 면 에스컬레이션
+    # 3. 원격 상태 — 원격·base 가 없으면 exit 9(붙이거나 중단), non-FF 면 에스컬레이션
     rs = pr_mod.remote_state(root, config, branch)
     data["remote"] = rs
     if not rs["has_remote"]:
         st.append_event(paths, "waiting_human", cmd="pr", phase="06-pr",
                         reason="no_remote")
         return st.envelope("pr", False, 9, s, data, _no_remote_render(rs), None)
+    if not rs["has_base"]:
+        # PR 을 열 대상이 없다 — push 해도 forge 의 PR 생성에서야 드러난다.
+        st.append_event(paths, "waiting_human", cmd="pr", phase="06-pr",
+                        reason="no_base")
+        return st.envelope("pr", False, 9, s, data, _no_base_render(rs), None)
     if rs["non_ff"]:
         st.escalate(paths, s,
                     "원격 브랜치가 non-fast-forward 다 (%d 커밋 앞섬)"
@@ -3566,6 +3637,16 @@ def run_pr(root, run_id=None):
                            None)
 
     # 5. 본문 조립 + 마스킹
+    # **비밀 파일 부재는 경고이지 실패가 아니다** — 그래도 사실은 남긴다 (ADR-H076
+    # fix 2). 예전에는 `build_body` 가 `mask_text` 의 부재 목록을 버렸다. 하나도 없을
+    # 때만 gap 이다 — 기본 설정은 두 파일이라 한쪽만 있는 것이 보통이고, 그때는 있는
+    # 파일의 값이 가려진다. 본문 머리가 gap 을 싣으므로 조립 **앞**이다.
+    import mask as mask_mod
+    secret_files = (config.get("project") or {}).get("secret_files") or []
+    missing = mask_mod.secret_values(root, config)[1]
+    data["secret_files_missing"] = missing
+    if not closed_run and secret_files and len(missing) == len(secret_files):
+        st.demote(s, None, "secret_files_missing")
     body = pr_mod.build_body(root, paths, s, config)
     body_path = paths.run_dir / "06_pr_body.md"
     body_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3661,9 +3742,20 @@ def _no_remote_render(rs):
         "`%s` 원격을 찾지 못했다. **자동으로 원격을 만들거나 브랜치를 만들지 "
         "않는다.**" % rs["remote"],
         "",
-        "① 원격을 붙이고 재개",
-        "② 로컬 커밋까지만 하고 종료 (등급 `PASS_WITH_GAPS`)",
-        "③ 중단",
+        "① 원격을 붙이고 `pr` 을 다시 친다",
+        "② 중단 — 런을 그대로 둔다",
+    ])
+
+
+def _no_base_render(rs):
+    return "\n".join([
+        "## base 가 원격에 없다 — 사람이 정한다",
+        "",
+        "`%s` 원격에 base 브랜치 `%s` 가 없다 — PR 을 열 대상이 없다. **자동으로 "
+        "만들지 않는다.**" % (rs["remote"], rs["base"]),
+        "",
+        "① base 를 원격에 올리고 `pr` 을 다시 친다",
+        "② 중단 — 런을 그대로 둔다",
     ])
 
 
@@ -3862,10 +3954,24 @@ def run_resume(root, ack=False, answer_file=None, run_id=None):
     pid = s.get("phase")
     if pid and st.phase_status(s, pid) == "escalated":
         st.set_phase_status(s, pid, "running")
+    data = {"phase": pid}
+    render = "잠금을 풀었다. 사람의 답이 원장에 남았다."
+    # **05 의 계약 기준은 사람이 재개한 시점의 계약이다** (ADR-H076 fix 2). 비우기만
+    # 하면 재개 뒤 첫 `next` 가 **고치기 전** 계약을 기준으로 적어, 사람의 답에 따라
+    # 고친 다음 사이클에서 한 번 더 멈춘다. 그래서 답에 따른 수정은 resume 전이다.
+    contract = s.get("contract") or {}
+    if pid == "05-code-review" and contract.get("mode") != "no_contract":
+        before = contract.get("sha256")
+        _note_contract(root, s, build_context(root, paths, s))
+        after = (s.get("contract") or {}).get("sha256")
+        if before and after and before != after:
+            # 계약과 무관한 에스컬레이션 뒤에도 받아들인다 — 조용히 받지 않게 적는다.
+            data["contract_rebaselined"] = True
+            render += ("\n\n**계약이 기준과 달랐다 — 지금 계약을 05 의 새 기준으로 "
+                       "적었다** (sha256 `%s` → `%s`)." % (before[:12], after[:12]))
     st.append_event(paths, "resumed", cmd="resume", phase=pid)
     st.save(paths, s)
-    return st.envelope("resume", True, 0, s, {"phase": pid},
-                       "잠금을 풀었다. 사람의 답이 원장에 남았다.",
+    return st.envelope("resume", True, 0, s, data, render,
                        "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
 
 

@@ -758,8 +758,9 @@ def _check_vcs(root, config, report):
     remote = _git(root, "remote", "get-url", vcs["remote"])
     if remote.returncode != 0:
         report.add("VCS", "WARN",
-                   "원격 %r 가 없다. PR 단계에서 '원격을 붙이거나 로컬 커밋까지만'을 "
-                   "묻게 된다 — 하네스가 원격을 자동으로 만들지는 않는다." % vcs["remote"])
+                   "원격 %r 가 없다. PR 단계(06)가 exit 9 로 멈추고 원격을 붙일지 "
+                   "중단할지 묻는다 — 하네스가 원격을 자동으로 만들지는 않는다."
+                   % vcs["remote"])
         return
     report.add("VCS", "PASS", "base=%s · remote=%s" % (base, vcs["remote"]))
 

@@ -185,7 +185,7 @@ python scripts/pipeline/cli.py precheck --scope pr --phase 06 --run-id <id>
 python scripts/pipeline/cli.py pr --run-id <id>
 ```
 
-`pr` 이 **exit 9** 를 내면 사람의 판단이다 — 승인 요청이거나 원격 3지선다다.
+`pr` 이 **exit 9** 를 내면 사람의 판단이다 — 승인 요청이거나 원격·base 부재다.
 **선택지를 그대로 사용자에게 제시하고 네가 고르지 마라.** 승인이 오면:
 
 ```bash
