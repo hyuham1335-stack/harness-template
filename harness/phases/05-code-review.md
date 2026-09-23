@@ -233,7 +233,7 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
   싣는다 — 두 번 실으면 토큰만 든다
 - **Minor 를 고치려 들지 마라.** 이유: 수리 대상은 Critical/Major 뿐이다.
   Minor 는 보고서로 간다. **다만 다음 회차 제출에서 회계는 한다**
-  (M38) — 단조성 검사는 심각도를 가리지 않고 열린 지적 전부를 요구하고, 하나라도
+  (ADR-H025) — 단조성 검사는 심각도를 가리지 않고 열린 지적 전부를 요구하고, 하나라도
   빠지면 "조용히 증발했다"로 exit 8 이다. **수리 면제이지 회계 면제가 아니다.**
   회계할 목록은 수리 봉투가 직접 적어 준다. 제출이 내용은 그대로이고 회계 필드만
   틀려 exit 8 로 되돌아오면 메인이 그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·
@@ -249,7 +249,7 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
 |---|---|---|
 | `precheck` 브랜치 불일치 · base behind | 정책 | **exit 9 즉시 사용자 판단.** 자동 리베이스 금지 — 옮기거나 리베이스한 뒤 다시 부른다 |
 | `infra_preflight` 프로브 실패 (`on_missing: fail`) | infra | exit 10 · **카운터 미소모** · 즉시 에스컬레이션 |
-| 〃 (`on_missing: warn`) | — | exit 0 + `infra_skipped:{name}` gap · 등급 `PASS_WITH_GAPS`. **면제는 통과가 아니다** — 키 없이도 목업으로 도는 경로가 있을 때만 쓰고, 그 이유를 어댑터의 `why` 에 적는다 (M44) |
+| 〃 (`on_missing: warn`) | — | exit 0 + `infra_skipped:{name}` gap · 등급 `PASS_WITH_GAPS`. **면제는 통과가 아니다** — 키 없이도 목업으로 도는 경로가 있을 때만 쓰고, 그 이유를 어댑터의 `why` 에 적는다 (ADR-H027) |
 | 계약 부재 | — | `no_contract` 모드로 진행. `skipped_no_contract` 로 기록 |
 | 계약이 재개 사이에 변경됨 | 정책 | exit 3 + "03 부터 재실행" |
 | 리뷰어 호출 실패·타임아웃 | infra | 1회 재시도 → 실패 시 `--failed --reason` 으로 신고. `review05.status = failed` → 등급 `PASS_WITH_GAPS` |
@@ -267,9 +267,9 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
 | 제출이 내용은 그대로인데 회계 필드만 틀려 exit 8 | 기계 | `format_reject` 이벤트로 센다. 회계 필드는 메인이 고쳐 재제출해도 된다 — quote·헤딩 수·severity 는 여전히 금지 (ADR-H052) |
 
 **`review_repair.max: 2` 와 `findings_max`·`inline_max` 는 미검증 상속값이다.**
-원본 명세에서 왔고 이 리포에서 재본 적이 없다. 실측이 이 값을 검사한다.
+옛 명세(ADR-H075 삭제)에서 왔고 이 리포에서 재본 적이 없다. 실측이 이 값을 검사한다.
 
-**`loop.counter` · `loop.max` · `loop.on_exceed` 는 코드가 여기서 읽는다** (M36).
+**`loop.counter` · `loop.max` · `loop.on_exceed` 는 코드가 여기서 읽는다** (ADR-H025).
 `trace_loop` 도 같은 모양으로 읽는다 — contract-trace 선수리 루프의 상한이다 (ADR-H076).
 예전에는 카운터 이름이 코드에 박혀 있었고 상한에는 `or 2` 폴백이 있었다 —
 **폴백은 곧 새 하드코딩이다.** 지금은 선언이 없으면 exit 2 이고, 그 사실을

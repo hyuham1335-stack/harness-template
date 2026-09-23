@@ -24,7 +24,7 @@ _BACKTICK = re.compile(r"`([^`]+)`")
 _SEPARATORS = ("·", "::", "#", " > ")
 _SYMBOL = re.compile(r"[A-Za-z_][\w$]*")
 
-# 「데이터 형태」 절이 이름 붙이는 것의 형태 — **타입 아니면 상수다** (M57).
+# 「데이터 형태」 절이 이름 붙이는 것의 형태 — **타입 아니면 상수다** (ADR-H049).
 #
 # 이 절은 산문이 섞여 있어 백틱 안에 필드명(`retryAfterSeconds`)·내장
 # (`map`·`any`·`globalThis`)·경로(`src/lib/env.ts`)가 함께 온다. 형태로 거르지
@@ -139,7 +139,7 @@ def _errors(block):
 
 
 def _data_shapes(block):
-    """계약이 「데이터 형태」에 이름 붙인 타입·상수 (M57).
+    """계약이 「데이터 형태」에 이름 붙인 타입·상수 (ADR-H049).
 
     **`_errors` 와 달리 최상위 불릿만 보지 않는다.** 이 절은 상수를 불릿의
     **연속 줄**에 나열하는 것이 실물의 모양이고(P8 의 계약이 그랬다), 최상위
@@ -202,7 +202,7 @@ def test_selectors(root, config, adapter, parsed, repo_files=None):
         if not got:
             # **조용히 0경로를 기여하지 않는다.** 컨테이너는 풀렸는데 대응
             # 테스트가 없는 소스가 지금까지 `unmatched` 에 남지 않아, scoped 가
-            # 실제보다 좁게 돌고 아무도 몰랐다 (M28).
+            # 실제보다 좁게 돌고 아무도 몰랐다.
             unmatched.append({"kind": "source", "raw": src,
                               "why": "대응 테스트를 찾지 못했다"})
         for t in got:
@@ -217,7 +217,7 @@ def test_selectors(root, config, adapter, parsed, repo_files=None):
             "entrypoint_resolver": resolver,
             # 04 와 05 가 **같은 목록을 봤는지**가 사후에 보여야 한다. P6 에서
             # 04 는 추적분만, 05 는 미추적까지 봐서 같은 계약에 다른 말을 했다
-            # (M50). 지금은 같은 함수를 쓰므로 두 수가 같아야 한다.
+            #. 지금은 같은 함수를 쓰므로 두 수가 같아야 한다.
             "repo_files": len(files),
             "selected": len(paths), "test_files": len(tests),
             "selected_ratio": round(ratio, 3),
@@ -284,7 +284,7 @@ def _tests_for_source(root, src, tests, parsed=None):
     """이 소스를 검증하는 테스트 파일. **stem 일치 ∪ 내용 참조.**
 
     stem 일치만 보면 `page.tsx` → `edge-cases.test.tsx` 같은 통합 테스트가
-    빠져 **수리 루프 안에서 한 번도 안 돌고** `full` 이 뒤에서 잡는다 (M28).
+    빠져 **수리 루프 안에서 한 번도 안 돌고** `full` 이 뒤에서 잡는다.
 
     내용 참조는 소스의 stem 을 **경로 형태로** 찾는다(`./match`·`/match'`).
     stem 을 그냥 포함으로 보면 `match` 가 `mismatch.test.ts` 를 끌고 오고,

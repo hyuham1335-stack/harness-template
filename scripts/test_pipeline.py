@@ -160,7 +160,7 @@ class TestEnvelope:
         env = st.envelope("gate", False, 4, s, {}, "", None)
         got = env["state_summary"]["counters"]["repair"]
         assert (got["used"], got["max"]) == (1, 3), got
-        # 소모 사유가 상태에 함께 있다 (M47) — 봉투가 그것을 지우지 않는다.
+        # 소모 사유가 상태에 함께 있다 (ADR-H029) — 봉투가 그것을 지우지 않는다.
         assert [x["reason"] for x in got["spent"]] == ["gate_failure"], got
         assert env["state_summary"]["escalated"] is False
         assert env["run_id"] == s["run_id"]
@@ -280,7 +280,7 @@ class TestPhaseDurations:
 
     `report.py` 가 여섯 런에 걸쳐 "소요 시간은 미측정이다" 를 적었는데,
     08 의 결정론 칸(옛 명세)은 페이즈별 소요를 **이미 요구했다.**
-    M56 과 같은 모양이다 — 선언이 있는데 코드가 안 하는 자리다.
+    ADR-H025 가 금지한 모양이다 — 선언이 있는데 코드가 안 하는 자리다.
 
     **기준은 `phase_enter` → `phase_pass` 짝이 아니라 이벤트 구간 분할이다.**
     P8 실측이 그 이유다: 02 의 Critical 이 01 로 되돌렸을 때 되돌아간 01 에
@@ -453,10 +453,10 @@ class TestFingerprint:
         assert st.fingerprint_matches(a, b) is False, \
             "다른 방법으로 잰 값이 우연히 같아 '안 바뀌었다'가 되면 안 된다"
 
-    # ── M25. 지문은 커밋이 아니라 내용에 매달린다.
+    # ── ADR-H016. 지문은 커밋이 아니라 내용에 매달린다.
 
     def test_커밋해도_지문이_같다(self, repo):
-        """**M25 의 본체다.** 06 은 PR diff 를 위해 커밋을 요구한다. HEAD 를
+        """**ADR-H016 의 본체다.** 06 은 PR diff 를 위해 커밋을 요구한다. HEAD 를
         해시에 넣으면 그 커밋이 04 영수증을 반드시 낡게 만든다 — 바이트가
         하나도 안 바뀌었는데도."""
         config = harness._read_json(repo / "harness/config.json")
@@ -496,7 +496,7 @@ class TestFingerprint:
 
     def test_삭제도_지문을_바꾸고_커밋_전후가_같다(self, repo):
         """삭제는 변경이다. 그리고 그 삭제를 커밋해도 값은 그대로여야 한다 —
-        아니면 M25 가 삭제라는 형태로 되살아난다."""
+        아니면 ADR-H016 이 닫은 결함이 삭제라는 형태로 되살아난다."""
         config = harness._read_json(repo / "harness/config.json")
         before = st.fingerprint(repo, config)
         (repo / "src" / "lib" / "match.ts").unlink()
@@ -508,7 +508,7 @@ class TestFingerprint:
 
     def test_소유_범위_밖의_커밋은_지문을_바꾸지_않는다(self, repo):
         """`test_change_outside_role_scope_is_ignored` 의 커밋 판이다.
-        워크트리 편집은 무시하면서 그 편집을 커밋하면 무효가 되던 것이 M25."""
+        워크트리 편집은 무시하면서 그 편집을 커밋하면 무효가 되던 것이 ADR-H016 이 닫은 결함이다."""
         config = harness._read_json(repo / "harness/config.json")
         before = st.fingerprint(repo, config)
         (repo / "CLAUDE.md").write_text("# 가드레일\n추가 줄\n", encoding="utf-8")
@@ -539,7 +539,7 @@ class TestCounters:
         assert st.counter_inc(s, "repair", 2, "gate_failure") == (2, 2, True)
 
 class TestCounterSpendReason:
-    """예산을 **무엇에 썼는지**가 원장에 남는가 (M47).
+    """예산을 **무엇에 썼는지**가 원장에 남는가 (ADR-H029).
 
     `counter_inc` 이벤트 어휘는 `state.EVENT_KINDS` 에 처음부터 있었고, 바로
     아래 주석이 그 취지를 적는다 — "뭉치면 원장에서 다섯 라운드를 쓴 런과 세
@@ -548,7 +548,7 @@ class TestCounterSpendReason:
 
     P6 의 `events.jsonl` 에 `counter_inc` 가 **0건**인데 `review_repair` 는
     3/2 였다. 그 셋이 형식 반려로 탄 것인지 수리 실패로 탄 것인지 원장에서
-    갈리지 않는다 — 실제로는 M46 의 교착 때문에 **수리를 한 번도 시도하기
+    갈리지 않는다 — 실제로는 교착 때문에 **수리를 한 번도 시도하기
     전에** 05 에스컬레이션에 닿았다.
 
     예산 자체는 가르지 않는다. 상한을 새로 정하려면 실측이 있어야 하고
@@ -584,7 +584,7 @@ class TestCounterSpendReason:
         assert got and got[-1]["data"]["reason"] == "format_reject", got
 
     def test_이벤트가_실효_상한을_적는다(self, repo, request_file):
-        """M56 — P8 의 `events.jsonl` 은 지급(seq 44) 뒤에도 `max: 5` 를 적었다.
+        """P8 의 `events.jsonl` 은 지급(seq 44) 뒤에도 `max: 5` 를 적었다.
 
         상태는 마지막 모습이고 이벤트는 순서다. 이벤트가 선언값을 적으면
         **"라운드 7 이 어느 예산으로 돌았는가"가 원장에서 사라진다** — 그 런이
@@ -615,7 +615,7 @@ class TestCounterSpendReason:
         assert "format_reject" in cell and "review_blocking" in cell, cell
 
     def test_모든_호출처가_사유를_준다(self, repo):
-        """어휘가 있는데 코드가 안 쓰는 것이 [[ADR-H025]](M36) 의 모양이다.
+        """어휘가 있는데 코드가 안 쓰는 것이 [[ADR-H025]] 의 모양이다.
 
         P6 의 `events.jsonl` 은 `counter_inc` 0건이었다 — 여섯 호출처 중
         하나만 이벤트를 냈기 때문이다.
@@ -733,7 +733,7 @@ class TestCounterExceededIsConsumed:
             assert unpacked or "exceeded 무시" in around, text[i - 160:i + 120]
 
 class TestModelCallBudget:
-    """M22 — 선언만 되고 아무도 세지 않던 예산.
+    """ADR-H014 — 선언만 되고 아무도 세지 않던 예산.
 
     P1 은 서브에이전트 10회를 태우고도 봉투에 "0/24" 를 찍었다. 지금은 세되
     **정지하지 않는다** — `max` 는 보고서용 숫자다 (ADR-H075).
@@ -787,7 +787,7 @@ class TestModelCallBudget:
         assert after["budget"]["model_calls"]["total"] == 1
 
     def test_제출은_세지_않는다(self, run01):
-        """제출 기준은 두 방향으로 틀렸다 (M26) — 이제 지시만 센다.
+        """제출 기준은 두 방향으로 틀렸다 (ADR-H020) — 이제 지시만 센다.
 
         01 이 리뷰어 하나로 줄어(ADR-H045) 그 리뷰 제출은 항상 라운드를
         완결시켜 다음 지시(2라운드 속행 또는 02 로의 전이)를 낸다 — 그 지시가
@@ -961,7 +961,7 @@ class TestLintPhases:
         _rewrite(phases / "01-plan.md", lambda f: f.__setitem__("on_success", "00-nope"))
         assert _fails(_lint(repo), "on_success")
 
-    # ── M24. `done` 은 깨진 포인터가 아니라 종단이다.
+    # ── ADR-H016. `done` 은 깨진 포인터가 아니라 종단이다.
 
     def test_done_은_전이_대상이_없어도_FAIL_이_아니다(self, repo, phases):
         findings = _lint(repo)
@@ -970,7 +970,7 @@ class TestLintPhases:
                 if f["rule"] == "on_success" and f["status"] == "WARN"] == []
 
     def test_on_success_가_없으면_FAIL(self, repo, phases):
-        """**M24 의 lint 층 회귀.** 마지막 페이즈가 아무것도 안 가리키면
+        """**ADR-H016 의 lint 층 회귀.** 마지막 페이즈가 아무것도 안 가리키면
         런을 닫는 자리가 코드 어디에도 생기지 않는다."""
         _rewrite(phases / "08-report.md", lambda f: f.pop("on_success", None))
         assert _fails(_lint(repo), "on_success")
@@ -1014,7 +1014,7 @@ class TestLintPhases:
         assert _fails(_lint(repo), "sections")
 
     def test_unbalanced_code_fence_is_rejected(self, repo, phases):
-        """안 닫힌 펜스는 절 하나가 파일 끝까지 삼키게 한다 (M45)."""
+        """안 닫힌 펜스는 절 하나가 파일 끝까지 삼키게 한다."""
         p = phases / "03-implement.md"
         tail = "\n```\n열고 안 닫는다\n"
         p.write_text(p.read_text(encoding="utf-8") + tail, encoding="utf-8")
@@ -1091,7 +1091,7 @@ class TestLintPhases:
 class TestSubmitCheckDeclarationsAreRead:
     """ADR-H073 — `submit_checks[].id` 가 실재하는 구현을 가리킨다.
 
-    **ADR-H025 의 함정이 여기서도 그대로다** (M36): 지금 동작이 선언값과
+    **ADR-H025 의 함정이 여기서도 그대로다**: 지금 동작이 선언값과
     우연히 일치하므로 "레지스트리가 있다" 만 보는 단언은 **되돌려도 초록이다.**
     여기 있는 것은 전부 **선언을 바꾸고 lint 가 무는가**를 묻는 변이 테스트이고,
     마지막 하나는 **레지스트리의 종료 코드를 실제 런의 exit 와 대조한다** —
@@ -1107,7 +1107,7 @@ class TestSubmitCheckDeclarationsAreRead:
         assert unknown == [], unknown
 
     def test_every_registry_impl_resolves(self):
-        """**반-M36 의 핵심.** 레지스트리가 기계의 소재를 거짓말할 수 없다.
+        """**ADR-H025 의 핵심.** 레지스트리가 기계의 소재를 거짓말할 수 없다.
 
         호출하지는 않는다 — 해석만 한다. 구현 함수의 이름이 바뀌거나 사라지면
         여기서 문다. 「그 선언이 그 런에서 실제로 돌았다」는 여전히 증명하지
@@ -1133,7 +1133,7 @@ class TestSubmitCheckDeclarationsAreRead:
         assert _fails(_lint(repo), "submit_check_impl")
 
     def test_on_fail_must_equal_the_registry_exit(self, repo, phases):
-        """「페이즈는 4 라는데 코드는 8 을 낸다」를 잡는다 — M36 의 드리프트."""
+        """「페이즈는 4 라는데 코드는 8 을 낸다」를 잡는다 — ADR-H025 의 드리프트."""
         _rewrite(phases / "06-pr.md",
                  lambda f: f["submit_checks"].__setitem__(
                      0, dict(f["submit_checks"][0], on_fail=4)))
@@ -1149,7 +1149,7 @@ class TestSubmitCheckDeclarationsAreRead:
             self, repo, phases, monkeypatch):
         """WARN 이지 FAIL 이 아니다.
 
-        M36 이 금지한 것은 **어휘가 기계를 앞서는 것** 한 방향이다. 기계를 먼저
+        ADR-H025 가 금지한 것은 **어휘가 기계를 앞서는 것** 한 방향이다. 기계를 먼저
         만들고 선언을 나중에 다는 것은 정당한 순서라 lint 가 막지 않는다 —
         `impl` 해석이 통과한 이상 기계는 실재한다.
         """
@@ -1168,7 +1168,7 @@ class TestSubmitCheckDeclarationsAreRead:
 
         리터럴 `8` 과 비교하지 않는다 — **레지스트리 값과** 비교한다. 그래야
         `check_vocabulary` 가 바뀌면 lint 가 아니라 여기가 먼저 문다. 이것이
-        없으면 레지스트리는 페이즈 파일과 **독립된 두 번째 출처**가 되고, M36 이
+        없으면 레지스트리는 페이즈 파일과 **독립된 두 번째 출처**가 되고, ADR-H025 가
         이름한 결함이 한 층 위로 이사할 뿐이다.
         """
         repo, paths, s = run01
@@ -1190,7 +1190,7 @@ UNITS_DOC = """## 유닛
 
 
 class TestContractUnits:
-    """M23 — 계약 파서가 중첩 불릿을 유닛으로 세고, 템플릿 자신이 그 형태다.
+    """ADR-H014 — 계약 파서가 중첩 불릿을 유닛으로 세고, 템플릿 자신이 그 형태다.
 
     P1 에서 이것이 유닛 19개·unmatched 15건을 만들었고 화면 층 테스트가 스코프
     선택에서 빠졌다.
@@ -1248,7 +1248,7 @@ class TestContractUnits:
 
 
 class TestFencedHeadingsAreNotSectionBoundaries:
-    """코드 블록 안의 `## ` 가 절을 자르지 않는가 (M45).
+    """코드 블록 안의 `## ` 가 절을 자르지 않는가.
 
     페이즈 파일의 역할 프롬프트 템플릿은 ` ``` ` 블록 안에 `## 네 소유 경계`
     같은 줄을 담는다. `_section` 이 그것을 다음 절의 시작으로 보고 **여는 펜스
@@ -1261,7 +1261,7 @@ class TestFencedHeadingsAreNotSectionBoundaries:
 
     실측(수정 전): 05 「제출 형식」 78줄 중 22줄 · 01 「제출 형식」 60줄 중
     16줄이 잘렸다. 「제출 형식」은 리뷰어에게 제출 규약을 알려 주는 절이고,
-    M20·M37·M38 이 전부 "봉투가 기계 검사를 다 말하지 않아 제출이 반려됐다"는
+    ADR-H014·ADR-H025 의 결함이 전부 "봉투가 기계 검사를 다 말하지 않아 제출이 반려됐다"는
     같은 계열이었다.
     """
 
@@ -1516,10 +1516,10 @@ class TestReviewConvergence:
                              reviewer="plan", round_=1)
         assert env["exit"] == 8
 
-    # ── M21: 단조성 검사가 세 방향으로 샜다
+    # ── ADR-H014: 단조성 검사가 세 방향으로 샜다
 
     def test_raw_without_severity_headings_is_rejected(self, run01):
-        """M20 — 이 규칙이 코드에만 있고 문서에 없어서 P1 의 제출 6건 전부에
+        """ADR-H014 — 이 규칙이 코드에만 있고 문서에 없어서 P1 의 제출 6건 전부에
         메인이 사후에 헤딩을 붙였다. 원문 대조라는 검사의 취지와 어긋난다."""
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
@@ -1646,7 +1646,7 @@ FIVE_UNIT_CONTRACT = """# 계약: 제목 유사도
 
 
 class TestLoopDeclarationsAreRead:
-    """M36 — 선언만 있고 코드가 안 읽는 설정을 잡는다.
+    """ADR-H025 — 선언만 있고 코드가 안 읽는 설정을 잡는다.
 
     **지금 동작이 선언값과 우연히 일치했다.** 그래서 "읽는지" 만 보는 단언은
     되돌려도 초록이다. 여기 있는 것은 전부 **값을 바꾸는 변이 테스트**다 —
@@ -1728,7 +1728,7 @@ class TestLoopDeclarationsAreRead:
         assert _fails(_lint(repo), "loop_max"), _lint(repo)
 
     def test_normal_상한이_없으면_폴백_없이_거부한다(self, run01):
-        """A9 — `or 5`. 04·05 가 M36 이라 부른 그 폴백이 01 에만 남아 있었다.
+        """A9 — `or 5`. 04·05 가 ADR-H025 위반이라 부른 그 폴백이 01 에만 남아 있었다.
         `max_by_profile` 에 없는 레인은 선언 없이 5라운드를 받았다."""
         repo, paths, s = run01
 
@@ -2386,7 +2386,7 @@ class TestGate:
         assert after["escalation"]["options"] == []
 
     def test_scoped_selector_is_a_path_not_a_test_name(self, gated):
-        """M16 — 이름 필터는 파일 수집을 줄이지 못한다."""
+        """ADR-H031 — 이름 필터는 파일 수집을 줄이지 못한다."""
         repo, paths, s = gated
         _report(repo)
         _gate(repo, dict(ALL_PASS))
@@ -2433,7 +2433,7 @@ class TestGate:
         assert not (after.get("counters") or {}).get("repair")
 
     def test_단일_스테이지_full_재실행이_테스트_수를_상태에_남긴다(self, gated):
-        """M55 — 수리 뒤 재게이트의 전체 회귀 값이 상태에 실려야 08·PR 본문이
+        """수리 뒤 재게이트의 전체 회귀 값이 상태에 실려야 08·PR 본문이
         마지막 코드 상태의 수를 말한다. 그 회차의 영수증과 카운터는 그대로다."""
         repo, paths, s = gated
         _report(repo, tests=1300)
@@ -2501,7 +2501,7 @@ CORE_GLOBS = [
 
 
 # 코어에 박히면 안 되는 스택 고유명사. **정본은 이 상수다** — 옛 명세(2026-09-22 삭제,
-# ADR-H075)의 §0.2 금지어 블록을 옮겼다. 늘리면 여기서 늘린다.
+# ADR-H075)의 금지어 블록을 옮겼다. 늘리면 여기서 늘린다.
 BANNED_STACK_WORDS = sorted({
     "archunit", "backend-implementer", "coderabbit", "docker", "eslint", "flyway",
     "gemini", "gradle", "jacoco", "jest", "junit", "nextjs", "postgres", "prisma",
@@ -2692,7 +2692,7 @@ class TestContractTraceErrorsAndEntrypoints:
 
 
 class TestScopeSelectorWidth:
-    """`scoped` 가 통합 테스트를 고르는가 (M28).
+    """`scoped` 가 통합 테스트를 고르는가.
 
     `_tests_for_source` 가 소스의 stem 과 **같은 stem** 인 테스트만 골라,
     이름이 다른 통합 테스트는 수리 루프에서 한 번도 안 돌고 `full` 이
@@ -2766,7 +2766,7 @@ class TestScopeSelectorWidth:
 
 
 class TestScopeSeesUntrackedFiles:
-    """04 가 03 이 방금 만든 파일을 보는가 (M50).
+    """04 가 03 이 방금 만든 파일을 보는가.
 
     `harness.list_files` 는 `git ls-files` 라 **추적 파일만** 낸다. 04 가 도는
     시점은 03 이 방금 코드를 쓴 직후이고 그 파일들은 아직 추적되지 않는다.
@@ -2995,7 +2995,7 @@ def _commit_all(repo, msg="wip"):
 
 
 class TestPrecheckScope:
-    """M40 — `scope` 를 받고 한 번도 쓰지 않았다.
+    """ADR-H028 — `scope` 를 받고 한 번도 쓰지 않았다.
 
     변경 집합이 늘 미커밋 diff 라, 06 에서 커밋 뒤에 부르면 `at_06` 이 항상
     0파일/0줄이었다 (P5 실측: `at_05` 8/91 · `at_06` 0/0). 같은 페이즈의 PR
@@ -3153,7 +3153,7 @@ class TestPrecheckBranch:
 
 
 class TestPrecheckInfra:
-    """인프라 실패는 정책 실패와 다르다 — **카운터를 소모하지 않는다** (§E9)."""
+    """인프라 실패는 정책 실패와 다르다 — **카운터를 소모하지 않는다** (ADR-H027)."""
 
     def test_env_probe_fires_only_when_the_path_is_touched(self, repo, monkeypatch):
         monkeypatch.delenv("EXAMPLE_API_KEY", raising=False)
@@ -3196,7 +3196,7 @@ class TestPrecheckInfra:
                       encoding="utf-8")
 
     def test_on_missing_warn_은_exit_10_을_내지_않는다(self, repo, monkeypatch):
-        """M44 — P4 를 죽인 기전. 키가 없어도 목업이 돌면 회귀가 안 깨진다."""
+        """ADR-H027 — P4 를 죽인 기전. 키가 없어도 목업이 돌면 회귀가 안 깨진다."""
         monkeypatch.delenv("EXAMPLE_API_KEY", raising=False)
         _branch(repo, "feat-x")
         self._touch_services(repo)
@@ -3414,7 +3414,7 @@ class TestReviewerIsolation:
 
 
 class TestReviewerAgentDocs:
-    """리뷰어 에이전트 문서와 기계가 `quote` 의 대조 대상을 같게 말해야 한다 (M51).
+    """리뷰어 에이전트 문서와 기계가 `quote` 의 대조 대상을 같게 말해야 한다.
 
     기계는 리뷰어 **자신의 `.raw.md`** 와 대조하는데(`verdict.check_review`
     가 받는 `raw_text`) 스킬 다섯은 "diff 원문의 부분문자열" 이라 적고 있었다.
@@ -3492,7 +3492,7 @@ class TestReview05Structure:
         assert len(rv.flatten(payload)) == 2
 
     def test_heading_count_must_match_findings(self, repo):
-        """M20 이 이 검사를 문서화하지 않아 생긴 결함이다. 05 는 리뷰어 수만큼 곱해진다."""
+        """ADR-H014 이전에 이 검사가 문서화되지 않아 생긴 결함이다. 05 는 리뷰어 수만큼 곱해진다."""
         got = rv.check(repo, _config(repo), _sub(), RAW_TWO, [])
         assert got["exit"] == 8
         assert any("헤딩" in e for e in got["errors"])
@@ -3556,7 +3556,7 @@ class TestReview05Merge:
 
 
 class TestReview05Status:
-    """findings 개수와 **분리한다** — §E1 이 가장 위험한 구멍이라 부른 것."""
+    """findings 개수와 **분리한다** — ADR-H017 이 가장 위험한 구멍이라 부른 것."""
 
     def test_all_ok(self, repo):
         assert rv.status(planned=3, ok=3) == "ok"
@@ -3614,7 +3614,7 @@ class TestPhase05File:
         assert future == [], future
 
     def test_실물_페이즈가_일곱이고_08_은_done_을_가리킨다(self, repo):
-        """**M24.** 08 이 아무것도 안 가리키면 런이 닫히는 자리가 없다."""
+        """**ADR-H016.** 08 이 아무것도 안 가리키면 런이 닫히는 자리가 없다."""
         loaded, broken = cli.load_phases(ROOT)
         assert broken == []
         assert sorted(loaded) == ["01-plan", "03-implement", "04-gate",
@@ -3638,7 +3638,7 @@ class TestPhase05File:
         assert bad == [], bad
 
     def test_submission_format_documents_the_raw_md_rule(self, repo):
-        """M20 의 회귀 — 페이즈 파일이 그 규칙을 실제로 적고 있는가."""
+        """ADR-H014 의 회귀 — 페이즈 파일이 그 규칙을 실제로 적고 있는가."""
         loaded, _ = cli.load_phases(ROOT)
         body = loaded["05-code-review"]["body"]
         section = cli._section(body, "## 제출 형식")
@@ -3800,7 +3800,7 @@ class TestReview05RoutingRefusesCommittedOnly:
         assert s["phases"]["05-code-review"]["planned"]
 
     def test_진짜_변경_0_은_종전대로_failed_다(self, repo, request_file, phases):
-        """커밋도 워킹트리도 비었으면 그것은 관측된 사실이고 G-4 대로 failed 다."""
+        """커밋도 워킹트리도 비었으면 그것은 관측된 사실이고 ADR-H017 대로 failed 다."""
         run_id, paths = _enter_05(repo, request_file, phases)
         env = cli.run_next(repo, run_id)
         _p, s = st.load(repo, run_id)
@@ -4086,7 +4086,7 @@ class TestRepairRendersSayLoop:
 class TestTraceRepairLoop:
     """A8 — `contract-trace` 선수리 루프에 상한이 없었다. 파이프라인에서 유일하게
     천장 없는 루프이고 반복마다 작성자 호출 1 + 재게이트 1 이다. 05 가 `trace_loop`
-    로 선언하고 코드가 그것을 읽는다 — 다른 루프와 같은 규칙(M36)."""
+    로 선언하고 코드가 그것을 읽는다 — 다른 루프와 같은 규칙(ADR-H025)."""
 
     def _critical(self, repo, request_file, phases):
         run_id, paths = _enter_05(repo, request_file, phases)
@@ -4146,7 +4146,7 @@ class TestTraceRepairLoop:
 
 
 class TestReview05Denominator:
-    """`review05.status` 의 분모는 **라우팅**이지 제출자가 아니다 (G-4).
+    """`review05.status` 의 분모는 **라우팅**이지 제출자가 아니다 (ADR-H017).
 
     지금까지 `planned or [reviewer]` / `or sorted(slot)` 가 분모를 분자에서
     유도해 비율이 구조적으로 항상 1 이었다. `degraded` 도 `failed` 도 도달
@@ -4290,14 +4290,14 @@ class TestReview05Failure:
 
 
 class TestReview05EnvelopeContract:
-    """M38 — 봉투가 기계 검사를 다 말하지 않아 제출이 반려됐다.
+    """ADR-H025 — 봉투가 기계 검사를 다 말하지 않아 제출이 반려됐다.
 
     **페이즈 파일이 아니라 `cli.py` 가 조건부로 그리는 문장**이 원인이다.
     페이즈 파일만 고치면 다음 런이 또 밟는다.
     """
 
     def test_델타_봉투가_minor_회계_의무를_말한다(self):
-        """M38 — 봉투는 "Minor 는 고치지 않는다" 만 적었다."""
+        """ADR-H025 — 봉투는 "Minor 는 고치지 않는다" 만 적었다."""
         blocking = [{"severity": "major", "target_role": "impl",
                      "title": "경계가 새고 있다"}]
         prev = [{"id": "F-9", "severity": "minor", "reviewer": "arch",
@@ -4319,7 +4319,7 @@ class TestReview05EnvelopeContract:
 
 
 class TestReview05DeltaRound:
-    """델타 재리뷰는 같은 리뷰어 하나이고(M27), 그 라운드가 G-4 를 되돌리지 않는다."""
+    """델타 재리뷰는 같은 리뷰어 하나이고(ADR-H017), 그 라운드가 `failed` 를 되돌리지 않는다."""
 
     def _ready(self, repo, request_file, phases):
         run_id, paths = _enter_05(repo, request_file, phases)
@@ -4331,7 +4331,7 @@ class TestReview05DeltaRound:
         return run_id, paths, s, node
 
     def test_status_는_델타_뒤에도_최악을_보존한다(self, repo):
-        """이 수정이 만들 수 있는 유일한 회귀를 잠근다 (M43).
+        """이 수정이 만들 수 있는 유일한 회귀를 잠근다.
 
         실적을 최댓값으로 접는다고 `status` 까지 새 값에서 유도하면 델타
         라운드가 1회차의 `failed` 를 지운다. 리뷰어가 하나라 라운드 상태는
@@ -4351,8 +4351,8 @@ class TestReview05DeltaRound:
         assert got["rounds"]["2"]["planned"] == 1, got["rounds"]
 
     # ------------------------------------------------------------------
-    # M53 — 리뷰어가 남긴 신호도 라운드를 가로질러 보존한다.
-    # 위 status(M43)와 **같은 함수의 같은 실패 모드**다: `slot`(현재 라운드
+    # 리뷰어가 남긴 신호도 라운드를 가로질러 보존한다.
+    # 위 status와 **같은 함수의 같은 실패 모드**다: `slot`(현재 라운드
     # 하나)만 읽어 델타 라운드가 덮었다. 접는 방식은 셋이 다르므로 셋을
     # 따로 잠근다 — 하나가 빨간불일 때 고칠 자리가 각각 다르다.
     # ------------------------------------------------------------------
@@ -4367,7 +4367,7 @@ class TestReview05DeltaRound:
         return subs
 
     def test_델타_라운드가_1회차_맥락_요청을_지우지_않는다(self, repo):
-        """**M53 의 정본.** P7 에서 1회차 5건이 2회차 뒤 **0** 이 됐다.
+        """P7 에서 1회차 5건이 2회차 뒤 **0** 이 됐다.
 
         리뷰어가 "그 구간이 diff 밖이라 대조하지 못했다" 고 말한 것이 조용히
         증발한다 — 단조성 검사가 findings 에는 걸리는데 이 필드에는 안 걸린다.
@@ -4386,7 +4386,7 @@ class TestReview05DeltaRound:
 
         델타 라운드는 같은 리뷰어가 같은 문장을 다시 낸다. 누적이면 「맥락 부족
         요청」이 라운드 수에 비례해 자라고, "몇 건을 못 봤나" 가 "몇 라운드
-        돌았나" 로 조용히 바뀐다 — M30 이 원장 `count` 에서 고친 그 변질이다.
+        돌았나" 로 조용히 바뀐다 — ADR-H018 이 원장 `count` 에서 고친 그 변질이다.
         """
         s, node = {}, {}
         same = "diff 밖이라 대조 못 했다"
@@ -4411,7 +4411,7 @@ class TestReview05DeltaRound:
         cli._write_review05(s, node, ["gen"], 1, [], r2, round_=2)
         assert s["review05"]["truncated"] is True, s["review05"]
 
-    # ---------------------------------------------------------------- M52
+    # ----------------------------------------------------------------
     #
     # 델타 라운드는 같은 리뷰어 하나가 돈다. 그 라운드의 제출만 보고 PR 본문의
     # 「미해결 Minor」를 내면 앞 회차의 열린 Minor 가 사람이 읽는 자리에서만
@@ -4436,7 +4436,7 @@ class TestReview05DeltaRound:
                 "need_more_context": []}
 
     def test_델타_라운드가_앞_회차의_열린_Minor_를_지우지_않는다(self, repo):
-        """M52 — P7 2회차 제출 하나만 보고 1회차의 열린 Minor 가 사라졌다."""
+        """P7 2회차 제출 하나만 보고 1회차의 열린 Minor 가 사라졌다."""
         major = self._mf("F-9", "인가 누락", "major", "AUTHZ_MISSING_RULE")
         r1 = {"gen": self._mslot([self._mf("A-1", "지적 1"),
                                   self._mf("A-2", "지적 2"), major])}
@@ -4444,7 +4444,7 @@ class TestReview05DeltaRound:
         open_ = rv.open_findings({"1": r1, "2": r2})
         titles = sorted(f["title"] for f in open_)
         assert titles == ["지적 1", "지적 2"], (
-            "마지막 라운드만 보면 0건이다 — 둘이어야 한다 (M52)")
+            "마지막 라운드만 보면 0건이다 — 둘이어야 한다")
         assert all(f["severity"] == "minor" for f in open_), open_
 
     def test_닫힌_지적은_열린_목록에_없다(self, repo):
@@ -4471,7 +4471,7 @@ class TestReview05DeltaRound:
         assert titles == ["지적"], titles
 
     def test_첫_등장의_판정이_원장과_같이_이긴다(self, repo):
-        """같은 키는 첫 등장이 이긴다 (M30).
+        """같은 키는 첫 등장이 이긴다 (ADR-H018).
 
         본문이 마지막 회차의 판정을 적으면 두 영수증이 같은 키를 두고 다른
         말을 한다 — 이 증분이 없애려는 그 어긋남을 방향만 바꿔 되살리는 것이다.
@@ -4504,7 +4504,7 @@ class TestReview05DeltaRound:
 
     def test_a_clean_delta_round_does_not_heal_the_status(
             self, repo, request_file, phases):
-        """G-4 재개봉 방지 — status 는 런 안에서 단조 비개선이다."""
+        """ADR-H017 이 닫은 구멍의 재개봉 방지 — status 는 런 안에서 단조 비개선이다."""
         run_id, paths, s, node = self._ready(repo, request_file, phases)
         node["round_status"] = {"1": "failed"}
         node["rounds_planned"] = {"2": ["gen"]}
@@ -4543,7 +4543,7 @@ class TestReview05DeltaRound:
 
     def test_실물_델타_라운드가_앞_회차의_맥락_요청을_지우지_않는다(
             self, repo, request_file, phases):
-        """P7 이 실제로 밟은 경로다 (M53).
+        """P7 이 실제로 밟은 경로다.
 
         단위 셋은 `node["rounds"]` 를 손으로 채운다. 이것은 **`record` 가 그
         자리를 실제로 채우는지**와 `_judge_05` 가 그 `node` 를 넘기는지까지
@@ -4578,7 +4578,7 @@ class TestReview05DeltaRound:
         assert "2" in (s["phases"]["05-code-review"].get("rounds") or {}), (
             "2회차가 슬롯에 안 들어갔으면 이 테스트는 아무것도 안 잰다")
         assert len(s["review05"]["need_more_context"]) == 1, (
-            "델타 라운드의 빈 배열이 1회차의 것을 지웠다 (M53)")
+            "델타 라운드의 빈 배열이 1회차의 것을 지웠다")
 
     def test_2회차가_같은_파일명을_덮어써도_1회차_findings_는_남는다(
             self, repo, request_file, phases):
@@ -4607,7 +4607,7 @@ class TestReview05DeltaRound:
 
 
 class TestPr06MinorAccounting:
-    """M52 — 「미해결 Minor」의 출처는 런 전체이지 마지막 라운드가 아니다."""
+    """「미해결 Minor」의 출처는 런 전체이지 마지막 라운드가 아니다."""
 
     def _body(self, repo, paths, s):
         return pr_mod.build_body(repo, paths, s,
@@ -4822,7 +4822,7 @@ class TestGradeSingleSource:
 
 
 class TestPrecheckSpecAlignment:
-    """§2.5 는 정책이 카운터를 소모하지 않는다고 하고, §2.3 은 exit 10 이
+    """옛 명세는 정책이 카운터를 소모하지 않는다고 하고, exit 10 이
     상태를 잠근다고 한다. 둘 다 코드와 어긋나 있었다."""
 
     def test_정책_실패는_카운터를_소모하지_않는다(self, repo):
@@ -4993,7 +4993,7 @@ class TestApprove:
         assert a["fingerprint"]["value"] == s["fingerprint"]["value"]
 
     def test_auto_도_push_pr_까지만_승인한다(self, repo, request_file, phases):
-        """06 시점의 등급은 외부 리뷰를 못 본 '예상' 이다 (§3.6)."""
+        """06 시점의 등급은 외부 리뷰를 못 본 '예상' 이다 (06-pr.md 「금지」)."""
         run_id, _paths = _enter_06(repo, request_file, phases)
         env = cli.run_approve(repo, "06", auto=True, run_id=run_id)
         assert env["exit"] == 0
@@ -5113,7 +5113,7 @@ class TestPr06Preflight:
 
 
 class TestPr06BodyTruth:
-    """M41·M42 — 본문이 파이썬 repr 을 찍고 없는 결손을 보고했다."""
+    """본문이 파이썬 repr 을 찍고 없는 결손을 보고했다."""
 
     def _body(self, repo, paths, s):
         return pr_mod.build_body(repo, paths, s,
@@ -5284,7 +5284,7 @@ class TestPr06Push:
 
     def test_non_fast_forward_는_에스컬레이션이다(self, repo, request_file,
                                                  phases, tmp_path):
-        """force-push 금지이므로 자동 해결이 없다 (§E8)."""
+        """force-push 금지이므로 자동 해결이 없다 (06-pr.md 「실패 시」)."""
         _branch(repo, "feat-x")
         run_id, _p = _enter_06(repo, request_file, phases)
         bare = _remote(repo, tmp_path)
@@ -5311,7 +5311,7 @@ class TestPr06Push:
 
 
 class TestPr06ContractLifetime:
-    """계약 삭제는 push **이후**다 (G-7).
+    """계약 삭제는 push **이후**다 (ADR-H019).
 
     실패할 수 있는 `push` 보다 먼저 지우면, push 가 실패했을 때 05 의
     `requires`(계약 파일 실재 + `must_contain`)가 안 채워져 **재개가
@@ -5344,7 +5344,7 @@ class TestPr06ContractLifetime:
 
 
 class TestPr06ContractAfterDrop:
-    """M54 — 계약이 지워진 뒤 `pr` 을 다시 돌리면 본문이 계약 절을 잃었다.
+    """계약이 지워진 뒤 `pr` 을 다시 돌리면 본문이 계약 절을 잃었다.
 
     07 수리를 PR 에 올리려면 재승인 뒤 `pr` 을 다시 돌려야 하는데(P7 이 실제로
     그랬다), 그때 `_contract_sections` 가 이미 없는 파일을 읽어 빈 문자열을
@@ -5352,7 +5352,7 @@ class TestPr06ContractAfterDrop:
     여전히 `mode: contract` 라 같은 문서의 체크리스트와 모순됐다.
 
     되살릴 원본은 이미 있다 — 삭제 직전에 `06_contract_snapshot.md` 로 옮겨
-    둔다. 새 사본을 만들지 않고 **읽는 쪽만** 만든다 (M31 · ADR-H022).
+    둔다. 새 사본을 만들지 않고 **읽는 쪽만** 만든다 (ADR-H022).
     """
 
     def _body(self, repo, paths, s):
@@ -5917,7 +5917,7 @@ class TestReport08:
                / ("%s.md" % run_id))
         assert out.exists(), "보고서 파일은 나온다"
 
-    # ── M24. 08 의 동사가 런을 닫는다.
+    # ── ADR-H016. 08 의 동사가 런을 닫는다.
 
     def test_report_가_런을_닫는다(self, repo, request_file, phases):
         run_id, paths = _enter_08(repo, request_file, phases)
@@ -6345,7 +6345,7 @@ class TestConvergenceThreshold:
 
 
 class TestInlineBudgetIsEnforced:
-    """`review.inline_max` 는 정의만 있고 아무도 안 읽었다 — 봉투가 정한다."""
+    """`review.inline_max` 는 정의만 있고 아무도 안 읽던 때가 있었다 — 지금은 봉투가 정한다."""
 
     def test_a_huge_diff_is_passed_by_path(self, repo, request_file, phases):
         run_id, paths = _enter_05(repo, request_file, phases)

@@ -9,13 +9,13 @@
 
 1. **리뷰어가 전부 실패해도 findings 는 0건이다.** 그러면 "지적이 없다"가
    "리뷰가 됐다"로 읽히고, 아무도 안 본 코드가 통과한다. 그래서 `status()` 가
-   findings 개수와 **분리된** 신호를 낸다 (§E1).
+   findings 개수와 **분리된** 신호를 낸다 (ADR-H017).
 2. **작성자는 리뷰어가 될 수 없다.** `config.roles[].agent` 와 겹치는 에이전트는
    `validate()` 가 거부한다.
 
 glob 매칭은 `harness.glob_any` 를 그대로 쓴다. 소유 판정과 라우팅이 서로 다른
 glob 엔진을 쓰면 같은 경로가 두 곳에서 다르게 읽힌다 — 이 리포가 이미 겪은
-실패다 (M11 · M17).
+실패다.
 """
 
 import sys
@@ -42,7 +42,7 @@ def agent_path(root, agent):
 def validate(root, config):
     """기동 **전에** 값싸게 잡는 것들. 반환: [오류 문자열].
 
-    런 중간에 알게 되면 앞 페이즈에 쓴 시간이 이미 낭비된 뒤다 (§E10 첫 행).
+    런 중간에 알게 되면 앞 페이즈에 쓴 시간이 이미 낭비된 뒤다.
     """
     errors = []
     reviewers = config.get("reviewers") or []
@@ -74,7 +74,7 @@ def _source_changed(config, changed, source_globs=None):
 
     판정은 `harness.owns_file` 에 맡긴다 — `owns` 와 `excludes` 를 함께 보는
     규칙이고, 그 규칙이 여기서 갈라지면 03 의 소유 검사와 05 의 라우팅이 같은
-    경로를 다르게 읽는다 (M11 · M17 이 기록한 실패다).
+    경로를 다르게 읽는다 (파일럿이 기록한 실패다).
     """
     if source_globs is not None:
         return any(harness.glob_any(source_globs, c) for c in changed)
@@ -84,7 +84,7 @@ def _source_changed(config, changed, source_globs=None):
 
 
 def status(planned, ok):
-    """`review05.status` — **findings 개수와 분리한다** (§E1).
+    """`review05.status` — **findings 개수와 분리한다** (ADR-H017).
 
     리뷰어가 전부 실패해도 findings 는 0건이다. 그 0을 "지적이 없다"로 읽으면
     아무도 리뷰하지 않은 코드가 통과한다. 그래서 "리뷰가 수행됐는가"를 별도
@@ -107,7 +107,7 @@ def worst_status(statuses):
 
     델타 재리뷰가 1명이면 그 라운드의 분모가 1 이라 깨끗한 재리뷰가
     `ok` 를 만든다. 그것을 런의 값으로 쓰면 **1라운드의 `degraded` 가
-    조용히 지워진다** — G-4 가 막으려던 구멍이 옆문으로 다시 열린다.
+    조용히 지워진다** — ADR-H017 이 막으려던 구멍이 옆문으로 다시 열린다.
     그래서 status 는 런 안에서 좋아지지 않는다.
 
     빈 목록은 `failed` 다. 라운드가 하나도 없는 것은 미수행이지 통과가 아니다.
@@ -147,7 +147,7 @@ def check(root, config, payload, raw_text, previous_open):
     errors = []
 
     # ① by_checklist 는 **0건인 체크리스트도 명시**해야 한다. 안 그러면
-    #    "안 봤다"와 "보고 아무것도 없었다"가 같은 침묵이 된다 (§E10).
+    #    "안 봤다"와 "보고 아무것도 없었다"가 같은 침묵이 된다.
     if payload.get("findings") is None:
         by = payload.get("by_checklist")
         if not isinstance(by, dict) or not by:
@@ -192,7 +192,7 @@ def check(root, config, payload, raw_text, previous_open):
     kept = findings
 
     # ④ findings 상한. 넘으면 Critical/Major 만 남기고 절단하되 **절단 사실을
-    #    남긴다** — 잘린 것이 없었던 것처럼 보이면 안 된다 (§E5).
+    #    남긴다** — 잘린 것이 없었던 것처럼 보이면 안 된다 (05-code-review.md 「절단 규칙」).
     limit = ((config.get("review") or {}).get("findings_max")
              or DEFAULT_FINDINGS_MAX)
     truncated = False
@@ -235,27 +235,27 @@ def merge(submissions):
 
 
 def open_findings(rounds):
-    """런이 끝났을 때 **아직 열린** 지적. 전원 것이고 제목이 있다 (M52).
+    """런이 끝났을 때 **아직 열린** 지적. 전원 것이고 제목이 있다.
 
     `cli._previous_open` 의 **형제**이지 확장이 아니다 — 그 함수가 답하는 것은
     *"이 리뷰어가 이번 제출에서 회계해야 할 것"* 이고 리뷰어별 필터가 붙어야
-    맞다(M21 ③: 두 리뷰어가 모두 `F-1` 을 쓰므로 id 대조를 전역으로 하면 한
+    맞다(ADR-H014: 두 리뷰어가 모두 `F-1` 을 쓰므로 id 대조를 전역으로 하면 한
     줄이 서로 다른 두 지적을 동시에 해소로 계수한다). 여기가 답하는 것은
     *"런 전체에서 무엇이 열린 채인가"* 다. **회계는 리뷰어별이고 보고는 런
     전체인데, 지금까지 보고가 회계의 경계를 물려받고 있었다** — 델타 라운드는
     설계상 한 명이므로 그 누수는 델타를 쓸 때마다 났다.
 
     원천은 `phases.05-code-review.rounds` 하나다. **파생 사본을 새로 쌓지
-    않는다** (M31 · ADR-H022) — 늘어나는 것은 같은 원본에 대한 두 번째 질문뿐이다.
+    않는다** (ADR-H022) — 늘어나는 것은 같은 원본에 대한 두 번째 질문뿐이다.
 
     접는 규칙 셋은 필드의 뜻이 정한다:
 
     - **라운드마다 따로 `merge` 한다.** 델타 리뷰어는 이전 회차의 열린 목록을
       프롬프트로 받고 그것을 회계하도록 **강제받는다** — 라운드를 가로질러
       합치면 강제된 재진술이 두 번째 관측으로 세어진다
-    - **같은 키는 첫 등장이 이긴다** (M30)
+    - **같은 키는 첫 등장이 이긴다** (ADR-H018)
     - **닫힌 것은 전 라운드 `closed` 의 합집합으로 뺀다.** 그 값은 자진 신고가
-      아니라 단조성 검사가 이미 검증한 것이다 (M29)
+      아니라 단조성 검사가 이미 검증한 것이다 (ADR-H018)
 
     severity 는 **그 회차의 판정값**이다.
     """
@@ -277,9 +277,9 @@ def open_findings(rounds):
 # --------------------------------------------------------------- 인라인 상한
 
 def inline_budget(config, diff_text):
-    """인라인으로 실을 수 있는가. 넘으면 경로 전달로 폴백한다 (§E5).
+    """인라인으로 실을 수 있는가. 넘으면 경로 전달로 폴백한다 (05-code-review.md 「절단 규칙」).
 
-    폴백했다는 **사실이 원장에 남아야 한다** — 리뷰어가 diff 를 인라인으로 못
+    폴백했다는 **사실이 봉투에 남아야 한다** — 리뷰어가 diff 를 인라인으로 못
     받은 런은 다른 런이고, 그것이 findings 품질에 영향을 준다.
     """
     limit = ((config.get("review") or {}).get("inline_max") or {})

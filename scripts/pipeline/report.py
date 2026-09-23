@@ -26,7 +26,7 @@ NARRATIVE_MIN_CHARS = 80
 NARRATIVE_REQUIRED = (("narrative", "문제"), ("narrative", "원인"),
                       ("narrative", "해결"), ("contract_gaps",))
 
-# `gaps[]` 의 어휘. **명세가 열거형으로 주지 않았다** — 문서 전체에 흩어진
+# `gaps[]` 의 어휘. **옛 명세가 열거형으로 주지 않았다** — 문서 전체에 흩어진
 # `PASS_WITH_GAPS` 유발 사유를 여기 모은 것이고, 그 사실을 적어 둔다.
 # 모아 두지 않으면 새 사유가 어휘 없이 들어가 보고서가 그것을 설명하지 못한다.
 GAP_REASONS = {
@@ -60,7 +60,7 @@ GAP_REASONS = {
 }
 
 # 등급을 내리지 않는 gap. 정확 일치 목록은 비었고 `stage_na:<id>` 접두만 남았다
-# (ADR-H047 추기). 어휘를 늘리려면 그 gap 을 내는 자리를 먼저 만든다 (M36).
+# (ADR-H047 추기). 어휘를 늘리려면 그 gap 을 내는 자리를 먼저 만든다 (ADR-H025).
 NON_DEMOTING_GAPS = ()
 
 
@@ -146,7 +146,7 @@ def _counter_cell(node):
         return None
     used, max_ = node.get("used"), node.get("max")
     cell = "%s / %s" % (used, max_) if max_ is not None else used
-    # **무엇에 썼는지가 드러나야 한다** (M47). `used` 만 적으면 "수리 2회로
+    # **무엇에 썼는지가 드러나야 한다** (ADR-H029). `used` 만 적으면 "수리 2회로
     # 안 됐다"와 "형식으로 2회 튕겼다"가 보고서에서 같은 칸이 된다 — P6 이
     # 정확히 그랬고, 실제로는 수리를 한 번도 시도하기 전에 에스컬레이션했다.
     spent = node.get("spent") or []
@@ -331,7 +331,7 @@ def build(state, data, timing=None):
           % (len(r07.get("escaped") or []), r07.get("findings"), r07.get("dup_05")))
          if r07.get("findings") is not None else None),
         # **프로파일이 리뷰어 상한을 정한다.** 그 값이 어디서 나왔는지가
-        # 보고서에 없으면 "리뷰어 1명" 이 계획인지 결함인지 갈리지 않는다 (M34).
+        # 보고서에 없으면 "리뷰어 1명" 이 계획인지 결함인지 갈리지 않는다.
         ("프로파일", _profile_cell(state.get("profile"))),
         # 메인이 코드 근거로 기각한 01 지적 수 — 기각이 잦으면 리뷰어가 아니라
         # 기각이 검토 대상이다. 근거는 `01_review_r{n}.json` 의 `false_positive` 다.

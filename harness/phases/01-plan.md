@@ -148,7 +148,7 @@
 
 **라운드 상한은 `loop.max_by_profile` 이 레인별로 정한다** (ADR-H041). 수렴 규칙이
 "열린 Critical 0건" 하나라 상한은 천장이지 경로가 아니다. `loop.counter` 와
-`loop.on_exceed` 는 코드가 실제로 읽는다 (M36) — `on_exceed` 의 어휘는 `escalate`
+`loop.on_exceed` 는 코드가 실제로 읽는다 (ADR-H025) — `on_exceed` 의 어휘는 `escalate`
 하나이고 어휘 밖 값은 `lint-phases` 와 런타임이 둘 다 거부한다. `converge` 에는
 읽히는 둘(`blocking_severities`·`focus_round_2`)만 있다 (ADR-H076).
 
