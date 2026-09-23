@@ -155,7 +155,7 @@ minor 23 · critical 0)」은 옛 `escaped_05`(16)와 원장의 07 행 전체(�
 |---|---|---|
 | 1·2·3·5 | 08 이 내는 값 그대로 | 표의 부등호 |
 | 4 | `state.phase_durations` 의 03·04 `wall_sec` 합(분) ÷ `state.precheck.at_05.lines` × 100 | ≤ 1.86 |
-| 6 | 라운드 전부의 gen `findings` 중 severity `critical` — category 와 제목 한 줄씩 | 목록을 적는다. 작성자의 논리 오류면 되돌림 조건 3 |
+| 6 | 라운드 전부의 gen `findings` 중 severity `critical` — category 와 제목 한 줄씩 | 목록을 적는다. 작성자의 논리 오류여도 기록만 한다 — 작성자가 이미 opus 다([ADR-H077](DECISIONS.md)) |
 | 7 | 08 「07 escaped」의 `dup_05=false` 중 Major+ 건수 | 1.44 를 넘으면(= 2건 이상) 되돌림 조건 4 |
 | 8 | 라운드 전부의 gen `findings` 중 `category == "TEST_MISSING_FAILURE_PATH"` **정확 일치**, 같은 `keys[].key` 는 한 번 | 12.0 이상이면 「줄지 않았다」 — 되돌림 조건 2. P2~P5 의 폭(5~15)을 결과 칸에 같이 적는다 |
 
@@ -177,8 +177,10 @@ minor 23 · critical 0)」은 옛 `escaped_05`(16)와 원장의 07 행 전체(�
 - 예측 4 가 기준 × 1.3 을 넘으면 `roles[]` 에 `test` 를 다시 넣는다(순차 test → impl).
 - 예측 8 이 기준선 대비 줄지 않으면 「블라인드 작성자의 산물」 가설이 틀린 것이다 — 백로그 29 의
   처방(`nothing_locked` 기계 검사)을 되살린다.
-- 예측 5 가 빗나가거나(04 수리 > 1회) 작성자의 논리 오류로 gen 이 Critical 을 내면 2런에서
-  `impl-writer` 의 프론트매터 한 줄(`model: sonnet` → `opus`)로 올려 두 런을 비교한다.
+- 작성자는 `claude-opus-5-5 · high` 로 시작한다 ([ADR-H077](DECISIONS.md) — 옛 조건 「sonnet 에서 시작해
+  예측 5·6 이 걸리면 opus 로 올린다」를 뒤집었다). 런 wall(예측 1)이나 사용량이 과하다고 사람이 판단하면 먼저
+  `impl-writer` 의 `effort: medium`, 그래도 과하면 `model: claude-sonnet-5` 로 내려 두 런을 비교한다 — 한 번에
+  하나만 바꾼다. 작성자 논리 오류 Critical(예측 6)은 기록만 한다.
 - 예측 7 이 초기 15런 기준선을 넘으면 리뷰어를 늘리지 말고 gen 의 「볼 것」 표에 그 관점의 행을
   더한다 — 그래도 새면 `reviewers[]` 에 둘째를 넣는다.
 
