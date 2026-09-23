@@ -1225,6 +1225,19 @@ def run_next(root, run_id=None):
         stale = _receipt_stale(root, ctx["config"], s)
         if stale:
             return _receipt_envelope("next", s, stale)
+        # **05 에서 계약은 고정이다** (ADR-H076 fix 2). 해시는 03·04·05 가 적기만
+        # 하고 아무도 대조하지 않았다 — 「바뀌었다면 멈춘다」는 산문이었다.
+        moved = _contract_moved(root, s, ctx)
+        if moved:
+            st.escalate(paths, s,
+                        "계약이 기준 뒤에 바뀌었다 (sha256 `%s` → `%s`). 05 에서 계약은 "
+                        "고정이다 — 기준은 04 전체 게이트의 계약이거나 마지막 `resume` "
+                        "시점의 계약이다. 이 변경을 받아들이면 `resume` 이 지금 계약을 새 "
+                        "기준으로 적는다. 사람의 답에 따라 계약을 더 고친다면 **`resume` "
+                        "전에** 고친다 — 뒤에 고치면 다음 `next` 가 한 번 더 멈춘다."
+                        % (moved[0][:12], moved[1][:12]),
+                        phase="05-code-review")
+            return _escalation_envelope("next", paths, s)
 
     st.set_phase_status(s, pid, "running")
     st.append_event(paths, "phase_enter", cmd="next", phase=pid)
@@ -1317,8 +1330,10 @@ def _docs_lane_source_check(root, paths, s, ctx, where, source_changed=None,
         after["applied"] = before["applied"]
     after["lane_miss"] = _note_lane_miss(paths, s, before, after, where, cmd)
     s["profile"] = after
+    # docs 런의 경로에 남은 옛 계약의 해시를 기준으로 두면 메인이 진짜 계약을
+    # 쓰는 순간 05 가 멈춘다 — 기준은 다음 `_note_contract` 가 세운다.
     s["contract"] = dict(s.get("contract") or {}, mode="contract",
-                         reason="lane_miss")
+                         reason="lane_miss", sha256=None)
     st.append_event(paths, "profile_reconfirmed", cmd=cmd, was="docs",
                     became="normal", units=None)
     st.save(paths, s)
@@ -1354,7 +1369,8 @@ def _plan_05_review(root, paths, s, ctx):
     import precheck as pc
     import review as review_mod
 
-    # 04 수리 중 계약 델타가 적용됐을 수 있다 — 해시와 버려진 줄을 다시 적는다.
+    # 해시와 버려진 줄을 적는다. 기준이 있으면 같다 — 다르면 `run_next` 가 이 앞에서
+    # 멈췄다. 기준이 없으면(lane_miss 직후) 여기서 선다 (ADR-H076 fix 2).
     noted = _note_contract(root, s, ctx)
     # **변경 집합은 `worktree` 다** (ADR-H028). 예산은 PR 전체를 재지만
     # 여기까지 넓히면 05 가 브랜치의 앞선 커밋까지 리뷰 대상에 넣는다.
@@ -2374,7 +2390,7 @@ def _note_contract(root, s, ctx):
 
     `dropped` 는 파서가 `컨테이너 · 심볼` 쌍이 아니라서 유닛으로 안 센 줄이다 —
     그 사실을 읽는 곳이 없으면 실제 계약이 유닛 셋을 흘려도 아무도 말하지
-    않는다 (P3 의 델타 D-2). 03 제출 · 04 수리 라운드 · 05 진입이 부른다.
+    않는다 (P3 의 델타 D-2). 03 제출 · 04 수리 라운드 · 05 진입 · 05 `resume` 이 부른다.
     프로파일은 건드리지 않는다 — 레인은 `init` 의 선언이다.
     """
     import contract as contract_mod
@@ -2387,6 +2403,22 @@ def _note_contract(root, s, ctx):
     s["contract"] = dict(s.get("contract") or {}, present=True, path=rel,
                          sha256=_sha256(full), dropped=parsed.get("dropped") or [])
     return {"dropped": s["contract"]["dropped"]}
+
+
+def _contract_moved(root, s, ctx):
+    """기준 해시 뒤에 계약이 바뀌었으면 (기준, 지금). 아니면 None.
+
+    기준이 없으면(`no_contract` · 아직 안 적힘 · lane_miss 로 비움) 대조하지 않는다 —
+    없는 기준과 다르다는 것은 사실이 아니다.
+    """
+    node = s.get("contract") or {}
+    if node.get("mode") == "no_contract" or not node.get("sha256"):
+        return None
+    full = Path(root) / resolve("${run.contract_file}", ctx)
+    if not full.exists():
+        return None
+    now = _sha256(full)
+    return (node["sha256"], now) if now != node["sha256"] else None
 
 
 def _sha256(path):
@@ -3869,10 +3901,24 @@ def run_resume(root, ack=False, answer_file=None, run_id=None):
     pid = s.get("phase")
     if pid and st.phase_status(s, pid) == "escalated":
         st.set_phase_status(s, pid, "running")
+    data = {"phase": pid}
+    render = "잠금을 풀었다. 사람의 답이 원장에 남았다."
+    # **05 의 계약 기준은 사람이 재개한 시점의 계약이다** (ADR-H076 fix 2). 비우기만
+    # 하면 재개 뒤 첫 `next` 가 **고치기 전** 계약을 기준으로 적어, 사람의 답에 따라
+    # 고친 다음 사이클에서 한 번 더 멈춘다. 그래서 답에 따른 수정은 resume 전이다.
+    contract = s.get("contract") or {}
+    if pid == "05-code-review" and contract.get("mode") != "no_contract":
+        before = contract.get("sha256")
+        _note_contract(root, s, build_context(root, paths, s))
+        after = (s.get("contract") or {}).get("sha256")
+        if before and after and before != after:
+            # 계약과 무관한 에스컬레이션 뒤에도 받아들인다 — 조용히 받지 않게 적는다.
+            data["contract_rebaselined"] = True
+            render += ("\n\n**계약이 기준과 달랐다 — 지금 계약을 05 의 새 기준으로 "
+                       "적었다** (sha256 `%s` → `%s`)." % (before[:12], after[:12]))
     st.append_event(paths, "resumed", cmd="resume", phase=pid)
     st.save(paths, s)
-    return st.envelope("resume", True, 0, s, {"phase": pid},
-                       "잠금을 풀었다. 사람의 답이 원장에 남았다.",
+    return st.envelope("resume", True, 0, s, data, render,
                        "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
 
 
