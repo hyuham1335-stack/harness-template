@@ -4529,6 +4529,25 @@ PILOT-LOG 골격을 남은 장치 기준으로 다시 썼다. 이 ADR 이 백로
 
 *검증*: `pytest scripts/` 전부 초록 · `lint-phases`·`doctor`·`harness.py doctor` exit 0 · `grep -rn "rerun_failed_once\|assert_tests_ran\|once_after_loop\|guardrail_docs\|one_round_allowed_when\|source_inject_max_chars\|pr_template" harness .claude scripts` 0건 · `skills/general-reviewer` 는 이 파일의 역사 인용뿐.
 
+**추기 (2026-09-23 · PR 3 — 문서·색인·PILOT-LOG, C)**:
+
+*고친 것* — 사실과 다른 문장: 「8페이즈」(현재형은 7페이즈, 역사 서술은 숫자 없이) · `exit 7`(코드에 없다 — 01 라운드 상한 초과도 exit 10) · `CLAUDE.md` 의 「doctor 가 잡는다」 둘(doctor 는 `CLAUDE.md` 를 읽지 않는다 — 명령은 `runner.script_manifest` 와 대조한다) · 08 의 「지시된 모델 등급」(실제 행은 자진신고 모델) · README 소유 경계(`src/**` 전부가 아니라 다섯 하위 트리) · ROADMAP 의 `calibrate`·라우팅·규칙 원장·`verified` · pytest 6분 → 3분. 순차 실행기 잔재: `.gitignore` 의 `phases/` 네 패턴 · `main_owned_paths` 의 `"phases/**"`. 죽은 앵커: 지워진 team-spec 절 번호(`§E`·`§P`·`§2.3` 류)와 옛 PILOT-LOG 결함 번호(`M`·`G`) 약 200줄 — ADR 이 있으면 ADR 번호로, 자기 파일이 정본이면 괄호째, 대응이 없으면 삭제. 「명세」 간접 참조는 「옛 명세」.
+
+*결정*:
+1. **색인에 `대상 소멸` 을 둔다** — 덜어내기로 메커니즘이 통째로 사라진 26행. 일부만 남은 21행은 `부분 승계` 이고 비고 머리에 「소멸: …」을 적는다. **본문은 건드리지 않는다**([[ADR-H039]] 결정 1) — 색인이 읽는 방향을, 본문이 그때의 결정을 말한다.
+2. **백로그 2(b)·7·8·11·14·15 는 대상 소멸로 닫는다** — 번호는 고정이라 지우지 않는다. 19 지표표의 소멸 9행·부분 3행에 표시했다.
+3. **예측 4 의 분모를 `precheck.at_05.lines` 로 바로잡는다** — ADR-H075 의 「P5 ≈ 1.06분/100줄」은 05 패킷의 인라인 diff 줄 수(3,332)로 나눈 값이고, P2~P4 에는 그 파일이 없다. 네 런을 같은 분모로 다시 재면 중앙 1.43분/100줄, 임계(×1.3) 1.86 이다. 분자(03+04 벽시계 35.4분)는 `state.phase_durations` 로 정확히 재현됐다. 표와 되돌림 조건은 PILOT-LOG 「첫 실물런 전 예측」으로 옮겼다.
+4. **PILOT-LOG 런 절은 출처로 나눈다** — 08 이 내는 칸과 사람이 런 디렉터리에서 찾는 칸. 스테이지 실측은 08 이 내지 않는다(`04_gate_report.json` 마지막 회차만).
+
+*남은 결함* (문서 PR 이라 고치지 않았다 — PR 4 앞에 fix PR 을 따로 둔다):
+- `produces[].unless` 를 읽는 코드가 없다 — `_model_produces` 가 `owner` 만 걸러 docs 레인(`no_contract`)에서도 계약 파일·`06_pr_notes.json` 을 「쓸 파일」로 안내한다. `PRODUCES_KEYS` 에만 있는 [[ADR-H025]] 위반이다.
+- 08 이 05 의 `trace_repair` 카운터를 렌더하지 않는다(`report.py` 는 round·repair·review_repair 셋).
+- `render_packet` 이 `## 진입 조건`·`## 실패 시` 를 봉투에 싣지 않는다 — 페이즈 파일의 exit 표를 모델이 못 보고 `feature.md` 가 요약본을 따로 가진다(정책 출처 둘).
+- `.claude/settings.json` 훅이 상대 경로(`python .claude/hooks/block_dangerous.py`)다 — 세션 작업 디렉터리가 리포 루트가 아니면 훅 자체가 실패해 **모든 Bash 호출이 막힌다**(이 PR 작업 중 실측). `$CLAUDE_PROJECT_DIR` 기준 경로가 맞다.
+- `EXIT_CODES = range(12)` 는 쓰지 않는 7 을 어휘에 남긴다. 05 재게이트(`--stage loop|full`)의 스테이지 소요는 어디에도 기록되지 않는다.
+
+*검증*: `pytest scripts/` 600 passed · `lint-phases`·`doctor`·`harness.py doctor` exit 0 · `git grep -nE "§[EP][0-9]+|§[0-9]\.[0-9]|\bG-[47]\b|\bM[0-9]{1,2}\b" -- harness .claude scripts .gitignore README.md CLAUDE.md docs/harness/ROADMAP.md docs/harness/PILOT-LOG.md` 0건 · 「8페이즈」·「6분」·「지시된 모델 등급」 0건, `exit 7` 은 README 종료 코드표의 「쓰지 않습니다」 행뿐 · 색인 76행의 「지금」이 전부 어휘 안.
+
 ---
 
 ### ADR-H00N: {다음 결정}
