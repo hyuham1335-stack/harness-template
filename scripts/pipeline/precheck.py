@@ -10,11 +10,11 @@
   않는다** (정책은 소모하지 않는다). 브랜치 불일치·base behind 가 여기다.
   **자동 리베이스를 하지 않는다** — 히스토리는 사람의 것이다. 예산(파일·줄)은
   정보 행이다 — 클론 4런 중 3런이 넘는 상한은 상한이 아니라 통행료였다 (ADR-H075).
-- **exit 10** — 인프라 실패. 상태를 잠그고, **카운터를 소모하지 않는다** (§E9).
+- **exit 10** — 인프라 실패. 상태를 잠그고, **카운터를 소모하지 않는다** (ADR-H027).
   프로브가 실패한 채로 전체 회귀를 돌리면 한꺼번에 빨간불이 되고, 그것을
   코드 문제로 읽게 된다.
 
-§E13 이 **재개 시 재검사를 필수**로 두므로 이 함수는 05 진입에서 한 번,
+**재개 시 재검사가 필수**이므로 이 함수는 05 진입에서 한 번,
 06 에서 다시, 재개마다 또 불린다. 그래서 싸야 한다.
 """
 
@@ -33,7 +33,7 @@ import state as st  # noqa: E402  — `nul_split`: 지문과 같은 `-z` 파서
 
 
 # `--scope` 의 어휘. **셋째 값을 만들지 않는다** — 소비자 없는 어휘를 두는
-# 것이 M36 의 모양이다.
+# 것이 ADR-H025 가 금지한 모양이다.
 SCOPES = ("pr", "worktree")
 
 
@@ -42,7 +42,7 @@ def run(root, scope="pr", changed=None, config=None, adapter=None):
 
     `classification` 은 실패 3분류의 어휘다 — `policy` / `infra` / None.
 
-    `scope` 는 **무엇을 잴 것인가**다 (M40 · ADR-H028):
+    `scope` 는 **무엇을 잴 것인가**다 (ADR-H028):
 
     - `pr` — base 에서 워크트리까지. 커밋된 것 + 미커밋 + 새 파일. 이 검사가
       묻는 질문이 "이 PR 이 예산 안인가" 이므로 이것이 기본이다
@@ -71,9 +71,9 @@ def run(root, scope="pr", changed=None, config=None, adapter=None):
         return _result(10, checks, budget, "infra", changed,
                        counter_consumed=False, infra=infra, gaps=gaps)
     if policy_failed:
-        # **정책 실패도 카운터를 소모하지 않는다** (§2.5 의 실패 3분류).
+        # **정책 실패도 카운터를 소모하지 않는다** (각 페이즈 「실패 시」 표의 「분류」).
         # 전에는 True 를 반환했으나 그것을 읽는 코드가 없어 실제로는 아무것도
-        # 태우지 않았다 — 선언과 실제가 갈라져 있었고, 명세에 정책이 예산을
+        # 태우지 않았다 — 선언과 실제가 갈라져 있었고, 옛 명세에 정책이 예산을
         # 태워야 한다는 근거는 없다. 선언을 실제에 맞췄다.
         return _result(9, checks, budget, "policy", changed,
                        counter_consumed=False, gaps=gaps)
@@ -89,7 +89,7 @@ def _result(exit_, checks, budget, classification, changed, counter_consumed,
             "changed_count": len(changed),
             "infra_failures": infra or [],
             # 면제된 프로브. **조용히 통과시키지 않는다** — 부르는 쪽이 등급을
-            # 내리고 보고서·PR 본문이 이름으로 적는다 (§E9 · M44).
+            # 내리고 보고서·PR 본문이 이름으로 적는다 (ADR-H027).
             "gaps": gaps or [],
             "note": ("인프라 실패는 카운터를 소모하지 않는다 — 코드가 아니라 "
                      "환경의 문제이므로 재시도 예산을 태울 이유가 없다."
@@ -259,7 +259,7 @@ def _check_infra(adapter, changed, checks):
 
     안 건드린 영역의 프로브까지 요구하면 키 하나 없다고 온 파이프라인이
     멈춘다. 반대로 건드렸는데 프로브를 건너뛰면 전체 회귀가 한꺼번에
-    빨간불이 되고 그것을 코드 문제로 읽게 된다 (§E9).
+    빨간불이 되고 그것을 코드 문제로 읽게 된다 (ADR-H027).
     """
     failures, gaps = [], []
     for probe in adapter.get("infra_preflight") or []:
@@ -267,10 +267,10 @@ def _check_infra(adapter, changed, checks):
         if touched and not any(harness.glob_any(touched, c) for c in changed):
             continue
         ok, detail = _probe(probe)
-        # **M44.** "건드렸는가" 만 묻고 "키 없이도 도는가" 를 안 물으면, 목업으로
+        # **ADR-H027.** "건드렸는가" 만 묻고 "키 없이도 도는가" 를 안 물으면, 목업으로
         # 떨어지는 서비스에서 키 부재가 런을 죽인다 — P4 가 그렇게 죽었다.
-        # 다만 면제가 조용하면 그것은 면제가 아니라 구멍이다. 명세가 이미
-        # 답을 적어 뒀다(§E9): "프로브가 실패해 스킵된 검증은 통과가 아니라
+        # 다만 면제가 조용하면 그것은 면제가 아니라 구멍이다. 옛 명세가 이미
+        # 답을 적어 뒀다(ADR-H027): "프로브가 실패해 스킵된 검증은 통과가 아니라
         # 미검증이다 — PASS_WITH_GAPS + 명시."
         if not ok and (probe.get("on_missing") or "fail") == "warn":
             _add(checks, "인프라:%s" % probe.get("name"), True, "infra",

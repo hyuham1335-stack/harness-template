@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""8페이즈 feature-pipeline 의 진입점.
+"""7페이즈 feature-pipeline 의 진입점.
 
     python scripts/pipeline/cli.py <cmd> [옵션]
 
@@ -14,7 +14,7 @@
 종료 코드는 README 의 종료 코드표를 따른다:
     0 성공 · 1 내부 오류 · 2 사용법/미해결 플레이스홀더/doctor 미통과
     3 선행조건 미충족 · 4 기계 판정 실패(예산 남음) · 5 예산 소진
-    6 advance 거부(지문 stale) · 7 반복 한계·stuck · 8 제출물 위반
+    6 advance 거부(지문 stale) · 8 제출물 위반 (7 은 쓰지 않는다 — 반복 한계는 10)
     9 사용자 판단 대기(01~04 에는 없다) · 10 에스컬레이션(상태를 잠근다)
     11 런 완료
 """
@@ -71,7 +71,7 @@ LINT_RUN_ID = "20260101-0000-0000"
 LINT_SLUG = "s" * 40
 
 # 루프 선언의 어휘. **늘리려면 그 동작을 먼저 만든다** — 없는 기계를 어휘로
-# 예고하는 것이 M36 이 이름한 결함 그 자체다.
+# 예고하는 것이 ADR-H025 가 이름한 결함 그 자체다.
 LOOP_ON_EXCEED = ("escalate",)
 
 # 종료 코드의 어휘. 정본은 README 의 종료 코드표이고 여기는 그것을 코드로
@@ -79,7 +79,7 @@ LOOP_ON_EXCEED = ("escalate",)
 EXIT_CODES = tuple(range(12))
 
 # 제출 검사의 어휘와 **그 검사를 실제로 내는 자리**. `LOOP_ON_EXCEED` 와 같은
-# 규율이다 — **늘리려면 그 동작을 먼저 만든다** (M36 · ADR-H025).
+# 규율이다 — **늘리려면 그 동작을 먼저 만든다** (ADR-H025).
 #
 # `impl` 은 `"모듈:이름"` 이고 `lint-phases` 가 `_resolve_submit_impl` 로
 # **해석한다**(호출하지는 않는다). 주석이 아니라 기계가 대조하는 사실이라야
@@ -154,7 +154,7 @@ def _resolve_submit_impl(ptr):
 class ConfigDeclarationError(ValueError):
     """루프 선언이 없거나 어휘 밖이다. **기본값으로 낙하하지 않는다.**
 
-    M36: `on_exceed` 와 루프 상한이 전부
+    옛 결함 (ADR-H025): `on_exceed` 와 루프 상한이 전부
     프론트매터에만 있고 코드는 하드코딩된 값을 썼다. **지금 동작이 선언값과
     우연히 일치해서** 다섯 런 동안 아무도 눈치채지 못했고, 선언을 고치면
     조용히 무시됐다. 읽되, 읽을 것이 없으면 멈춘다 — `or` 폴백을 두면 그
@@ -235,7 +235,7 @@ DECLARATION_RENDER = """## 페이즈 선언을 읽을 수 없다
 %s
 
 **기본값으로 낙하시키지 않는다.** 낙하시키면 프론트매터를 고쳐도 조용히
-무시되고, 그것이 M36 이다."""
+무시되고, 그것이 ADR-H025 가 금지한 것이다."""
 
 
 def _declaration_envelope(cmd, s, exc):
@@ -263,7 +263,7 @@ def _headings(lines):
     """(index, line) — **펜스 밖의** `## ` 헤딩만.
 
     페이즈 파일의 역할 프롬프트 템플릿·제출 형식은 코드 블록 안에 `## 네 소유
-    경계` 같은 줄을 담는다. 그것을 헤딩으로 세면 두 곳이 동시에 망가진다 (M45):
+    경계` 같은 줄을 담는다. 그것을 헤딩으로 세면 두 곳이 동시에 망가진다:
 
     - `_section` 이 **여는 펜스 직후에서 절을 자른다.** 봉투가 소유권 표도
       제출 규약도 없이, 게다가 **닫히지 않은 펜스**를 실어 보낸다. 비는 것보다
@@ -595,11 +595,11 @@ def _pipeline_checks(root):
     out.append(_check_template_parses(root, config))
 
     # ⑤ 리뷰어. 05 가 없는 에이전트를 부르면 라운드마다 헛돌고, 그것을 알게 되는
-    #    시점은 리뷰어를 이미 띄운 뒤다. **기동 전에, 무료로 잡는다** (§E10).
+    #    시점은 리뷰어를 이미 띄운 뒤다. **기동 전에, 무료로 잡는다**.
     out.append(_check_reviewers(root, config))
 
     # ⑥ 원격과 base. 06 이 진입할 때 exit 9(3지선다)로 멈추는 것을 **기동 전에,
-    #    무료로** 알려 준다 (§P3). 여기서 막지는 않는다 — 원격 없이 로컬까지만
+    #    무료로** 알려 준다 (06-pr.md 「실패 시」). 여기서 막지는 않는다 — 원격 없이 로컬까지만
     #    가는 것도 정당한 선택이고, 그 선택은 사람의 것이다.
     out.append(_check_remote(root, config))
     return out
@@ -617,7 +617,7 @@ def _check_remote(root, config):
     if remote not in names:
         return {"name": name, "status": "WARN",
                 "message": "원격 %r 이 없다 — 06 이 exit 9 3지선다로 멈춘다. "
-                           "**자동으로 만들지 않는다** (§P3)." % remote}
+                           "**자동으로 만들지 않는다** (06-pr.md 「실패 시」)." % remote}
     v = harness._git(root, "rev-parse", "--verify", "-q",
                      "refs/remotes/%s/%s" % (remote, base))
     if v is None or v.returncode != 0:
@@ -768,7 +768,7 @@ def lint_phases(root, phases_dir=None):
 
         # 펜스가 안 닫히면 `_headings` 가 그 뒤의 헤딩을 못 보고, 절 하나가
         # 파일 끝까지 삼킨다. 봉투에서 알게 되면 이미 그 페이즈의 지시가
-        # 틀린 채로 나간 뒤다 — 런 전에 잡는 것이 싸다 (M45).
+        # 틀린 채로 나간 뒤다 — 런 전에 잡는 것이 싸다.
         if item["body"].count("```") % 2:
             add(name, "fences", "FAIL",
                 "코드 펜스(```)가 홀수다 — 안 닫힌 블록이 절 경계를 삼킨다")
@@ -842,7 +842,7 @@ def lint_phases(root, phases_dir=None):
         elif not nxt:
             add(name, "on_success", "FAIL",
                 "on_success 가 없다 — 마지막 페이즈는 `%s` 를 명시한다. "
-                "적지 않으면 런이 닫히는 자리가 코드 어디에도 생기지 않는다 (M24)"
+                "적지 않으면 런이 닫히는 자리가 코드 어디에도 생기지 않는다 (ADR-H016)"
                 % st.DONE)
         elif nxt not in loaded:
             nxt_idx = _index_prefix(nxt)
@@ -860,7 +860,7 @@ def lint_phases(root, phases_dir=None):
             "종단이 둘 이상이다: %s — 런이 닫히는 자리는 하나다"
             % ", ".join(sorted(terminals)))
 
-    # **WARN 이지 FAIL 이 아니다.** M36 이 금지한 것은 어휘가 기계를 앞서는 한
+    # **WARN 이지 FAIL 이 아니다.** ADR-H025 가 금지한 것은 어휘가 기계를 앞서는 한
     # 방향이다 — 기계를 먼저 만들고 선언을 나중에 다는 것은 정당한 순서이고,
     # `impl` 해석이 통과한 이상 그 기계는 실재한다. 여기서 막으면 그 순서가
     # lint 에 걸린다.
@@ -937,7 +937,7 @@ def _lint_submit_checks(name, front, declared, add):
         if spec is None:
             add(name, "submit_check_id", "FAIL",
                 "알 수 없는 제출 검사 id: %r — 어휘를 늘리려면 그 동작을 먼저 "
-                "만들고 `SUBMIT_CHECKS` 에 구현 자리와 함께 올린다 (M36)" % cid)
+                "만들고 `SUBMIT_CHECKS` 에 구현 자리와 함께 올린다 (ADR-H025)" % cid)
             continue
         declared.add(cid)
         if got not in EXIT_CODES:
@@ -947,7 +947,7 @@ def _lint_submit_checks(name, front, declared, add):
         elif got != spec["exit"]:
             add(name, "submit_check_exit", "FAIL",
                 "%s 의 on_fail 이 %r 인데 구현은 %r 을 낸다 (%s) — 선언과 동작이 "
-                "갈라진 채로 남는 것이 M36 이다"
+                "갈라진 채로 남는 것이 ADR-H025 가 금지한 것이다"
                 % (cid, got, spec["exit"], " · ".join(spec["impl"])))
 
 
@@ -992,7 +992,7 @@ def _lint_conditions(name, front, add):
 def _lint_loop(name, pid, front, loaded, add, key="loop"):
     """루프 선언이 **읽히는 값**인가.
 
-    M36: `on_exceed` · 상한이 프론트매터에만 있고 코드는
+    옛 결함 (ADR-H025): `on_exceed` · 상한이 프론트매터에만 있고 코드는
     하드코딩을 썼다. 이제 코드가 읽으므로, 선언이 어휘 밖이면 런 중간이 아니라
     **여기서** 안다. 검사하지 않으면 exit 2 를 런 한복판에서 만난다.
     """
@@ -1040,7 +1040,7 @@ def _lint_runner_bin(root, adapter, config, add):
 
 
 def _lint_infra_preflight(adapter, config, add):
-    """면제에는 이유가 있어야 한다 (M44).
+    """면제에는 이유가 있어야 한다 (ADR-H027).
 
     `on_missing: "warn"` 은 "키가 없어도 회귀가 돈다" 는 주장이다. 그 주장의
     근거가 없으면 다음 사람이 검증할 수 없고, 검증할 수 없는 면제는 면제가
@@ -1113,7 +1113,7 @@ def _lint_cycle(loaded, add):
 def _lint_reviewers(root, config, add):
     """에이전트 파일 실재 · 작성자 격리 · code 유니크.
 
-    **기동 전에, 무료로 잡는다** (§E10 첫 행). 05 가 없는 에이전트를 부르면 라운드
+    **기동 전에, 무료로 잡는다**. 05 가 없는 에이전트를 부르면 라운드
     마다 헛돌고, 그것을 알게 되는 시점은 리뷰어를 이미 띄운 뒤다.
     """
     import review as review_mod
@@ -1224,7 +1224,7 @@ def run_next(root, run_id=None):
                 "커밋된 변경:\n%s"
                 % (len(files), "\n".join("- `%s`" % f for f in files[:20])),
                 "python scripts/pipeline/cli.py next --run-id %s" % s["run_id"])
-    # **지시를 낸 자리에서 센다** (M26). `next` 는 같은 페이즈에서 여러 번
+    # **지시를 낸 자리에서 센다** (ADR-H020). `next` 는 같은 페이즈에서 여러 번
     # 불릴 수 있으므로 키로 멱등을 만든다.
     st.count_instructions(s, pid, _instruction_keys(s, pid, ctx, phase["front"]))
     st.save(paths, s)
@@ -1332,7 +1332,7 @@ def _plan_05_review(root, paths, s, ctx):
 
     # 04 수리 중 계약 델타가 적용됐을 수 있다 — 해시와 버려진 줄을 다시 적는다.
     noted = _note_contract(root, s, ctx)
-    # **변경 집합은 `worktree` 다** (M40 · ADR-H028). 예산은 PR 전체를 재지만
+    # **변경 집합은 `worktree` 다** (ADR-H028). 예산은 PR 전체를 재지만
     # 여기까지 넓히면 05 가 브랜치의 앞선 커밋까지 리뷰 대상에 넣는다.
     changed = pc.changed_files(root, "worktree", ctx["config"])
     profile = (s.get("profile") or {}).get("name") or "normal"
@@ -1407,9 +1407,9 @@ def _diff_text(root, changed):
 
 
 def _dedup_ordered(items):
-    """문자열 **정확 일치**로 접고 **첫 등장 순서를 지킨다** (M53).
+    """문자열 **정확 일치**로 접고 **첫 등장 순서를 지킨다**.
 
-    `reviewers_failed` 의 집합 합집합과 같은 규율인데(M43) 정렬하지 않는다 —
+    `reviewers_failed` 의 집합 합집합과 같은 규율인데 정렬하지 않는다 —
     리뷰어 코드는 이름이라 정렬해도 뜻이 안 바뀌지만 이것은 사람이 읽는
     문장이고, 순서가 "누가 먼저 무엇을 못 봤나" 를 담는다. 다듬지도 않는다
     (strip·casefold 없음): 정규화는 서로 다른 요청을 조용히 합치는
@@ -1436,7 +1436,7 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
         round_status[str(round_)] = this
     status = review_mod.worst_status(list(round_status.values()) or [this])
 
-    # **실적도 라운드를 가로질러 보존한다** (M43). 예전에는 `status` 만
+    # **실적도 라운드를 가로질러 보존한다**. 예전에는 `status` 만
     # `round_status` 로 최악을 지키고 `planned`/`ok` 는 매 라운드 덮였다.
     # 그래서 1회차에 셋이 돌아도 델타 라운드(1명)가 끝나면 `1/1` 로 적혀
     # 보고서와 승인 프롬프트가 리뷰 실적을 축소했다. 그 필드는 "리뷰가
@@ -1452,7 +1452,7 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
     seen = list(rounds.values()) or [{"planned": len(planned), "ok": ok,
                                       "failed": failed_now}]
 
-    # **리뷰어가 남긴 신호도 라운드를 가로질러 보존한다** (M53). 바로 위와
+    # **리뷰어가 남긴 신호도 라운드를 가로질러 보존한다**. 바로 위와
     # 같은 이유이고 **원인도 같은 블록에 있었다** — 아래 셋이 `slot`(현재
     # 라운드 하나)만 읽어 델타 라운드의 1명이 덮었다. P7 에서 1회차 리뷰어
     # 셋이 쌓은 `need_more_context` 5건이 2회차 `arch` 의 빈 배열에 **0** 이
@@ -1460,14 +1460,14 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
     # findings 에는 걸리는데 이 셋에는 안 걸린다.
     #
     # 접는 원천은 `node["rounds"]` 다. **파생 사본을 새로 쌓지 않는다**
-    # (M31 · ADR-H022). `round_reviewers` 를 따로 만든 것은 `planned` 가
+    # (ADR-H022). `round_reviewers` 를 따로 만든 것은 `planned` 가
     # 인자라 슬롯에서 유도할 수 없었기 때문이고, 이 셋은 제출 자체에 있어
     # 원본에서 그대로 나온다. `slot` 은 `node["rounds"][str(round_)]` 와
     # **같은 객체**이므로 이중 계수가 아니고, `rounds` 가 없을 때만(리뷰어
     # 0명 경로, cli.py 의 `_write_review05(..., slot={})`) `slot` 으로
     # 낙하한다.
     #
-    # 접는 방식이 셋 다 다르다 — 근거는 M43·M53 (DECISIONS.md) 이다.
+    # 접는 방식이 셋 다 다르다.
     subs = [v for r in (node.get("rounds") or {}).values() for v in r.values()]
     subs = subs or list(slot.values())
 
@@ -1477,8 +1477,8 @@ def _write_review05(s, node, planned, ok, merged, slot, round_=None):
         "round_status": dict(round_status),
         # `max` 다. `status` 가 "런 안에서 좋아지지 않는다" 이므로 실적은
         # 대칭으로 "런 안에서 줄지 않는다" 여야 한다. 그리고 **파생 수 하나로
-        # 덮지 않고 `rounds` 를 통째로 남긴다** — M31 이 회차 기록을 정수로
-        # 덮은 손실이었다 (ADR-H022).
+        # 덮지 않고 `rounds` 를 통째로 남긴다** — 회차 기록을 정수로
+        # 덮은 손실이 있었다 (ADR-H022).
         "rounds": dict(rounds),
         "reviewers_planned": max(r["planned"] for r in seen),
         "reviewers_ok": max(r["ok"] for r in seen),
@@ -1599,7 +1599,7 @@ def render_packet(root, phase, ctx, s, checks=None):
             parts.append(rv_render)
     if pid == "07-pr-review":
         # 07 이 05 와 같은 결함에 다른 이름을 붙이면 새 것으로 세어진다.
-        # 목록을 봉투가 직접 준다 — 모델이 재구성하면 그 재구성이 곧 결함이다 (M48).
+        # 목록을 봉투가 직접 준다 — 모델이 재구성하면 그 재구성이 곧 결함이다 (ADR-H030).
         parts.append(_keys_from_05_render(_keys_from_05(s)))
     warns = [c for c in (checks or []) if c.get("warn")]
     if warns:
@@ -1667,7 +1667,7 @@ def render_header(config, s):
 
 
 def _section(body, heading):
-    """절 하나를 통째로. **경계 판정은 `_headings` 하나뿐이다** (M45)."""
+    """절 하나를 통째로. **경계 판정은 `_headings` 하나뿐이다**."""
     lines = body.splitlines()
     heads = _headings(lines)
     start = next((i for i, l in heads if l.strip() == heading), None)
@@ -1800,7 +1800,7 @@ def run_record(root, phase, file, reviewer=None, round_=None, run_id=None,
     if handler is None:
         return st.envelope("record", False, 2, s, {"phase": pid},
                            "`%s` 의 제출 처리는 아직 구현되지 않았다." % pid, None)
-    # **제출을 세지 않는다** (M26). 계수는 `next`·`gate` 가 기동을
+    # **제출을 세지 않는다** (ADR-H020). 계수는 `next`·`gate` 가 기동을
     # 지시하는 자리에서 일어난다 — `_instruction_keys` 를 보라.
     try:
         env = handler(root, paths, s, phase_item, ctx, Path(file), reviewer,
@@ -1845,7 +1845,7 @@ def _instruction_keys(s, pid, ctx, front=None):
         return ["05:r%d:%s" % (r, c) for c in planned]
     if pid == "07-pr-review":
         # `/code-review` 1회. 스킬 호출이라 `record --reviewer` 를 남기지 않는다 —
-        # 지시 기준으로 세야 표본에 들어온다 (M26).
+        # 지시 기준으로 세야 표본에 들어온다 (ADR-H020).
         return ["07:code-review"]
     return []
 
@@ -2060,11 +2060,11 @@ def _previous_open(rounds, round_, reviewer=None):
 
     닫힌 것은 뺀다. 안 빼면 3라운드 제출이 1라운드에서 이미 해소된 지적까지
     다시 적어야 통과하고, 그 목록이 리뷰어 프롬프트에 실리므로 **접두부가
-    라운드마다 자란다** (M21 ②).
+    라운드마다 자란다** (ADR-H014).
 
     `reviewer` 를 주면 그 리뷰어가 낸 것만 돌려준다. 두 리뷰어가 모두 `F-1` 을
     쓰므로 id 대조를 전역으로 하면 한 줄이 서로 다른 두 지적을 동시에
-    해소로 계수한다 (M21 ③).
+    해소로 계수한다 (ADR-H014).
     """
     open_, closed = {}, set()
     for rn in sorted(rounds, key=int):
@@ -2129,7 +2129,7 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
     ok, reason = verdict.converged(subs, blocking)
 
     profile = (s.get("profile") or {}).get("name") or "normal"
-    # 선언이 없으면 exit 2 다 — `or 5` 폴백은 곧 새 하드코딩이다 (M36).
+    # 선언이 없으면 exit 2 다 — `or 5` 폴백은 곧 새 하드코딩이다 (ADR-H025).
     max_rounds = _loop_max(front, profile)
     if profile != "normal" and \
             ((front.get("loop") or {}).get("max_by_profile") or {}).get(profile):
@@ -2147,7 +2147,7 @@ def _judge_round(root, paths, s, phase_item, ctx, round_, slot, rounds):
                        "converged", paths=paths)
         return _advance_to_next(root, paths, s, phase_item, ctx)
 
-    # **봉투는 실효 상한을 말해야 한다** (M56) — 사람이 그 숫자로 판단한다.
+    # **봉투는 실효 상한을 말해야 한다** — 사람이 그 숫자로 판단한다.
     used, max_eff, exceeded = st.counter_inc(
         s, _loop_counter(front), max_rounds, "not_converged", paths=paths)
     options = ["이대로 진행한다(미해결 지적을 안고 간다)",
@@ -2350,7 +2350,7 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
 
     **findings 개수와 "리뷰가 수행됐는가"를 분리한다** — 리뷰어가 전부 실패해도
     findings 는 0건이고, 그 0을 "지적이 없다"로 읽으면 아무도 보지 않은 코드가
-    통과한다 (§E1).
+    통과한다 (ADR-H017).
     """
     import review as review_mod
 
@@ -2527,7 +2527,7 @@ def _planned_for_round(node, round_):
     """이 라운드가 기다리는 리뷰어. 1라운드는 전원, 델타는 지목된 1명이다.
 
     **`or` 로 낙하하지 않는다** — 빈 리스트는 "모른다" 가 아니라 "라우팅이
-    아무도 안 골랐다" 는 관측된 사실이고, 그것이 기본값에 삼켜지는 것이 G-4 다.
+    아무도 안 골랐다" 는 관측된 사실이고, 그것이 기본값에 삼켜지는 것이 ADR-H017 이 막은 결함이다.
     """
     by_round = node.get("rounds_planned") or {}
     if str(round_) in by_round:
@@ -2662,7 +2662,7 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
                         phase="05-code-review")
             return _escalation_envelope("record", paths, s)
         # 다음 회차에 델타가 회계해야 할 목록이다. `record` 가 같은 인자로
-        # 부르는 함수이므로 봉투와 검사가 같은 것을 본다 (M38).
+        # 부르는 함수이므로 봉투와 검사가 같은 것을 본다 (ADR-H025).
         prev_open = _previous_open(node.get("rounds") or {}, round_ + 1, delta)
         # 수리 배정도 기동 지시다 — 04 와 대칭으로 작성자마다 센다 (ADR-H064).
         repair_keys = ["05:r%d:repair:%s" % (used, r) for r in
@@ -2688,7 +2688,7 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
     if delta:
         lines += ["수리 뒤 **델타 재리뷰는 `%s` 한 명**이다 — 그 한 명이 깨끗해도 "
                   "앞선 라운드의 `degraded`·`failed` 는 지워지지 않는다." % delta, ""]
-    # **M38.** 수리 면제와 회계 면제는 다르다. `verdict.check_review` 는
+    # **ADR-H025.** 수리 면제와 회계 면제는 다르다. `verdict.check_review` 는
     # 심각도를 가리지 않고 열린 지적 전부를 회계하라 요구하고, 하나라도 빠지면
     # "조용히 증발했다" 로 exit 8 을 낸다. 봉투가 그 의무를 안 적어 P5 가
     # 제출 1회를 여기서 잃었다.
@@ -2732,7 +2732,7 @@ CODE_REVIEW_STATES = ("done", "skipped")
 def _record_07(root, paths, s, phase_item, ctx, file, reviewer, round_):
     """07 제출 — `/code-review` 1회의 결과를 받고 **05 가 놓친 것**을 센다.
 
-    **PR 이 닫혔거나 머지됐으면 아무것도 하지 않고 정상 종료한다** (§E8).
+    **PR 이 닫혔거나 머지됐으면 아무것도 하지 않고 정상 종료한다** (06-pr.md 「실패 시」).
     판정은 기록과 등급뿐이다 — Critical/Major 가 새로 나와도 수리 루프를
     돌리지 않고 사람에게 넘긴다. `dup_05` 는 메인의 선언이고, 기계는 그 키가
     05 의 목록(`_keys_from_05`)에 있는지만 본다.
@@ -2863,7 +2863,7 @@ def _record_06(root, paths, s, phase_item, ctx, file, reviewer, round_):
 
 
 # 제출로 닫지 않는 페이즈. **각자의 동사가 닫는다** — "미구현" 이라고 말하면
-# 실제로는 구현돼 있는데 없는 것처럼 읽힌다 (M24).
+# 실제로는 구현돼 있는데 없는 것처럼 읽힌다 (ADR-H016).
 _CLOSED_BY = {"04-gate": "gate --phase 04",
               "08-report": "report --out <경로>"}
 
@@ -2944,8 +2944,8 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
 
     if only_stage:
         # 단일 스테이지는 카운터를 소모하지 않고 리포트를 덮어쓰지 않는다.
-        # **`tests` 는 예외다** (M55). 수리 뒤 `--stage scoped` → 전체 회귀
-        # 1회는 정본이 선언한 정상 경로인데(§3.5), 그 회귀의 값이 상태에 안
+        # **`tests` 는 예외다**. 수리 뒤 `--stage scoped` → 전체 회귀
+        # 1회는 정본이 선언한 정상 경로인데(ADR-H076), 그 회귀의 값이 상태에 안
         # 실려 08 보고서·PR 체크리스트·세션 원장 셋이 **마지막 코드 상태가
         # 아닌 수**를 증언했다. 그 셋은 전부 `state.tests` 를 읽는다.
         #
@@ -3113,7 +3113,7 @@ def cmd_precheck(root, args):
 
 
 def run_precheck(root, scope="pr", run_id=None, phase="05"):
-    """05 진입과 06 에서 각 1회, 그리고 **재개마다** 다시 돈다 (§E13).
+    """05 진입과 06 에서 각 1회, 그리고 **재개마다** 다시 돈다.
 
     런 없이도 돈다 — 무료 검사의 요점이 "시작하기 전에 안다"이므로 런을
     만들어야만 부를 수 있으면 그 값이 절반이 된다.
@@ -3129,8 +3129,8 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
     got = pc.run(root, scope=scope)
 
     if s is not None:
-        # 명세의 state 스키마가 `precheck.at_05` 와 `at_06` 을 나란히 둔다 —
-        # 같은 검사가 두 시점에 돌고 **그 사이에 값이 변하기 때문**이다 (§E13).
+        # 옛 명세의 state 스키마가 `precheck.at_05` 와 `at_06` 을 나란히 둔다 —
+        # 같은 검사가 두 시점에 돌고 **그 사이에 값이 변하기 때문**이다.
         # 한 칸에 덮어쓰면 06 이 05 의 예산을 지우고, 무엇이 언제 참이었는지
         # 보고서가 말할 수 없게 된다.
         slot = {"files": got["budget"]["files"], "lines": got["budget"]["lines"],
@@ -3140,9 +3140,9 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
         s.setdefault("phases", {}).setdefault(pid, {})["precheck"] = {
             "exit": got["exit"], "classification": got["classification"],
             "budget": got["budget"]}
-        # **면제된 프로브는 등급이 치른다** (M44 · §E9). 어휘는 이미 있었고
+        # **면제된 프로브는 등급이 치른다** (ADR-H027). 어휘는 이미 있었고
         # 소비자(`pr.build_body`·`report.GAP_REASONS`)도 있었는데 **쓰는 코드가
-        # 없었다** — 선언만 있고 코드가 안 읽는 M36 과 같은 모양이다.
+        # 없었다** — 선언만 있고 코드가 안 읽는, ADR-H025 가 금지한 모양이다.
         # `NON_DEMOTING_GAPS` 는 이름만 남기고 등급은 그대로다
         # — 사람이 할 일이 밀렸다는 표시이지 이 런의 관측 결손이 아니다 (ADR-H047).
         import report as rep
@@ -3158,7 +3158,7 @@ def run_precheck(root, scope="pr", run_id=None, phase="05"):
         st.save(paths, s)
 
         if got["exit"] == 10:
-            # exit 10 은 **상태를 잠근다** (§2.3). 전에는 잠근다고 적어 두고
+            # exit 10 은 **상태를 잠근다** (README 「종료 코드」). 전에는 잠근다고 적어 두고
             # 실제로는 잠그지 않아, 인프라가 깨진 채로 다음 명령이 그냥 돌았다.
             st.escalate(paths, s, "인프라 선행 조건 실패 — precheck",
                         options=[c["message"] for c in got["checks"]
@@ -3194,7 +3194,7 @@ def _precheck_render(got):
     if got["exit"] == 0:
         lines = ["`precheck` 통과. 파일 %d · 줄 %d — 브랜치·base·인프라가 전부 맞다."
                  % (got["budget"]["files"], got["budget"]["lines"])]
-        # **면제를 조용히 넘기지 않는다** (M44). "전부 맞다" 로만 적으면
+        # **면제를 조용히 넘기지 않는다** (ADR-H027). "전부 맞다" 로만 적으면
         # 면제가 통과와 구분되지 않는다.
         for gap in got.get("gaps") or []:
             lines += ["", "**면제된 프로브가 있다: `%s`.** 통과가 아니라 "
@@ -3233,7 +3233,7 @@ def run_approve(root, phase="06", revoke=False, auto=False, run_id=None):
     계속 유효해 보인다. 06 이 push 직전에 이 지문을 다시 보고 어긋나면
     exit 6 으로 재승인을 요구한다.
 
-    `--auto` 의 범위는 **push + PR 생성까지**다 (§3.6). 06 시점의 등급은 외부
+    `--auto` 의 범위는 **push + PR 생성까지**다 (06-pr.md 「금지」). 06 시점의 등급은 외부
     리뷰를 아직 못 본 "예상" 이므로, 07 의 코멘트 게시는 등급을 재확인한 뒤다.
     """
     root = Path(root)
@@ -3325,7 +3325,7 @@ def run_report(root, out=None, run_id=None):
 
     if s.get("grade") == st.GRADES[2]:
         # 에스컬레이션으로 멈춘 런은 ESCALATION.md 가 보고서다. 그 위에
-        # 성공한 것 같은 문서를 얹지 않는다 (§E12).
+        # 성공한 것 같은 문서를 얹지 않는다 (08-report.md 「진입 조건」).
         return st.envelope("report", False, 3, s, {"grade": s.get("grade")},
                            "\n".join([
                                "## 08 을 돌리지 않는다", "",
@@ -3437,9 +3437,9 @@ def cmd_pr(root, args):
 def run_pr(root, run_id=None):
     """06 의 6단계. **비용 오름차순이고 첫 실패에서 멈춘다.**
 
-    명세는 06 의 절차를 페이즈로만 기술하고 어느 커맨드가 그것을 집행하는지
+    옛 명세는 06 의 절차를 페이즈로만 기술하고 어느 커맨드가 그것을 집행하는지
     정하지 않았다 (CLI 표에 `pr` 행이 없다). `approve` 가 별도 커맨드인 것과
-    같은 형태로 여기 둔다 — **명세 미규정이고, 그렇게 표기한다.**
+    같은 형태로 여기 둔다 — **옛 명세 미규정이고, 그렇게 표기한다.**
     """
     import pr as pr_mod
 
@@ -3481,7 +3481,7 @@ def run_pr(root, run_id=None):
                 % (pr_mod.NOTES_FILE, "\n".join("- %s" % p for p in problems),
                    pr_mod.NOTES_EXAMPLE),
                 "python scripts/pipeline/cli.py pr --run-id %s" % s["run_id"])
-    # 3. 원격 상태 — 없으면 §P3 3지선다, non-FF 면 에스컬레이션
+    # 3. 원격 상태 — 없으면 3지선다, non-FF 면 에스컬레이션
     rs = pr_mod.remote_state(root, config, branch)
     data["remote"] = rs
     if not rs["has_remote"]:
@@ -3525,13 +3525,13 @@ def run_pr(root, run_id=None):
     body = pr_mod.build_body(root, paths, s, config)
     body_path = paths.run_dir / "06_pr_body.md"
     body_path.parent.mkdir(parents=True, exist_ok=True)
-    # §E4 — 산출물은 UTF-8 을 명시한다. 한글 식별자가 흔한 리포다.
+    # 산출물은 UTF-8 을 명시한다. 한글 식별자가 흔한 리포다.
     body_path.write_text(body, encoding="utf-8")
     data["body_file"] = paths.rel(body_path)
 
     # 6. push → 계약 삭제 → 요청서.
-    # **삭제는 push 가 성공한 뒤다** (G-7). 04 의 선택자와 05 의 대조가 계약을 계속
-    # 읽으므로 최대한 늦추는 것이 §E13 의 근거인데, push 앞은 충분히 늦지
+    # **삭제는 push 가 성공한 뒤다** (ADR-H019). 04 의 선택자와 05 의 대조가 계약을 계속
+    # 읽으므로 최대한 늦추는 것이 이 결정의 근거인데, push 앞은 충분히 늦지
     # 않다 — push 는 실패할 수 있고, 실패하면 05 의 `requires` 가 안 채워져
     # **재개가 불가능해진다.** 계약은 `_workspace/` 아래 untracked 라 삭제
     # 시점이 커밋 diff 에 영향을 주지 않는다.
@@ -3546,7 +3546,7 @@ def run_pr(root, run_id=None):
     removed = _drop_contract(root, paths, s, build_context(root, paths, s))
     data["contract_removed"] = removed
 
-    # **07 이 대조할 기준점이다** (M49). 07 에서 메인이 "고쳤다"고 신고하면
+    # **07 이 대조할 기준점이다**. 07 에서 메인이 "고쳤다"고 신고하면
     # 그 주장은 `<head_sha>..HEAD` 에 그 파일을 건드린 변경이 실재해야 사실이
     # 된다. 기준점이 없으면 확인할 수 없고, 확인할 수 없는 것을 확인한 것처럼
     # 적지 않는다.
@@ -3594,12 +3594,12 @@ def _drop_contract(root, paths, s, ctx):
     p = Path(root) / rel
     if not p.exists():
         return {"removed": False, "reason": "이미 없다", "path": rel}
-    # **지우기 전에 런 디렉터리로 옮겨 둔다.** §E13 의 sha256 재대조가 06
+    # **지우기 전에 런 디렉터리로 옮겨 둔다.** 재개 시 sha256 재대조가 06
     # 이후 재개에서도 돌 수 있어야 하고, 계약이 무엇이었는지는 런의 기록이다.
     snap = paths.run_dir / "06_contract_snapshot.md"
     snap.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
     p.unlink()
-    # **어디로 옮겼는지를 상태에 남긴다** (M54). 06 본문은 계약의 유닛·진입점
+    # **어디로 옮겼는지를 상태에 남긴다**. 06 본문은 계약의 유닛·진입점
     # 절을 실어야 하는데(06 페이즈 파일의 PR 본문 절 목록), 07 수리 뒤 `pr` 을
     # 다시 돌리는 정상 경로에서는 원본이 이미 없다. 읽는 쪽이 파일 이름을
     # 짐작하지 않게 출처를 상태로 준다 — 새 사본은 만들지 않는다.
@@ -3624,7 +3624,7 @@ def _no_remote_render(rs):
 
 
 def _approval_prompt(root, s, rs, branch, config):
-    """§3.6 의 승인 프로토콜. 마지막 줄이 범위를 못박는다."""
+    """06 의 승인 프로토콜. 마지막 줄이 범위를 못박는다."""
     import precheck as pc
 
     got = pc.run(root, scope="pr")
@@ -3860,7 +3860,7 @@ def cmd_status(root, args):
 def build_parser():
     # add_help=False — argparse 의 도움말은 stdout 으로 나가 봉투를 오염시킨다.
     p = argparse.ArgumentParser(prog="cli.py", add_help=False,
-                                description="8페이즈 feature-pipeline")
+                                description="7페이즈 feature-pipeline")
     sub = p.add_subparsers(dest="cmd")
 
     sub.add_parser("doctor", add_help=False)

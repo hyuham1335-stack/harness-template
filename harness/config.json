@@ -48,7 +48,6 @@
     "docs/**",
     "scripts/**",
     ".claude/**",
-    "phases/**",
     ".github/**",
     "*.md",
     "*.json",

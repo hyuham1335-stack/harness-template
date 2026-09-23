@@ -360,9 +360,9 @@ class TemplateHasNoPilotNamesTest(unittest.TestCase):
 
 
 class CoreDoesNotImportTheExecutorTest(unittest.TestCase):
-    """추출 게이트의 자물쇠 — 8페이즈 코어가 순차 실행기를 다시 물면 안 된다.
+    """추출 게이트의 자물쇠 — 7페이즈 코어가 순차 실행기를 다시 물면 안 된다.
 
-    `harness-template` 은 `scripts/execute.py` 를 안 싣는다 (ROADMAP 36).
+    `harness-template` 은 `scripts/execute.py` 를 안 싣는다 (ROADMAP §1 · ADR-H037).
     코어가 그것을 import 하면 추출본은 **테스트 수집 단계에서** 죽는다 —
     `state.py` 의 import 가 모듈 최상위라 `test_pipeline.py` 전체가 error 다.
     실행기 없이 도는지는 추출해 봐야만 알 수 있는 것이 아니라 **여기서**

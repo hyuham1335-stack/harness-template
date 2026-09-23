@@ -12,7 +12,7 @@ Usage:
     0  통과 (경고는 허용한다 — 단, 전부 출력에 드러난다)
     2  미통과. 무엇이 어긋났는지 출력에 명시된다
 
-순차 step 실행기는 이 템플릿에 없다 (ADR-H037). 8페이즈 실행기는
+순차 step 실행기는 이 템플릿에 없다 (ADR-H037). 7페이즈 실행기는
 scripts/pipeline/cli.py 다.
 """
 
@@ -321,7 +321,7 @@ def list_files_with_untracked(root):
     대조가 도는 시점은 03 이 방금 코드를 쓴 직후이고 **그 파일들은 아직
     추적되지 않는다** — 추적분만 보면 새로 만든 유닛이 컨테이너를 못 찾아
     `unmatched` 로 떨어지고, 그 유닛의 테스트가 `scoped` 선택에서 통째로 빠진다.
-    **이 검사가 가장 필요한 런에서 정확히 반대로 동작한다** (M50).
+    **이 검사가 가장 필요한 런에서 정확히 반대로 동작한다**.
 
     무시 목록(`--exclude-standard`)은 존중한다. `_workspace/` 의 계약 파일이
     소스로 세어지면 안 된다.
@@ -649,7 +649,7 @@ def _check_roles(root, config, report):
     if missing_agents:
         report.add("역할", "WARN",
                    "역할 %d개 정의됨. 에이전트 정의(.claude/agents/*.md)가 아직 없다: %s — "
-                   "역할 분리 실행은 ROADMAP 3단계에서 붙는다."
+                   "03 이 이 파일을 에이전트로 부른다 — `cli.py doctor` 가 FAIL 로 막는다."
                    % (len(ids), ", ".join(missing_agents)))
     else:
         report.add("역할", "PASS", "역할 %d개 · primary=%s" % (len(ids), config["primary_role"]))

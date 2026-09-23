@@ -31,7 +31,7 @@
 - 06 이 `passed` 이고 `state.pr.pushed` 가 참이다. 승인은 **06 의 것을 그대로 쓴다** —
   07 이 따로 받지 않는다
 - **PR 상태를 먼저 본다.** 닫혔거나 머지됐으면 리뷰도 수리도 하지 않고 `record`
-  로 정상 종료한다 — 등급은 `pr_closed`/`pr_merged` 로 내려간다 (§E8)
+  로 정상 종료한다 — 등급은 `pr_closed`/`pr_merged` 로 내려간다
 
 ## 절차
 
@@ -71,9 +71,9 @@ python scripts/pipeline/cli.py record --phase 07 --file {run_dir}/07_pr_review.j
 
 ## 금지
 
-- **머지하지 마라.** 이유: 명세가 머지 자동화를 범위 밖으로 둔다
+- **머지하지 마라.** 이유: 머지 자동화는 이 파이프라인의 범위 밖이다
 - **닫히거나 머지된 PR 을 손대지 마라.** 이유: 이미 끝난 것을 수리하는 것이고,
-  머지된 코드에 코멘트를 다는 것은 소음이다 (§E8)
+  머지된 코드에 코멘트를 다는 것은 소음이다
 - **`finding_key` 를 지어내지 마라.** 이유: `dup_05` 는 네 선언이고, 기계는 키가
   목록에 있는지만 본다. 지어낸 키는 exit 8 이지만 잘못 단 키는 잡지 못한다
 - **여기서 수리하지 마라.** 이유: 07 의 산출은 계수이고, 수리는 사람의 판단이다
@@ -82,7 +82,7 @@ python scripts/pipeline/cli.py record --phase 07 --file {run_dir}/07_pr_review.j
 
 | 무엇 | 분류 | 어떻게 |
 |---|---|---|
-| PR 이 닫힘 · 머지됨 | — | 리뷰 없이 **정상 종료** + gap `pr_closed`/`pr_merged` (§E8) |
+| PR 이 닫힘 · 머지됨 | — | 리뷰 없이 **정상 종료** + gap `pr_closed`/`pr_merged` |
 | `/code-review` 를 부르지 못함 | infra | `code_review: "skipped"` + 사유 → gap `pr_review_skipped`. 도구 문제를 「지적 0건」으로 적지 않는다 |
 | 새 Critical/Major (dup_05=false) | 판단 | 기록 + gap `pr_review_open`. **수리는 사람이 정한다** — 07 은 멈추지 않는다 |
 | `finding_key` 가 목록 밖 | 제출물 | **exit 8** — 봉투의 목록에서 다시 고른다 |

@@ -62,7 +62,7 @@ def run(root, config, adapter, contract_path, no_contract=False):
     """다섯 검사를 돌린다. 반환은 그대로 `05_trace.json` 이 된다."""
     root = Path(root)
     if no_contract or not contract_path:
-        # §E3. 계약이 없는 런은 정상 경로다. 다만 **통과가 아니다** —
+        # 계약이 없는 런은 정상 경로다. 다만 **통과가 아니다** —
         # 보고서가 "계약 대조가 없었다"고 말해야 한다.
         return {"status": "skipped_no_contract", "findings": [],
                 "checks_run": [], "skipped": list(CHECKS),
@@ -111,7 +111,7 @@ def run(root, config, adapter, contract_path, no_contract=False):
         # 진입점 부재는 `missing_entrypoint` 의 몫이다.
         "entrypoints_unresolved": tc["unresolved"],
         "blocking": len(blocking),
-        # 04 의 `contract.scope.repo_files` 와 같아야 한다 (M50).
+        # 04 의 `contract.scope.repo_files` 와 같아야 한다.
         "repo_files": len(files),
         "contract": {"units": len(parsed.get("units") or []),
                      "entrypoints": len(parsed.get("entrypoints") or []),
@@ -168,7 +168,7 @@ def repo_files(root):
 
     정본은 `harness.list_files_with_untracked` 다. 04 게이트도 같은 함수를
     쓴다 — 두 페이즈가 같은 계약을 두고 다른 파일 목록을 보면 04 는
-    `unmatched: 4` 를, 05 는 `dropped: []` 를 적는다 (M50).
+    `unmatched: 4` 를, 05 는 `dropped: []` 를 적는다.
     """
     return harness.list_files_with_untracked(root)
 

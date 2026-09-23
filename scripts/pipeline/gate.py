@@ -78,7 +78,7 @@ def run_gate(root, config, adapter, state, phase_front,
     }
     # **scoped 가 사실상 full 이면 그렇게 부르지 않는다.** 선택자를 넓히면
     # 이 자리가 새 조용한 통과가 된다 — "scoped 통과" 라고 적으면서 전체를
-    # 도는 것은 M16 이 잰 절감이 사라진 것이고, 아무도 모른다.
+    # 도는 것은 파일럿이 잰 절감(ADR-H031)이 사라진 것이고, 아무도 모른다.
     if parsed and (parsed.get("scope") or {}).get("degenerate"):
         gaps.append("scoped_degenerate")
     if tests is not None:

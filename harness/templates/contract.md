@@ -25,7 +25,7 @@
 ## 데이터 형태
 
 계약 추적은 이 절을 대조하지 않는다 — 리뷰어가 읽는 절이다. 백틱 안의 이름 중
-**타입(PascalCase)과 상수(UPPER_SNAKE)** 만 계약이 이름 붙인 것으로 파싱한다 (M57).
+**타입(PascalCase)과 상수(UPPER_SNAKE)** 만 계약이 이름 붙인 것으로 파싱한다 (ADR-H049).
 필드명·내장·경로는 형태가 달라 파싱되지 않으므로 산문에 자유롭게 쓴다.
 
 - `CreateFooInput { name: string(≤255), amount: number(≥0) }`

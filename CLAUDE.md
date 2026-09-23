@@ -12,7 +12,7 @@
 **넷 다 기계가 안 잡는 산문이고, 이 파일은 워커가 읽어야 지켜진다.** 산문은 영구 비용이므로 이 절을 넷 넘게 늘리지 않는다.
 
 > **⚠ 이 파일은 자동으로 주입되지 않는다.**
-> 8페이즈 코어는 `harness/config.json` 의 `instruction_file` 선언과 `03-implement` 의
+> 7페이즈 코어는 `harness/config.json` 의 `instruction_file` 선언과 `03-implement` 의
 > 「읽을 곳」으로 이 파일을 **가리키기만** 한다. 프롬프트 접두부에 통째로 싣던 것은
 > 순차 실행기(`scripts/execute.py`)의 `_load_guardrails` 하나뿐이었고, 그 실행기는
 > 이 템플릿에 없다 (`docs/harness/ROADMAP.md` §1 · ADR-H005 · ADR-H037).
@@ -38,13 +38,13 @@
 
 `docs/harness/`는 하네스 템플릿 자체의 문서다 (`ROADMAP.md` — 승격 로드맵, `DECISIONS.md` — `ADR-H` 결정 기록, `PILOT-LOG.md` — 런별 실측 기록). 프로젝트 작업 중에는 **읽기만 하고 고치지 않는다.**
 
-하네스 구조(`harness/phases/` 8페이즈 · `scripts/pipeline/` 실행기 · `.claude/agents/` 역할·리뷰어)와 진입점 `/feature` 는 `README.md` 의 표가 단일 출처다. 여기 중복해서 적지 않는다.
+하네스 구조(`harness/phases/` 7페이즈 · `scripts/pipeline/` 실행기 · `.claude/agents/` 역할·리뷰어)와 진입점 `/feature` 는 `README.md` 의 표가 단일 출처다. 여기 중복해서 적지 않는다.
 
 ## 스택 · 배포
 
 <!-- 채우는 법: 애플리케이션 스택 · 배포 대상 · 데이터 저장소 셋을 각각 한 줄로,
      근거 문서를 함께 가리킨다. 여기 적은 스택이 `harness/config.json` 의
-     `adapter` 선택과 맞아야 하고, 어긋나면 `doctor` 가 exit 2 로 막는다. -->
+     `adapter` 선택과 맞아야 한다. `doctor` 는 이 파일을 읽지 않는다 — 맞추는 것은 사람이다. -->
 
 - 애플리케이션: **{스택}**. 서버 로직을 어디에 쓰는지까지 적는다. 버전·선택 근거는 `/docs/TRD.md`
 - 배포: **{대상}**. 비밀값을 어떻게 주입하는지와 **실행 시간 상한**을 적는다 — 상한은 설계 제약이라 시간 예산으로 다룬다
@@ -73,8 +73,8 @@
 ## 명령어
 
 <!-- 채우는 법: `harness/adapters/<자기 어댑터>.json` 의 `stages[].cmd` 가 부르는
-     명령이 여기 전부 있어야 한다. 없으면 `doctor` 가 잡는다 — 첫 `doctor` 실행이
-     실제로 이 어긋남을 잡은 적이 있다 (ADR-H003). -->
+     명령이 여기 전부 있어야 한다. `doctor` 는 이 블록이 아니라 그 명령이
+     `runner.script_manifest`(예: `package.json` scripts)에 있는지를 대조한다 (ADR-H003). -->
 
 ```
 {개발 서버}
@@ -94,4 +94,4 @@ python -m pytest scripts/                     # 하네스 자신의 테스트
 ```
 
 - `cli.py` 는 `--help` 가 없다. stdout 은 언제나 JSON 봉투 하나, 사람용 렌더는 stderr 다
-- 전체 pytest 는 6분쯤 걸린다. 개발 중에는 `python -m pytest scripts/test_pipeline.py -k <이름>` 으로 좁힌다
+- 전체 pytest 는 3분쯤 걸린다. 개발 중에는 `python -m pytest scripts/test_pipeline.py -k <이름>` 으로 좁힌다
