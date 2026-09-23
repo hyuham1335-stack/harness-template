@@ -74,7 +74,8 @@ def secret_values(root, config=None):
             missing.append(rel)
             continue
         try:
-            text = io.open(p, encoding="utf-8", errors="replace").read()
+            with io.open(p, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
         except OSError:
             missing.append(rel)
             continue
