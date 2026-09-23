@@ -5,7 +5,10 @@ Claude Code 훅의 계약: 입력은 **stdin 의 JSON 하나**(`tool_input.comma
 명령), 차단은 **exit 2 + stderr**. 환경변수 `CLAUDE_TOOL_INPUT` 은 없고 exit 1 은
 막지 않는다 — 옛 인라인 셸 훅이 그 둘을 전제해 아무것도 막지 못했다 (ADR-H076).
 
-셸과 무관하게 돌도록 파이썬 파일이다. 훅의 작업 디렉터리는 프로젝트 루트다.
+셸과 무관하게 돌도록 파이썬 파일이다. **훅의 작업 디렉터리는 프로젝트 루트가
+아니다** — Claude 가 `cd` 하면 따라간다. 그래서 settings.json 은 이 파일을
+`$CLAUDE_PROJECT_DIR` 기준으로 부른다. 상대 경로였을 때는 하위 폴더에서 python 이
+「파일 없음」 exit 2 를 내 모든 Bash 가 막혔다 (ADR-H076 fix).
 """
 import json
 import re

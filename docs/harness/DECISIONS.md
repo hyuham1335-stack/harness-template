@@ -116,7 +116,7 @@
 | [[ADR-H073]] | 제출 검사 선언도 읽히거나 거부된다 | 채택됨 | 부분 승계 | 소멸: `EXTERNAL_RAW`·레인 상한(`CAP_LANES`) ([[ADR-H075]]). `SUBMIT_CHECKS` 레지스트리는 산다. 백로그 31·32 는 [[ADR-H075]] 가 닫음 |
 | [[ADR-H074]] | 계기판은 압력이 실리는 집합을 잰다 | 채택됨 | 대상 소멸 | 슬롯 계측은 [[ADR-H056]] 의 슬롯 예산과 함께 [[ADR-H075]] 가 지웠다 |
 | [[ADR-H075]] | 덜어내기 — 실물 4런 근거로 뺀 것과 남긴 것 | 채택됨 | 구현 | 백로그 28·29·31·32·34·35 닫음(대상 소멸). 4웨이브 = PR #29·#30·#31·#32. 첫 실물런 전에 예측표 8개를 PILOT-LOG 에 옮긴다 |
-| [[ADR-H076]] | 덜어내기 사후 검증 — 실행기 결함과 집행 지점 | 채택됨 | 구현(PR 1~3) | 초록이 정합을 뜻하지 않았다. PR 1 = 실행기 결함 A1~A10 + 훅. PR 2 = 읽히지 않는 선언·잔재 + gen 에이전트(추기). PR 3 = 문서·색인·PILOT-LOG(추기). PR 4(성능)가 추기한다 |
+| [[ADR-H076]] | 덜어내기 사후 검증 — 실행기 결함과 집행 지점 | 채택됨 | 구현(PR 1~3 · fix) | 초록이 정합을 뜻하지 않았다. PR 1 = 실행기 결함 A1~A10 + 훅. PR 2 = 읽히지 않는 선언·잔재 + gen 에이전트(추기). PR 3 = 문서·색인·PILOT-LOG(추기). fix = PR 3 이 남긴 결함 다섯(추기). PR 4(성능)가 추기한다 |
 
 ---
 
@@ -4547,6 +4547,29 @@ PILOT-LOG 골격을 남은 장치 기준으로 다시 썼다. 이 ADR 이 백로
 - `EXIT_CODES = range(12)` 는 쓰지 않는 7 을 어휘에 남긴다. 05 재게이트(`--stage loop|full`)의 스테이지 소요는 어디에도 기록되지 않는다.
 
 *검증*: `pytest scripts/` 600 passed · `lint-phases`·`doctor`·`harness.py doctor` exit 0 · `git grep -nE "§[EP][0-9]+|§[0-9]\.[0-9]|\bG-[47]\b|\bM[0-9]{1,2}\b" -- harness .claude scripts .gitignore README.md CLAUDE.md docs/harness/ROADMAP.md docs/harness/PILOT-LOG.md` 0건 · 「8페이즈」·「6분」·「지시된 모델 등급」 0건, `exit 7` 은 README 종료 코드표의 「쓰지 않습니다」 행뿐 · 색인 76행의 「지금」이 전부 어휘 안.
+
+**추기 (2026-09-23 · fix PR — PR 3 이 남긴 결함 다섯)**:
+
+*고친 것*:
+1. **`produces[].unless` 를 읽는다** — `_model_produces` 가 `owner` 만 걸러 docs 레인 03 봉투가 「계약도 쓰지 않는다」와 「쓸 파일: 계약」을 함께 냈고, `no_contract` 06 은 선택인 흐름 노트를 필수처럼 안내했다. `unless` 가 참인 산출물은 「쓸 파일」과 `data.produces` 에서 빠지고, lint 가 문법을 본다(`produces_unless`).
+2. **08 이 `trace_repair` 를 렌더한다** — 카운터 이름 셋이 `report.py` 에 박혀 있었다. 테스트가 `COUNTERS` 전부를 돌며 재발을 잠근다.
+3. **봉투가 「실패 시」 표를 싣는다** — 첫 커밋부터 빠져 있었고 근거 ADR 은 없었다. `PACKET_SECTIONS` 순서로 싣고, 「진입 조건」은 `PACKET_EXCLUDED` 에 사유와 함께 둔다(requires 가 통과해야 봉투가 나간다). feature.md 의 종료 코드표는 0 · 5·10 · 9 · 11 만 남기고 페이즈별 exit 중복을 지웠다.
+4. **훅을 `$CLAUDE_PROJECT_DIR` 기준으로 부른다** — 훅의 cwd 는 Claude 를 따라간다. 이 ADR 의 결정 6(「상대 경로 + `python`」)을 정정한다.
+5. **`EXIT_CODES` 에서 7 을 뺐다** — README 표와 같은 집합인지 테스트가 본다.
+
+*결정*:
+1. **봉투에는 「실패 시」의 표만 싣는다** — 표 뒤 산문은 「코드가 실제로 읽는다」·「옛 명세 미규정」 같은 관리자 메모다. 표가 이제 모델에게 가는 지시라 **코드와 어긋난 행 12개를 먼저 고쳤다**(01 짧은 플랜 exit 6 → 03 진입 exit 3 · 05 산문 제출은 시도로 세지 않음 · quote 위조 2회째는 `review_repair` 가 아니라 슬롯 `failed` · 06 push 실패는 ref 조회 없음 등). 행이 가리키는 코드가 없는 것은 「미구현」으로 적었다.
+2. **훅은 shell form 이다** — exec form(`args`)을 모르는 버전에서는 python 이 인자 없이 떠 훅이 **조용히 꺼진다**(fail-open). shell form 은 경로가 깨지면 python 의 「파일 없음」 exit 2 가 막는다(fail-closed) — 사람이 바로 안다. 다만 이 fail-closed 는 우연이다: python 이 PATH 에 없으면 127 이라 통과한다. hooks 는 세션 시작 때 읽히므로 실측은 새 세션에서 한다.
+3. **인접한 미읽음 선언은 이번에 다루지 않았다**(사용자 결정) — 아래 남은 결함.
+
+*트레이드오프*: 봉투가 페이즈당 0.6~3.7KB 커진다(05 가 3,682바이트로 가장 크고 `next` 마다 실린다). 첫 실물런의 01·05 wall 로 판단한다.
+
+*남은 결함* (다음 PR):
+- 인접 미읽음 선언: `submit_checks[].unless`·`from`, `produces[].min_bytes`·`must_contain` — 런타임은 모드를 하드코딩한 검사로 맞게 돌지만 선언은 안 읽힌다([[ADR-H025]]).
+- 「실패 시」에 「미구현」으로 적은 코드: 05 계약 변경 감지(sha256 을 쓰기만 함) · 06 base 브랜치 부재와 원격 3지선다 ② 의 등급 강등 · 06 secret 부재 기록 · `CONTRACT_DEFECT` 자동 에스컬레이션. doctor 의 원격 문구(`cli.py` 「06 이 exit 9 3지선다로 멈춘다」의 base 부분)와 `run_report` docstring 「0 / 3 / 6」도 같다.
+- 05 재게이트(`--stage loop|full`)의 스테이지 소요는 여전히 기록되지 않는다.
+
+*검증*: 테스트 커밋 시점 17 failed · 601 passed(새 테스트만 빨강) → 618 passed · `lint-phases`·`doctor`·`harness.py doctor` exit 0.
 
 ---
 

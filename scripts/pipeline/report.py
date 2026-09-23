@@ -304,6 +304,10 @@ def build(state, data, timing=None):
         ("수리", _counter_cell((state.get("counters") or {}).get("repair"))),
         ("리뷰 수리",
          _counter_cell((state.get("counters") or {}).get("review_repair"))),
+        # 05 contract-trace 의 선수리 루프 (ADR-H076 A8). 빠져 있어서 그 루프의
+        # 소모가 보고서에 안 보였다 — 테스트가 `COUNTERS` 전부를 돌며 잠근다.
+        ("계약 대조 수리",
+         _counter_cell((state.get("counters") or {}).get("trace_repair"))),
         ("테스트 실행 수", tests.get("ran")),
         ("테스트 상태", tests.get("status")),
         # **자진신고이지 실측이 아니다** (ADR-H052). 어느 모델이 돌았는지
