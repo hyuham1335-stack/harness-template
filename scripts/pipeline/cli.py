@@ -2736,12 +2736,16 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
         # 리뷰어가 하나라 델타도 그 하나다 — 재개된 라운드가 같은 한 명을 받는다.
         delta = planned[0] if planned else None
         node.setdefault("rounds_planned", {})[str(round_ + 1)] = [delta]
-        if exceeded:
-            _loop_on_exceed(front)
+        # **`CONTRACT_DEFECT` 는 수리가 아니라 에스컬레이션이다** (ADR-H076 fix 2) —
+        # 계약은 메인 단독 소유라 작성자가 못 고친다. 예전에는 다른 차단 지적처럼
+        # exit 4 수리 봉투에 한 줄로 적혔다. 카운터는 위에서 이미 썼다 — 차단 지적이
+        # 있던 회차 수가 곧 카운터이고, 초과 경로도 소모 뒤 멈춘다.
+        defect = [f for f in blocking if f.get("category") == "CONTRACT_DEFECT"]
+        if exceeded or defect:
+            if exceeded:
+                _loop_on_exceed(front)
             st.escalate(paths, s,
-                        "05 의 Critical/Major %d건이 %d회 안에 해소되지 않았다 — "
-                        "같은 지적이 반복되면 코드가 아니라 계약이 틀렸을 수 있다"
-                        % (len(blocking), max_decl),
+                        _review_escalation_reason(blocking, defect, exceeded, max_decl),
                         phase="05-code-review")
             return _escalation_envelope("record", paths, s)
         # 다음 회차에 델타가 회계해야 할 목록이다. `record` 가 같은 인자로
@@ -2762,6 +2766,25 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
             "--run-id %s" % s["run_id"])
 
     return _advance_to_next(root, paths, s, phase_item, ctx)
+
+
+def _review_escalation_reason(blocking, defect, exceeded, max_decl):
+    """05 에스컬레이션 사유. 초과와 계약 결함이 겹치면 둘 다 — 하나만 적으면 다른
+    하나가 사유에서 빠진다. 수리 봉투를 안 내므로 이 회차의 차단 지적도 여기 싣는다."""
+    parts = []
+    if exceeded:
+        parts.append("05 의 Critical/Major %d건이 %d회 안에 해소되지 않았다 — 같은 "
+                     "지적이 반복되면 코드가 아니라 계약이 틀렸을 수 있다"
+                     % (len(blocking), max_decl))
+    if defect:
+        parts.append("리뷰어가 `CONTRACT_DEFECT` %d건을 냈다 — 계약은 메인 단독 소유라 "
+                     "수리 대상이 아니다. 계약을 고칠지는 사람이 정한다. 고치라는 답이면 "
+                     "**`resume` 전에** 고친다 — `resume` 이 그 계약을 05 의 새 기준으로 "
+                     "적는다" % len(defect))
+    lines = ["\n\n".join(parts), "", "이 회차의 차단 지적:"]
+    lines += ["- **%s** `%s`: %s" % (f.get("severity"), f.get("category"), f.get("title"))
+              for f in blocking]
+    return "\n".join(lines)
 
 
 def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
@@ -2792,11 +2815,6 @@ def _review_repair_render(blocking, round_no, delta=None, previous_open=None):
     for f in blocking:
         lines.append("- **%s** → `%s`: %s"
                      % (f.get("severity"), f.get("target_role"), f.get("title")))
-    contract_defect = [f for f in blocking
-                       if f.get("category") == "CONTRACT_DEFECT"]
-    if contract_defect:
-        lines += ["", "**`CONTRACT_DEFECT` 가 있다.** 이것은 수리 대상이 아니라 "
-                      "에스컬레이션이다 — 계약은 메인 단독 소유다."]
     lines += ["", "제출이 **내용은 그대로이고 회계 필드만** 틀려 exit 8 로 되돌아오면 "
                   "(`resolved_from_previous` · `reraised_from_previous`) 메인이 "
                   "그 필드를 고쳐 재제출해도 된다 — quote·헤딩 수·"

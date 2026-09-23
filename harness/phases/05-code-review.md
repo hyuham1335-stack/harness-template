@@ -260,7 +260,7 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
 | 실패 신고인데 제출 파일이 있다 | 제출물 | exit 8. 자진 신고 중 기계로 확인 가능한 것은 기계로 확인한다 |
 | quote 위조 · 헤딩 수 불일치 · 단조성 위반 | 제출물 | exit 8 · 같은 회차 재제출 1회. **2회째면 그 리뷰어 슬롯을 `failed` 로 확정**하고 흐름을 잇는다 (`review_repair` 는 안 탄다) |
 | `need_more_context` 계속 참 | 판단 | 1회에 한해 파일 목록 명시 추가 |
-| `CONTRACT_DEFECT` 발견 | 정책 | 수리하지 않는다. 실행기는 다른 차단 지적처럼 exit 4(`review_repair`)를 내고 봉투에 표시만 한다 — **멈추고 사람에게 보고**한다 |
+| 리뷰어의 `CONTRACT_DEFECT` (차단 심각도) | 정책 | **exit 10** — 수리하지 않는다. `review_repair` 는 1 소모하고 다음 회차 델타는 정해 둔다. 사람이 계약을 고치라고 하면 **`resume` 전에** 고친다 |
 | 05 수리 작성자가 `CONTRACT_DEFECT` 를 보고 | 정책 | 05 에서는 계약을 고치지 않는다 — 멈추고 사람에게 보고한다. 고치면 다음 `next` 가 exit 10 으로 멈춘다 |
 | diff 가 인라인 상한 초과 | — | **기계가 정한다** — `next` 가 `review.inline_max` 로 재고 봉투가 "경로로 전달하라" 고 말한다. 네 재량이 아니다 (ADR-H042). 폴백 사실이 상태에 남는다 |
 | `review_repair` 초과 | 정책 | 에스컬레이션 — 선택지 없이 자유 서술로 사람에게. **계약 결함을 먼저 의심**하라고 패킷에 적는다 |
