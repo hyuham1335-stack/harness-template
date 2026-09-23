@@ -11,14 +11,11 @@
   ],
   "produces": [
     {"key": "contract", "path": "${run.contract_file}", "kind": "markdown",
-     "owner": "main", "min_bytes": 200,
-     "must_contain": "${config.contract.sections.units}",
-     "unless": "state.contract.mode == \"no_contract\""},
+     "owner": "main", "unless": "state.contract.mode == \"no_contract\""},
     {"key": "claims", "path": "${run.dir}/03_claims.json", "kind": "json"}
   ],
   "submit_checks": [
-    {"id": "tests_required", "from": "${run.contract_file}",
-     "unless": "state.contract.mode == \"no_contract\"", "on_fail": 8}
+    {"id": "tests_required", "on_fail": 8}
   ],
   "gate": {"runner": "adapter", "fail_fast": true, "steps": [{"id": "compile"}]},
   "allow": {"agents": "config.roles[].agent",

@@ -43,8 +43,9 @@ PRODUCES_KINDS = ("json", "markdown")
 # `produces[]` 의 키 집합도 닫는다 — `FRONT_KEYS` 가 최상위에 하는 일과 대칭이다.
 # 한때 여기 `schema` 가 열 곳에 있었는데 읽는 코드도 그 이름의 아티팩트도
 # 없었다 (ADR-H073). 집합을 닫아야 근거 없는 어휘가 되돌아오지 못한다.
-PRODUCES_KEYS = ("key", "path", "kind", "owner", "min_bytes", "must_contain",
-                 "unless")
+# `min_bytes`·`must_contain` 도 같은 부류였다 — 크기와 절은 다음 페이즈의 `requires`
+# 가 집행한다 (ADR-H076 fix 2).
+PRODUCES_KEYS = ("key", "path", "kind", "owner", "unless")
 # `produces[].owner` — 누가 쓰는가. `executor` 는 실행기 산출물이라 봉투의 「쓸 파일」에
 # 싣지 않는다 (ADR-H076 B′). 없으면 `main` 이다.
 PRODUCES_OWNERS = ("main", "executor")
@@ -58,6 +59,9 @@ GATE_KEYS = ("runner", "fail_fast", "steps")
 GATE_STEP_KEYS = ("id", "tests_from", "loop_stage")
 CONVERGE_KEYS = ("blocking_severities", "focus_round_2")
 LOOP_KEYS = ("counter", "max", "max_by_profile", "on_exceed")
+# `submit_checks[]` 는 레지스트리를 가리키는 id 와 종료 코드뿐이다. 조건(`unless`)과
+# 입력(`from`)은 구현이 갖는다 — 03 에 선언돼 있었지만 읽는 코드가 없었다.
+SUBMIT_CHECK_KEYS = ("id", "on_fail")
 REQUIRED_SECTIONS = ("## 목적", "## 진입 조건", "## 절차",
                      "## 제출 형식", "## 금지", "## 실패 시")
 ROLE_TEMPLATE_SECTION = "## 역할 프롬프트 템플릿"
@@ -127,7 +131,8 @@ SUBMIT_CHECKS = {
                "경로를 근거로 대야 한다 — 기록 없는 기각은 지적의 증발이다"},
     "tests_required": {
         "exit": 8, "impl": ("cli:_tests_required",),
-        "why": "계약의 유닛·진입점·오류 어휘에 대응하는 테스트가 있는가"},
+        "why": "계약의 유닛·진입점·오류 어휘에 대응하는 테스트가 있는가 — 계약 없는 "
+               "런(`no_contract`)은 건너뛴다. 그 조건은 `_tests_required` 가 갖는다"},
     "pr_number_is_int": {
         "exit": 8, "impl": ("cli:_record_06",),
         "why": "PR 번호가 정수인가 — 문자열 번호는 뒤에서 조용히 안 맞는다"},
@@ -941,6 +946,8 @@ def _lint_submit_checks(name, front, declared, add):
             add(name, "submit_check_shape", "FAIL",
                 "submit_checks 항목은 `id` 와 `on_fail` 을 갖는다: %r" % (c,))
             continue
+        _lint_closed(name, "submit_check_keys", c, SUBMIT_CHECK_KEYS, add,
+                     "submit_checks[%s]" % c["id"])
         cid, got = c["id"], c["on_fail"]
         spec = SUBMIT_CHECKS.get(cid)
         if spec is None:
@@ -1973,8 +1980,8 @@ def _record_01(root, paths, s, phase_item, ctx, file, reviewer, round_):
 
 
 def _record_01_plan(root, paths, s, phase_item, ctx, file):
-    """플랜 제출. 기계가 보는 것은 파일의 존재와 크기(`produces`)뿐이다 —
-    내용은 plan-reviewer 가 리포를 읽으며 본다."""
+    """플랜 제출. 기계가 보는 것은 파일의 존재뿐이다 — 크기는 03 의 `requires` 가
+    03 진입에서 보고, 내용은 plan-reviewer 가 리포를 읽으며 본다."""
     if not file.exists():
         return st.envelope("record", False, 3, s, {}, "산출물이 없다: %s" % file, None)
     node = s.setdefault("phases", {}).setdefault("01-plan", {})
