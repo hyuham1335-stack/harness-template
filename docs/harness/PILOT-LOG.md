@@ -124,9 +124,9 @@
 | 3 | `format_reject` 0 — 남는 생산자는 01·05 의 `check_review` 뿐 | 4런 합 4 (출처였던 02·`rules_read` 는 소멸) | 08 형식 반려 | |
 | 4 | 03+04 분 ÷ 변경 줄 수 ≤ 기준 중앙값 × 1.3 = **1.86분/100줄** | 아래 표 — 중앙 1.43분/100줄 | 08 의 03·04 벽시계 ÷ `state.precheck.at_05.lines` (줄 수는 08 밖) | |
 | 5 | 04 수리 ≤ 1회 | P5 2회 | 08 카운터 `repair` | |
-| 6 | gen 이 Critical 을 낸다면 그 종류(계약 대조 · SQL 정독)를 적는다 | P4·P5 는 gen 이 전부 잡았다 | `05_review_gen.json` (08 밖 — 심각도별 표가 없다) | |
-| 7 | 07 `/code-review` 의 `dup_05=false` Major+ 건수 | 초기 15런 escaped 16 (major 11 · minor 23 · critical 0) | 08 「07 escaped」 | |
-| 8 | gen 이 내는 `TEST_MISSING_FAILURE_PATH` 류 findings 수 | 4런 합 49 (test 리뷰어 47 포함) | `05_review_gen.json` (08 밖) | |
+| 6 | gen 이 Critical 을 낸다면 그 종류(계약 대조 · SQL 정독)를 적는다 | P4·P5 는 gen 이 전부 잡았다 | `state.phases["05-code-review"].rounds` 의 gen `findings` (08 밖 — `05_review_gen.json` 은 마지막 라운드만 남는다) | |
+| 7 | 07 `/code-review` 의 `dup_05=false` Major+ 건수 | 옛 `escaped_05`(07 의 비중복 Critical+Major) — 클론 08 보고서 재셈 13건 / 표본 9런 = **1.44/런** (critical 2) | 08 「07 escaped」 | |
+| 8 | gen 이 내는 `TEST_MISSING_FAILURE_PATH` findings 수 | 리뷰어 48건 / 4런 = **12.0/런** (P2~P5 = 15 · 5 · 14 · 14) | 예측 6 과 같은 곳 (08 밖) | |
 
 **예측 4 의 기준선.** 03+04 벽시계는 `state.phase_durations` 의 `wall_sec` 합이고 네 런 모두
 대기가 0 이었다. 줄 수는 `state.precheck.at_05.lines` 다.
@@ -141,6 +141,36 @@
 ADR-H075 본문의 「P5 ≈ 1.06분/100줄」은 35.4분을 **05 패킷의 인라인 diff 줄 수**(3,332,
 `05_packet_common.md`)로 나눈 값이다. P2~P4 에는 그 파일이 없어 같은 분모를 쓸 수 없으므로
 네 런 모두 `at_05.lines` 로 통일했다 ([ADR-H076](DECISIONS.md) PR 3 추기).
+
+**예측 7·8 의 기준선은 다시 셌다** ([ADR-H076](DECISIONS.md) PR 4 잔여 추기). ADR-H075 본문의 「4런 합 49
+(test 리뷰어 47 포함)」은 contract-trace 1건을 섞었고 test 몫(39)을 틀리게 적었다. 「escaped 16 (major 11 ·
+minor 23 · critical 0)」은 옛 `escaped_05`(16)와 원장의 07 행 전체(중복·minor 포함 34행)라는 다른 두 양을
+한 칸에 섞었다 — 16 은 이 클론의 파일로 재현되지 않아 재현되는 13/9런을 기준으로 한다.
+
+### 채점 규칙 — 런 전에 고정한다
+
+런 뒤에 정하면 채점이 아니라 해석이다. 기준선이 여러 런의 합이면 **런당 값**으로 비교한다.
+
+| # | 셈 | 판정 |
+|---|---|---|
+| 1·2·3·5 | 08 이 내는 값 그대로 | 표의 부등호 |
+| 4 | `state.phase_durations` 의 03·04 `wall_sec` 합(분) ÷ `state.precheck.at_05.lines` × 100 | ≤ 1.86 |
+| 6 | 라운드 전부의 gen `findings` 중 severity `critical` — category 와 제목 한 줄씩 | 목록을 적는다. 작성자의 논리 오류면 되돌림 조건 3 |
+| 7 | 08 「07 escaped」의 `dup_05=false` 중 Major+ 건수 | 1.44 를 넘으면(= 2건 이상) 되돌림 조건 4 |
+| 8 | 라운드 전부의 gen `findings` 중 `category == "TEST_MISSING_FAILURE_PATH"` **정확 일치**, 같은 `keys[].key` 는 한 번 | 12.0 이상이면 「줄지 않았다」 — 되돌림 조건 2. P2~P5 의 폭(5~15)을 결과 칸에 같이 적는다 |
+
+라운드 전부는 `state.phases["05-code-review"].rounds["1"|"2"|…]["gen"]` 다 — `05_review_gen.json` 은
+라운드마다 덮어쓰여 마지막 라운드만 남는다([ADR-H076](DECISIONS.md) 결정 5).
+
+### 함께 잴 것 — ADR-H076 재검토 시점
+
+| # | 무엇 | 읽을 곳 | 결과 |
+|---|---|---|---|
+| (a) | 05 수리 런에서 06 전 full 1회가 wall 에 얼마나 드는가 | `events.jsonl` `gate_stages` 중 `phase` 05 · `selector` full 의 `stages[].sec` 합 | |
+| (b) | `trace_repair` 가 실제로 소모되는가 (상한 2 가 모자란가 남는가) | 08 카운터 `trace_repair` | |
+| (c) | 영수증 거부가 실물 워커에게 몇 번 나는가 | `events.jsonl` `receipt_stale` 의 `data.receipt` 별 수(loop · full · dispatch) | |
+| — | 「실패 시」 표를 실은 봉투가 01·05 wall 을 늘렸나 | 08 페이즈별 소요의 01·05 | |
+| — | 백로그 36~38(재로드 · 전수 읽기)이 체감되나 | 08 의 06 소요 · `05_trace.json` 산출까지의 시간 | |
 
 **되돌림 조건** (ADR-H075 그대로):
 

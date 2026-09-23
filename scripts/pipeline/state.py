@@ -108,6 +108,10 @@ EVENT_KINDS = (
     # 않았다 — 「05 수리 뒤 full 1회가 wall 에 얼마나 드는가」를 잴 곳이 없었다
     # (ADR-H076 fix 2). 원장은 추가만 되므로 앞 회차가 남는다.
     "gate_stages",
+    # 게이트 영수증 거부(`next`·`record`·`approve` 의 exit 6·3)와 05 지시 뒤 변경
+    # (`record` exit 3). 봉투만 내고 흔적이 없어 「실물 워커에게 몇 번 나는가」
+    # (ADR-H076 재검토 (c))를 잴 곳이 없었다. `receipt` 는 loop · full · dispatch.
+    "receipt_stale",
 )
 
 GRADES = ("PASS", "PASS_WITH_GAPS", "INCOMPLETE")
@@ -183,9 +187,17 @@ def _write_json(path, data):
     """임시 파일에 다 쓴 뒤 바꿔 끼운다 — 쓰는 도중 끊겨도 이전 파일이 남는다."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                   encoding="utf-8")
-    os.replace(str(tmp), str(path))
+    try:
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                       encoding="utf-8")
+        os.replace(str(tmp), str(path))
+    except BaseException:
+        # 반쪽 `.tmp` 를 남기지 않는다. 치우다 난 오류가 원래 오류를 가리지 않게 삼킨다.
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None):

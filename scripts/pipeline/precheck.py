@@ -272,7 +272,9 @@ def _check_infra(adapter, changed, checks):
         # 다만 면제가 조용하면 그것은 면제가 아니라 구멍이다. 옛 명세가 이미
         # 답을 적어 뒀다(ADR-H027): "프로브가 실패해 스킵된 검증은 통과가 아니라
         # 미검증이다 — PASS_WITH_GAPS + 명시."
-        if not ok and (probe.get("on_missing") or "fail") == "warn":
+        # 모르는 kind 는 환경 부재가 아니라 설정 오류다 — 면제로 새지 않는다.
+        known = probe.get("kind") in _PROBE_KINDS
+        if not ok and known and (probe.get("on_missing") or "fail") == "warn":
             _add(checks, "인프라:%s" % probe.get("name"), True, "infra",
                  "%s — 면제: %s" % (detail, probe.get("why") or "이유 미기재"),
                  waived=True)
@@ -285,6 +287,9 @@ def _check_infra(adapter, changed, checks):
             failures.append({"name": probe.get("name"), "kind": probe.get("kind"),
                              "detail": detail})
     return failures, gaps
+
+
+_PROBE_KINDS = ("env", "tcp")
 
 
 def _probe(probe):
@@ -302,4 +307,5 @@ def _probe(probe):
                 return True, "%s:%s 에 붙었다" % (host, port)
         except (OSError, TypeError, ValueError):
             return False, "%s:%s 에 붙지 못했다" % (host, port)
-    return True, "알 수 없는 프로브 종류 %r — 건너뛴다" % kind
+    return False, ("알 수 없는 프로브 종류 %r — 설정 오류다(어댑터 스키마가 "
+                   "거부한다)" % kind)

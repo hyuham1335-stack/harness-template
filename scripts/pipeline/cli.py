@@ -1225,7 +1225,7 @@ def run_next(root, run_id=None):
         # 리뷰어는 모델 호출이다 — 게이트 안 된 코드에 보내면 그 호출이 낭비다.
         stale = _receipt_stale(root, ctx["config"], s)
         if stale:
-            return _receipt_envelope("next", s, stale)
+            return _receipt_envelope("next", paths, s, stale)
         # **05 에서 계약은 고정이다** (ADR-H076 fix 2). 해시는 03·04·05 가 적기만
         # 하고 아무도 대조하지 않았다 — 「바뀌었다면 멈춘다」는 산문이었다.
         moved = _contract_moved(root, s, ctx)
@@ -2473,6 +2473,8 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
         return guard
     stale = _dispatch_fingerprint_stale(root, ctx, node, round_)
     if stale is not None:
+        st.append_event(paths, "receipt_stale", cmd="record", phase=s.get("phase"),
+                        receipt="dispatch")
         return st.envelope(
             "record", False, 3, s, {"round": round_, "dispatched_fp": stale},
             "## 리뷰 대상 코드가 리뷰 뒤에 바뀌었다\n\n"
@@ -2492,7 +2494,7 @@ def _record_05(root, paths, s, phase_item, ctx, file, reviewer, round_):
     # 같은 제출을 다시 낼 수 있다.
     stale = _receipt_stale(root, ctx["config"], s)
     if stale:
-        return _receipt_envelope("record", s, stale)
+        return _receipt_envelope("record", paths, s, stale)
     planned = _planned_for_round(node, round_)
 
     rounds = node.setdefault("rounds", {})
@@ -2572,8 +2574,10 @@ def _receipt_stale(root, config, s, need_full=False):
 _RECEIPT_EXIT = {"loop": 6, "full": 3}
 
 
-def _receipt_envelope(cmd, s, stale):
+def _receipt_envelope(cmd, paths, s, stale):
     kind, saved, fresh = stale
+    st.append_event(paths, "receipt_stale", cmd=cmd, phase=s.get("phase"),
+                    receipt=kind)
     if kind == "loop":
         text = ("## 소스가 게이트 뒤에 바뀌었다\n\n"
                 "마지막 게이트 영수증의 지문과 지금 소유 범위 파일의 지문이 다르다 — "
@@ -2721,10 +2725,8 @@ def _judge_05(root, paths, s, phase_item, ctx, round_, slot, node):
                    if (slot.get(c) or {}).get("keys") is not None)
     _write_review05(s, node, planned, ok_count, merged, slot, round_=round_)
 
-    (paths.run_dir / "05_review.json").write_text(
-        json.dumps({"round": round_, "review05": s["review05"],
-                    "findings": merged}, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8")
+    _write_json(paths.run_dir / "05_review.json",
+                {"round": round_, "review05": s["review05"], "findings": merged})
     st.save(paths, s)
 
     blocking = [f for f in merged if f.get("severity") in verdict.BLOCKING]
@@ -3379,7 +3381,7 @@ def run_approve(root, phase="06", revoke=False, auto=False, run_id=None):
     # 영수증(exit 3)을 여기서 본다. `pr` 은 승인 지문을 대조하므로 전이적으로 덮인다.
     stale = _receipt_stale(root, config, s, need_full=True)
     if stale:
-        return _receipt_envelope("approve", s, stale)
+        return _receipt_envelope("approve", paths, s, stale)
     node.update({
         "granted": True,
         "mode": "auto" if auto else "user",
@@ -3852,9 +3854,7 @@ def run_contract_trace(root, contract=None, run_id=None):
                              None if no_contract else full,
                              no_contract=no_contract)
     out = paths.run_dir / "05_trace.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(got, indent=2, ensure_ascii=False) + "\n",
-                   encoding="utf-8")
+    _write_json(out, got)
 
     s.setdefault("phases", {}).setdefault("05-code-review", {})["trace"] = {
         "status": got["status"], "blocking": got.get("blocking", 0),
@@ -3981,7 +3981,8 @@ def run_resume(root, ack=False, answer_file=None, run_id=None):
 # ---------------------------------------------------------------------- status
 
 def cmd_status(root, args):
-    """현황. **항상 exit 0** — 상태를 묻는 것이 실패일 수는 없다."""
+    """현황. exit 0 — 상태를 묻는 것이 실패일 수는 없다. 예외는 깨진 state.json
+    이다: `main` 이 exit 1 봉투를 낸다(내부 오류, 복구는 사람이 한다)."""
     paths, s = st.load(root, args.run_id)
     if s is None:
         return st.emit(st.envelope(
