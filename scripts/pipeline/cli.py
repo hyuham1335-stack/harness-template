@@ -3629,6 +3629,16 @@ def run_pr(root, run_id=None):
                            None)
 
     # 5. 본문 조립 + 마스킹
+    # **비밀 파일 부재는 경고이지 실패가 아니다** — 그래도 사실은 남긴다 (ADR-H076
+    # fix 2). 예전에는 `build_body` 가 `mask_text` 의 부재 목록을 버렸다. 하나도 없을
+    # 때만 gap 이다 — 기본 설정은 두 파일이라 한쪽만 있는 것이 보통이고, 그때는 있는
+    # 파일의 값이 가려진다. 본문 머리가 gap 을 싣으므로 조립 **앞**이다.
+    import mask as mask_mod
+    secret_files = (config.get("project") or {}).get("secret_files") or []
+    missing = mask_mod.secret_values(root, config)[1]
+    data["secret_files_missing"] = missing
+    if not closed_run and secret_files and len(missing) == len(secret_files):
+        st.demote(s, None, "secret_files_missing")
     body = pr_mod.build_body(root, paths, s, config)
     body_path = paths.run_dir / "06_pr_body.md"
     body_path.parent.mkdir(parents=True, exist_ok=True)
