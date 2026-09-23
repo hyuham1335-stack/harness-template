@@ -27,7 +27,7 @@
 
 | 말 | 뜻 |
 |---|---|
-| **런**(run) | 요청 하나를 PR 까지 끌고 가는 한 번의 작업입니다. 런마다 폴더가 하나 생기고 산출물이 거기 쌓입니다 |
+| **런**(run) | 요청 하나를 PR 까지 끌고 가는 한 번의 작업입니다. 런마다 폴더가 하나 생기고 산출물이 거기 쌓입니다. 런 폴더(`_workspace/runs/{run_id}`)는 지우지 않고 쌓입니다 — 정리는 사람 몫입니다 |
 | **페이즈**(phase) | 런을 나눈 단계입니다 — 01 계획부터 08 보고까지 7개. 각 단계의 요구와 산출물은 `harness/phases/01~08.md` 에 있습니다 |
 | **계약**(contract) | 이번에 만들 함수와 API 를 미리 적어 둔 문서입니다. 구현 전에 확정하고, 이후 모든 검사의 기준이 됩니다 |
 | **유닛 / 진입점** | 계약이 나열하는 함수 하나가 유닛이고, 바깥에서 호출하는 입구(API 경로 등)가 진입점입니다 |
@@ -133,7 +133,7 @@ python scripts/pipeline/cli.py doctor
 2. **어댑터 `stages.e2e` 에 `cmd` 를 채웁니다.** 관련 파일이 바뀐 런에서만 돌게 하려면
    `when_touched` 를 함께 적습니다 — 예: `["e2e/**", "src/app/**"]`. 안 걸리면 `not_touched` 로 건너뜁니다
 3. **테스트 DB 처럼 외부 자원이 필요하면 `infra_preflight` 에 프로브를 둡니다**
-   (`kind`: `tcp` · `cmd` · `env`, `required_when_touched` 로 조건부). `on_missing` 을 안 적으면
+   (`kind`: `tcp` · `env`, `required_when_touched` 로 조건부). `on_missing` 을 안 적으면
    `fail` 이라 exit 10 으로 멈추고, `warn` 이면 `infra_skipped:<프로브 이름>` gap 으로 등급만
    내립니다 — `warn` 은 `why` 에 사유를 적어야 합니다
 4. **스펙 위치를 어댑터 `attribution` 에 알립니다.** `test_file_globs` 에 스펙(`e2e/**/*.spec.ts`),

@@ -3033,6 +3033,11 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
         _note_contract(root, s, ctx)
     round_no = ((s.get("counters") or {}).get("repair") or {}).get("used", 0) + 1
     log_path = paths.gates / ("gr-%d.stdout.log" % round_no)
+    if not only_stage and log_path.exists():
+        # 전체 게이트는 이번 호출의 출력만 인프라 분류에 넣는다 — 인프라 에스컬레이션은
+        # 카운터를 안 써서 `resume` 뒤 재실행이 같은 라운드 번호로 지난 출력에 붙는다.
+        # `--stage` 는 04 통과 로그를 지우지 않게 지금처럼 뒤에 붙인다.
+        log_path.unlink()
 
     st.append_event(paths, "stage_start", cmd="gate", phase=pid, round=round_no)
     report = gate_mod.run_gate(root, config, adapter, s,
@@ -3209,9 +3214,7 @@ def _stage_render(stage):
 
 
 def _write_json(path, data):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                          encoding="utf-8")
+    st._write_json(Path(path), data)
 
 
 # -------------------------------------------------------------------- precheck
@@ -3647,7 +3650,7 @@ def run_pr(root, run_id=None):
     data["secret_files_missing"] = missing
     if not closed_run and secret_files and len(missing) == len(secret_files):
         st.demote(s, None, "secret_files_missing")
-    body = pr_mod.build_body(root, paths, s, config)
+    body = pr_mod.build_body(root, paths, s, config, adapter)
     body_path = paths.run_dir / "06_pr_body.md"
     body_path.parent.mkdir(parents=True, exist_ok=True)
     # 산출물은 UTF-8 을 명시한다. 한글 식별자가 흔한 리포다.
@@ -4107,7 +4110,16 @@ def main(argv=None):
         return st.emit(st.envelope(
             "usage", False, 2, None, {"commands": sorted(HANDLERS)},
             "커맨드를 지정한다: %s" % ", ".join(sorted(HANDLERS)), None))
-    return handler(resolve_root(), args)
+    try:
+        return handler(resolve_root(), args)
+    except st.StateCorrupt as exc:
+        # 트레이스백이면 stdout 이 비어 봉투 계약이 깨진다. 지우라고 하지 않는다 —
+        # `/feature` 는 render 를 지시로 따른다.
+        return st.emit(st.envelope(
+            args.cmd, False, 1, None,
+            {"run_id": exc.run_id, "state_path": str(exc.path), "error": str(exc.error)},
+            "state.json 이 깨졌다 — `%s` (%s)\n\n멈추고 사용자에게 이 경로를 보인다. "
+            "복구는 사람이 한다." % (exc.path, exc.error), None))
 
 
 def resolve_root():

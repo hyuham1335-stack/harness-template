@@ -302,7 +302,4 @@ def _probe(probe):
                 return True, "%s:%s 에 붙었다" % (host, port)
         except (OSError, TypeError, ValueError):
             return False, "%s:%s 에 붙지 못했다" % (host, port)
-    if kind == "cmd":
-        return (harness._resolve_bin(Path.cwd(), probe.get("bin") or "") is not None,
-                "실행 파일 %r" % probe.get("bin"))
     return True, "알 수 없는 프로브 종류 %r — 건너뛴다" % kind

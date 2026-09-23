@@ -180,9 +180,12 @@ def new_run_id(now=None, seed_bytes=b""):
 
 
 def _write_json(path, data):
+    """임시 파일에 다 쓴 뒤 바꿔 끼운다 — 쓰는 도중 끊겨도 이전 파일이 남는다."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                   encoding="utf-8")
+    os.replace(str(tmp), str(path))
 
 
 def create_run(root, slug, request_path, profile=None, seed_bytes=None, now=None):
@@ -304,15 +307,26 @@ def latest_run_id(root, include_done=False):
     return best
 
 
+class StateCorrupt(Exception):
+    """state.json 을 읽을 수 없다 — 잘린 JSON·잘린 UTF-8. 복구는 사람이 한다."""
+
+    def __init__(self, run_id, path, error):
+        Exception.__init__(self, "%s: %s" % (path, error))
+        self.run_id, self.path, self.error = run_id, path, error
+
+
 def load(root, run_id=None):
-    """(RunPaths, state). 런이 없으면 (None, None)."""
+    """(RunPaths, state). 런이 없으면 (None, None). 깨졌으면 `StateCorrupt`."""
     rid = run_id or latest_run_id(root)
     if rid is None:
         return None, None
     paths = RunPaths(root, rid)
     if not paths.state.exists():
         return None, None
-    return paths, json.loads(paths.state.read_text(encoding="utf-8"))
+    try:
+        return paths, json.loads(paths.state.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise StateCorrupt(rid, paths.state, exc)
 
 
 def save(paths, s, now=None):

@@ -243,7 +243,6 @@
             "type": "string",
             "enum": [
               "tcp",
-              "cmd",
               "env"
             ]
           },
@@ -257,12 +256,6 @@
           },
           "var": {
             "type": "string"
-          },
-          "cmd": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           },
           "required_when_touched": {
             "type": "array",

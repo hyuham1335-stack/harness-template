@@ -116,7 +116,7 @@
 | [[ADR-H073]] | 제출 검사 선언도 읽히거나 거부된다 | 채택됨 | 부분 승계 | 소멸: `EXTERNAL_RAW`·레인 상한(`CAP_LANES`) ([[ADR-H075]]). `SUBMIT_CHECKS` 레지스트리는 산다. 백로그 31·32 는 [[ADR-H075]] 가 닫음 |
 | [[ADR-H074]] | 계기판은 압력이 실리는 집합을 잰다 | 채택됨 | 대상 소멸 | 슬롯 계측은 [[ADR-H056]] 의 슬롯 예산과 함께 [[ADR-H075]] 가 지웠다 |
 | [[ADR-H075]] | 덜어내기 — 실물 4런 근거로 뺀 것과 남긴 것 | 채택됨 | 구현 | 백로그 28·29·31·32·34·35 닫음(대상 소멸). 4웨이브 = PR #29·#30·#31·#32. 첫 실물런 전에 예측표 8개를 PILOT-LOG 에 옮긴다 |
-| [[ADR-H076]] | 덜어내기 사후 검증 — 실행기 결함과 집행 지점 | 채택됨 | 구현(PR 1~3 · fix 1·2) | 초록이 정합을 뜻하지 않았다. PR 1 = 실행기 결함 A1~A10 + 훅. PR 2 = 읽히지 않는 선언·잔재 + gen 에이전트(추기). PR 3 = 문서·색인·PILOT-LOG(추기). fix = PR 3 이 남긴 결함 다섯(추기). fix 2 = fix 가 남긴 셋 — 미읽음 선언 · 「미구현」 행 · 재게이트 소요(추기). PR 4(성능)가 추기한다 |
+| [[ADR-H076]] | 덜어내기 사후 검증 — 실행기 결함과 집행 지점 | 채택됨 | 구현(PR 1~4 · fix 1·2) | 초록이 정합을 뜻하지 않았다. PR 1 = 실행기 결함 A1~A10 + 훅. PR 2 = 읽히지 않는 선언·잔재 + gen 에이전트(추기). PR 3 = 문서·색인·PILOT-LOG(추기). fix = PR 3 이 남긴 결함 다섯(추기). fix 2 = fix 가 남긴 셋 — 미읽음 선언 · 「미구현」 행 · 재게이트 소요(추기). PR 4 = 비용·시간 — 픽스처 복사 · 원자 쓰기 · 어댑터 재로드 · kind cmd 삭제(추기) |
 
 ---
 
@@ -4594,6 +4594,29 @@ PILOT-LOG 골격을 남은 장치 기준으로 다시 썼다. 이 ADR 이 백로
 *남은 결함*: 이 추기로 페이즈 파일의 「미구현」 표기는 0건이다. 다음은 PR 4(성능).
 
 *검증*: 테스트 커밋 시점 15 failed · 621 passed(새 테스트만 빨강 · 가드 5건은 초록) → 636 passed · `lint-phases`·`doctor`·`harness.py doctor` exit 0.
+
+**추기 (2026-09-23 · PR 4 — 비용·시간, B‴)**:
+
+*고친 것*:
+1. **`repo` 픽스처를 세션 템플릿 복사로** — 테스트마다 git 을 다섯 번(init · config ×2 · add · commit) 띄웠다. 세션에 한 번 만든 템플릿을 `copytree` 한다. 리포는 여전히 `tmp_path` 자신이다 — `origin.git`·클론이 리포 안 untracked 로 보이는 데 기대는 테스트가 20건이다.
+2. **상태 JSON 원자 쓰기** — `state._write_json` 이 `<name>.tmp` 에 쓴 뒤 `os.replace` 한다. `save`·`create_run`·`escalate` 와, 이제 이것에 위임하는 `cli._write_json`(`04_gate_report.json`·`06_pr_req.json`)이 탄다.
+3. **깨진 state.json 은 봉투로** — `load` 가 `read_text`·`json.loads` 의 `ValueError`(잘린 UTF-8 포함)를 `StateCorrupt` 로 올리고 `cli.main` 이 봉투를 낸다. 전에는 트레이스백이라 stdout 이 비어 「단일 JSON 봉투」가 깨졌다.
+4. **어댑터 재로드 제거** — `gate._parse_contract` 와 `pr._verified_lines`·`build_body` 가 호출자가 이미 읽은 adapter 를 받는다.
+5. **잔손질** — `pr._read` 가 파일을 닫는다 · `harness.py` 의 두 `reconfigure` 가 `errors="replace"` · `--stage` 없는 전체 게이트는 시작 시 `gr-{n}.stdout.log` 를 지운다 — 인프라 에스컬레이션은 카운터를 안 써 `resume` 뒤 재실행이 같은 라운드 번호가 되고, 지난 인프라 출력에 다시 걸려 비인프라 실패도 exit 10 이었다.
+6. **`infra_preflight` 의 `kind: cmd` 를 지웠다** — 코드는 스키마가 거부하는 `bin` 을 읽어(스키마는 `cmd` 배열만 허용) 늘 통과했고, 선언한 어댑터가 없었다. cwd 를 쓰던 분기가 사라져 「`_probe` root 인자」도 닫혔다.
+
+*결정*:
+1. **`append_event` 의 전체 재읽기는 두었다**(사용자 결정) — 형제 리포 실물런 5개의 `events.jsonl` 이 76~108줄이라 런 전체의 재읽기가 ms 단위다. seq 를 상태에 두면 append 뒤 save 하지 않는 호출처(`run_pr` 의 `waiting_human` 등)에서 어긋난다.
+2. **`completed_runs`·`mask` 는 이미 충족** — `completed_runs` 는 full 이 돈 게이트 호출당 1회(`gate._tests_floor`)이고, `mask.secret_values` 의 재로드는 `config is None` 폴백뿐이다(운영 호출처는 둘 다 넘긴다).
+3. **로그는 전체 게이트만 비운다**(사용자 결정) — 05 `--stage` 는 04 통과 라운드와 같은 번호라, 비우면 `04_gate_report.json` 의 `log` 가 05 출력을 가리킨다.
+4. **깨진 state 는 exit 1 그대로** — 새 어휘를 만들지 않는다(README 「내부 오류」). render 는 「멈추고 사용자에게 경로를 보인다 — 복구는 사람이 한다」다 — `/feature` 는 render 를 지시로 따르므로 삭제를 시키지 않는다. `latest_run_id` 가 깨진 런을 건너뛰는 것은 두었다(`/feature` 는 늘 `--run-id` 를 넘긴다).
+5. **`kind: cmd` 는 고치지 않고 지운다**(사용자 결정, fix PR 2 결정 1 과 같은 규칙).
+
+*트레이드오프*: 인프라 에스컬레이션 뒤 `resume` 한 전체 게이트는 에스컬레이션의 근거였던 로그를 지운다 — `ESCALATION.md` 와 이벤트가 남는다. 다른 프로세스가 공유 삭제 없이 state.json 을 열고 있으면 `os.replace` 가 PermissionError 다(드묾). 쓰기가 끊기면 `.tmp` 가 남는다 — run_dir 을 나열하는 코드가 없고 `_workspace` 는 추적되지 않는다. `status` 의 「항상 exit 0」은 깨진 state 에서 예외다.
+
+*남은 결함*: `gate` 는 여전히 어댑터를 두 번 읽는다(`_req_adapter_stage` · `_run_gate_cmd`) · `pr` 은 `pc.run` 에서 한 번 더 · `pr._verified_lines` 는 유닛마다 테스트 파일을 다시 읽는다 · `contract._tests_for_source`·`trace_contract._found_anywhere` 의 유닛×파일 전수 읽기 · `secret_values` 가 `pr` 한 번에 두 번 · `mask.py` 의 파일 핸들 누수 · `05_review.json`·`05_trace.json` 은 비원자 쓰기 · `_probe` 의 모르는 kind 는 조용히 통과(스키마·doctor 가 먼저 거부한다) · `_workspace/runs` 보존 정책 없음(README 한 줄).
+
+*검증*: 테스트 커밋 시점 11 failed(새 테스트만 빨강 · 가드 1건은 초록) → 648 passed · `lint-phases`·`doctor`·`harness.py doctor` exit 0(cp949 파이프). `pytest scripts/` 총 소요: main 636 passed 390초 → 픽스처만 217초 → 최종 648 passed 192초(같은 머신 · 측정 간 편차 있음). `CLAUDE.md` 의 「3분쯤」이 다시 사실이 됐다.
 
 ---
 
