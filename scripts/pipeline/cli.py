@@ -612,9 +612,9 @@ def _pipeline_checks(root):
     #    시점은 리뷰어를 이미 띄운 뒤다. **기동 전에, 무료로 잡는다**.
     out.append(_check_reviewers(root, config))
 
-    # ⑥ 원격과 base. 06 이 진입할 때 exit 9(3지선다)로 멈추는 것을 **기동 전에,
-    #    무료로** 알려 준다 (06-pr.md 「실패 시」). 여기서 막지는 않는다 — 원격 없이 로컬까지만
-    #    가는 것도 정당한 선택이고, 그 선택은 사람의 것이다.
+    # ⑥ 원격과 base. 06 이 exit 9 로 멈추는 것을 **기동 전에, 무료로** 알려 준다
+    #    (06-pr.md 「실패 시」). 여기서 막지는 않는다 — 원격을 붙이는 것은 사람의 일이고
+    #    01~05 는 원격 없이 돈다. 무료라 로컬 추적 ref 를 본다 — 06 은 원격에 직접 묻는다.
     out.append(_check_remote(root, config))
     return out
 
@@ -625,13 +625,14 @@ def _check_remote(root, config):
         return {"name": name, "status": "SKIP", "message": "config 를 읽지 못했다"}
     vcs = config.get("vcs") or {}
     remote = vcs.get("remote") or "origin"
-    base = vcs.get("base_branch")
+    base = vcs.get("base_branch") or "main"
     r = harness._git(root, "remote")
     names = (r.stdout.split() if r is not None and r.returncode == 0 else [])
     if remote not in names:
         return {"name": name, "status": "WARN",
-                "message": "원격 %r 이 없다 — 06 이 exit 9 3지선다로 멈춘다. "
-                           "**자동으로 만들지 않는다** (06-pr.md 「실패 시」)." % remote}
+                "message": "원격 %r 이 없다 — 06 이 exit 9 로 멈춘다(원격을 붙이거나 "
+                           "중단). **자동으로 만들지 않는다** (06-pr.md 「실패 시」)."
+                           % remote}
     v = harness._git(root, "rev-parse", "--verify", "-q",
                      "refs/remotes/%s/%s" % (remote, base))
     if v is None or v.returncode != 0:
@@ -3582,13 +3583,18 @@ def run_pr(root, run_id=None):
                 % (pr_mod.NOTES_FILE, "\n".join("- %s" % p for p in problems),
                    pr_mod.NOTES_EXAMPLE),
                 "python scripts/pipeline/cli.py pr --run-id %s" % s["run_id"])
-    # 3. 원격 상태 — 없으면 3지선다, non-FF 면 에스컬레이션
+    # 3. 원격 상태 — 원격·base 가 없으면 exit 9(붙이거나 중단), non-FF 면 에스컬레이션
     rs = pr_mod.remote_state(root, config, branch)
     data["remote"] = rs
     if not rs["has_remote"]:
         st.append_event(paths, "waiting_human", cmd="pr", phase="06-pr",
                         reason="no_remote")
         return st.envelope("pr", False, 9, s, data, _no_remote_render(rs), None)
+    if not rs["has_base"]:
+        # PR 을 열 대상이 없다 — push 해도 forge 의 PR 생성에서야 드러난다.
+        st.append_event(paths, "waiting_human", cmd="pr", phase="06-pr",
+                        reason="no_base")
+        return st.envelope("pr", False, 9, s, data, _no_base_render(rs), None)
     if rs["non_ff"]:
         st.escalate(paths, s,
                     "원격 브랜치가 non-fast-forward 다 (%d 커밋 앞섬)"
@@ -3718,9 +3724,20 @@ def _no_remote_render(rs):
         "`%s` 원격을 찾지 못했다. **자동으로 원격을 만들거나 브랜치를 만들지 "
         "않는다.**" % rs["remote"],
         "",
-        "① 원격을 붙이고 재개",
-        "② 로컬 커밋까지만 하고 종료 (등급 `PASS_WITH_GAPS`)",
-        "③ 중단",
+        "① 원격을 붙이고 `pr` 을 다시 친다",
+        "② 중단 — 런을 그대로 둔다",
+    ])
+
+
+def _no_base_render(rs):
+    return "\n".join([
+        "## base 가 원격에 없다 — 사람이 정한다",
+        "",
+        "`%s` 원격에 base 브랜치 `%s` 가 없다 — PR 을 열 대상이 없다. **자동으로 "
+        "만들지 않는다.**" % (rs["remote"], rs["base"]),
+        "",
+        "① base 를 원격에 올리고 `pr` 을 다시 친다",
+        "② 중단 — 런을 그대로 둔다",
     ])
 
 

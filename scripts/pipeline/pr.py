@@ -13,8 +13,9 @@
   생성하지 않는다.** 어디에 커밋할지는 사람이 정한다.
 - **exit 6** — 승인 뒤에 소스가 바뀌었다. 승인은 지문에 묶여 있고, 지문이
   어긋나면 그 승인은 다른 코드에 대한 것이다 → 재승인.
-- **exit 9** — 사람의 판단 대기. 승인 미응답 · 원격 부재(3지선다).
-  **상태를 잠그지 않는다.** stdin 을 붙잡지 않고 정상 종료한 뒤 `--resume`.
+- **exit 9** — 사람의 판단 대기. 승인 미응답 · 원격이나 base 부재(붙이거나 중단).
+  **상태를 잠그지 않는다.** stdin 을 붙잡지 않고 정상 종료한다 — 답을 받고 `pr` 을
+  다시 친다(승인이면 `approve` 먼저).
 - **exit 10** — non-fast-forward. **force-push 가 금지이므로 자동 해결이
   없다** (06-pr.md 「실패 시」). 외부 리뷰 스레드와 승인이 깨지기 때문이다.
 
@@ -62,33 +63,43 @@ def check_branch(root, config):
 # ----------------------------------------------------------------------- 원격
 
 def remote_state(root, config, branch):
-    """원격과 브랜치의 상태. 반환: {"has_remote","remote_has_branch","non_ff"}.
+    """원격과 브랜치의 상태.
+    반환: {"has_remote","has_base","base","remote_has_branch","non_ff"}.
 
     `non_ff` 는 **원격이 로컬에 없는 커밋을 갖고 있는가**다. 그러면 우리의
     push 는 fast-forward 가 아니고, force 는 금지다.
     """
     vcs = config.get("vcs") or {}
     remote = vcs.get("remote") or "origin"
+    base = vcs.get("base_branch") or "main"
     r = harness._git(root, "remote")
     names = (r.stdout.split() if r is not None and r.returncode == 0 else [])
     if remote not in names:
-        return {"has_remote": False, "remote": remote,
-                "remote_has_branch": False, "non_ff": False, "behind": 0}
+        return {"has_remote": False, "remote": remote, "has_base": False,
+                "base": base, "remote_has_branch": False, "non_ff": False,
+                "behind": 0}
+
+    # **base 는 원격에 직접 묻는다** (ADR-H076 fix 2). fetch 는 원격에서 지워진 ref 의
+    # 로컬 추적 ref 를 지우지 않아 rev-parse 가 낡은 답을 낸다. `--exit-code` 는 일치가
+    # 없으면 2 다 — 그 밖(네트워크 등)은 판정할 수 없어 막지 않는다. push 가 말한다.
+    lr = harness._git(root, "ls-remote", "--exit-code", remote, "refs/heads/%s" % base)
+    has_base = not (lr is not None and lr.returncode == 2)
 
     harness._git(root, "fetch", "-q", remote, branch)
     ref = "refs/remotes/%s/%s" % (remote, branch)
     r = harness._git(root, "rev-parse", "--verify", "-q", ref)
     if r is None or r.returncode != 0:
         # 원격에 이 브랜치가 아직 없다 — 첫 push 다. non-FF 가 아니다.
-        return {"has_remote": True, "remote": remote,
-                "remote_has_branch": False, "non_ff": False, "behind": 0}
+        return {"has_remote": True, "remote": remote, "has_base": has_base,
+                "base": base, "remote_has_branch": False, "non_ff": False,
+                "behind": 0}
 
     r = harness._git(root, "rev-list", "--count", "HEAD..%s" % ref)
     behind = 0
     if r is not None and r.returncode == 0 and r.stdout.strip().isdigit():
         behind = int(r.stdout.strip())
-    return {"has_remote": True, "remote": remote, "remote_has_branch": True,
-            "non_ff": behind > 0, "behind": behind}
+    return {"has_remote": True, "remote": remote, "has_base": has_base, "base": base,
+            "remote_has_branch": True, "non_ff": behind > 0, "behind": behind}
 
 
 def push(root, config, branch):
