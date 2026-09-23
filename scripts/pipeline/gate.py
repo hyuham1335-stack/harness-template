@@ -40,7 +40,7 @@ def run_gate(root, config, adapter, state, phase_front,
         wanted = resolve_stage_selector(steps, only_stage)
         steps = [s for s in steps if s.get("id") in wanted]
 
-    parsed = _parse_contract(root, config, state)
+    parsed = _parse_contract(root, config, adapter, state)
 
     results, gaps = [], []
     loop_failed = None
@@ -142,14 +142,13 @@ def _selectors(parsed):
     return parsed.get("selectors") or None
 
 
-def _parse_contract(root, config, state):
+def _parse_contract(root, config, adapter, state):
     """계약을 읽고 선택자를 미리 조립한다. 없으면 None."""
     rel = ((state or {}).get("contract") or {}).get("path")
     if not rel or not (Path(root) / rel).exists():
         return None
     text = (Path(root) / rel).read_text(encoding="utf-8")
 
-    _config, adapter = adapters.load(root)
     parsed = contract_mod.parse(text, config)
     sel = contract_mod.test_selectors(root, config, adapter, parsed)
     parsed["selectors"] = sel["paths"]

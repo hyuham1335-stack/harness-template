@@ -339,14 +339,13 @@ def _by_file_count(by_file, rel):
     return None
 
 
-def _verified_lines(root, state, config):
+def _verified_lines(root, state, config, adapter):
     """유닛 | 테스트 파일 | 케이스 수. **못 잰 것은 「미측정」이다** — 0 이 아니다.
 
     유닛의 테스트 파일은 계약 심볼이 본문에 나오는 테스트 파일이다.
     케이스 수는 마지막 full 실행이
     남긴 `state.tests.by_file` 이다 — 06 이 리포트를 다시 읽지 않는다.
     """
-    import adapters
     import trace_contract
 
     parsed = _contract_parsed(root, state, config)
@@ -354,7 +353,6 @@ def _verified_lines(root, state, config):
     head = ["**무엇이 검증됐나**", ""]
     if not units:
         return head + ["_계약 유닛이 없다._", ""]
-    _config, adapter = adapters.load(root)
     tests = trace_contract._unit_test_files(adapter, trace_contract.repo_files(root))
     tinfo = state.get("tests") or {}
     by_file = tinfo.get("by_file")
@@ -404,7 +402,7 @@ def _review05_line(paths, state):
             % (" · ".join("`%s`" % c for c in sorted(codes)), fixed, minors))
 
 
-def build_body(root, paths, state, config):
+def build_body(root, paths, state, config, adapter):
     """PR 본문을 조립한다. **완료 등급이 최상단 한 줄이다.**
 
     다섯 절의 출처는 옛 명세의 템플릿 매핑표가 정한다. 없는 것은 지어내지 않고
@@ -446,7 +444,7 @@ def build_body(root, paths, state, config):
     # 리뷰어가 먼저 읽을 것을 위에 두고 계약 원문은 맨 끝에 접는다.
     lines += ["## 작업 내용", ""]
     lines += _flow_lines(paths)
-    lines += _verified_lines(root, state, config)
+    lines += _verified_lines(root, state, config, adapter)
     lines += [_review05_line(paths, state), ""]
     lines += ["- 변경 규모: %s" % stat, ""]
     if units:

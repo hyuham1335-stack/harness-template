@@ -3367,8 +3367,7 @@ class TestStageNotApplicable:
         _pp, s = st.load(repo, run_id)
         s["gaps"] = ["stage_na:docs"]
         st.save(_pp, s)
-        body = pr_mod.build_body(repo, paths, s,
-                                 harness._read_json(repo / harness.CONFIG_REL))
+        body = pr_mod.build_body(repo, paths, s, *adapters.load(repo))
         assert "- stage_na:docs" in body, body
 
 
@@ -4624,8 +4623,7 @@ class TestPr06MinorAccounting:
     """「미해결 Minor」의 출처는 런 전체이지 마지막 라운드가 아니다."""
 
     def _body(self, repo, paths, s):
-        return pr_mod.build_body(repo, paths, s,
-                                 harness._read_json(repo / harness.CONFIG_REL))
+        return pr_mod.build_body(repo, paths, s, *adapters.load(repo))
 
     def test_라운드가_없으면_05_review_json_으로_낙하한다(
             self, repo, request_file, phases):
@@ -5166,8 +5164,7 @@ class TestPr06BodyTruth:
     """본문이 파이썬 repr 을 찍고 없는 결손을 보고했다."""
 
     def _body(self, repo, paths, s):
-        return pr_mod.build_body(repo, paths, s,
-                                 harness._read_json(repo / harness.CONFIG_REL))
+        return pr_mod.build_body(repo, paths, s, *adapters.load(repo))
 
     def _plan(self, paths, text):
         (paths.run_dir / "01_plan.md").write_text(text, encoding="utf-8")
@@ -5197,8 +5194,7 @@ class TestPr06Body:
         _pp, s = st.load(repo, run_id)
         s["gaps"] = ["stage_absent:e2e"]
         st.save(_pp, s)
-        body = pr_mod.build_body(repo, paths, s,
-                                 harness._read_json(repo / harness.CONFIG_REL))
+        body = pr_mod.build_body(repo, paths, s, *adapters.load(repo))
         first = body.strip().splitlines()[0]
         assert "PASS_WITH_GAPS" in first
         assert "stage_absent:e2e" in body
@@ -5207,8 +5203,7 @@ class TestPr06Body:
         _branch(repo, "feat-x")
         run_id, paths = _enter_06(repo, request_file, phases)
         _pp, s = st.load(repo, run_id)
-        body = pr_mod.build_body(repo, paths, s,
-                                 harness._read_json(repo / harness.CONFIG_REL))
+        body = pr_mod.build_body(repo, paths, s, *adapters.load(repo))
         for sec in ("## 개요", "## 작업 내용", "## 참고사항", "## 체크리스트"):
             assert sec in body, sec
 
@@ -5234,8 +5229,7 @@ class TestPr06BodyReadability:
     """
 
     def _body(self, repo, paths, s):
-        return pr_mod.build_body(repo, paths, s,
-                                 harness._read_json(repo / harness.CONFIG_REL))
+        return pr_mod.build_body(repo, paths, s, *adapters.load(repo))
 
     def test_아는_gap_코드는_한글_설명이_붙는다(self, repo, request_file, phases):
         _branch(repo, "feat-x")
@@ -5433,8 +5427,7 @@ class TestPr06ContractAfterDrop:
     """
 
     def _body(self, repo, paths, s):
-        return pr_mod.build_body(repo, paths, s,
-                                 harness._read_json(repo / harness.CONFIG_REL))
+        return pr_mod.build_body(repo, paths, s, *adapters.load(repo))
 
     def _with_path(self, repo, run_id):
         """실물 06 은 `_refresh_contract` 가 `path` 를 싣는다. 픽스처는 안 싣는다."""
@@ -6701,8 +6694,7 @@ class TestPr06WorkSection:
         if mutate:
             mutate(s)
             st.save(paths, s)
-        return pr_mod.build_body(repo, paths, s,
-                                 harness._read_json(repo / harness.CONFIG_REL))
+        return pr_mod.build_body(repo, paths, s, *adapters.load(repo))
 
     def _work(self, body):
         return body.split("## 작업 내용", 1)[1].split("## 참고사항", 1)[0]

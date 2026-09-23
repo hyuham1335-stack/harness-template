@@ -3645,7 +3645,7 @@ def run_pr(root, run_id=None):
     data["secret_files_missing"] = missing
     if not closed_run and secret_files and len(missing) == len(secret_files):
         st.demote(s, None, "secret_files_missing")
-    body = pr_mod.build_body(root, paths, s, config)
+    body = pr_mod.build_body(root, paths, s, config, adapter)
     body_path = paths.run_dir / "06_pr_body.md"
     body_path.parent.mkdir(parents=True, exist_ok=True)
     # 산출물은 UTF-8 을 명시한다. 한글 식별자가 흔한 리포다.
