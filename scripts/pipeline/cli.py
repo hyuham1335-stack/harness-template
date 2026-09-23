@@ -3043,6 +3043,13 @@ def _run_gate_cmd(root, phase="04", only_stage=None, run_id=None, runner=None):
     report["run_id"] = s["run_id"]
     report["round"] = round_no
     report["log"] = paths.rel(log_path)
+    if report["stages"]:
+        # 출력 전문은 로그에 있다 — 원장에는 소요와 종료 코드만. 스킵은 `sec` 가 없다
+        # (못 잰 칸은 만들지 않는다). `round` 는 05 에서 04 의 repair+1 이라 싣지 않는다.
+        st.append_event(paths, "gate_stages", cmd="gate", phase=pid,
+                        selector=only_stage or "all", log=report["log"],
+                        stages=[{k: x[k] for k in ("id", "state", "exit", "sec", "reason")
+                                 if k in x} for x in report["stages"]])
 
     if only_stage:
         # 단일 스테이지는 카운터를 소모하지 않고 리포트를 덮어쓰지 않는다.
@@ -3412,7 +3419,8 @@ def cmd_report(root, args):
 
 
 def run_report(root, out=None, run_id=None):
-    """08 — 결정론 표 조립 + 필수 섹션 검사. 종료 코드 **0 / 3 / 6**.
+    """08 — 결정론 표 조립 + 필수 섹션 검사. 종료 코드 **0 / 3 / 8 / 11** —
+    3 은 런·입력이 없거나 `INCOMPLETE`, 8 은 서술 하한 미달, 11 은 런을 닫았다.
 
     **보고서는 파이프라인을 실패시키지 않는다.** 섹션이 빠져도 산출하고
     원장에 기록만 한다 — 보고서가 런을 실패시키면 안 쓰는 것이 이득이 된다.

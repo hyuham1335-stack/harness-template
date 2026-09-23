@@ -103,6 +103,11 @@ EVENT_KINDS = (
     # 선언한 docs 레인이 03·05 의 실물에서 빗나갔다(`lane_miss`) — 역할 소유
     # 경로가 바뀌었는데 01 리뷰어·역할을 건너뛴 채 왔다.
     "lane_miss",
+    # 게이트 한 번의 스테이지별 소요(`gate_stages`). `sec` 는 `04_gate_report.json`
+    # 에만 실렸는데 그 파일은 04 매 회차 덮어쓰이고, 05 재게이트(`--stage`)는 쓰지도
+    # 않았다 — 「05 수리 뒤 full 1회가 wall 에 얼마나 드는가」를 잴 곳이 없었다
+    # (ADR-H076 fix 2). 원장은 추가만 되므로 앞 회차가 남는다.
+    "gate_stages",
 )
 
 GRADES = ("PASS", "PASS_WITH_GAPS", "INCOMPLETE")
