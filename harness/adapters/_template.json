@@ -15,8 +15,8 @@
     "compile": {"cmd": null},
     "lint": {"cmd": null},
     "check": {"cmd": null},
-    "scoped": {"cmd": null, "loop_stage": true},
-    "full": {"cmd": null, "once_after_loop": true},
+    "scoped": {"cmd": null},
+    "full": {"cmd": null},
     "e2e": {"cmd": null},
     "build": {"cmd": null},
     "docs": {"cmd": null}

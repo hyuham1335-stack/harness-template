@@ -2,8 +2,6 @@
 {
   "id": "05-code-review",
   "index": 5,
-  "owner": "main",
-  "approval": "none",
   "requires": [
     {"kind": "state", "pointer": "phases.04-gate.status", "equals": "passed"},
     {"kind": "file", "path": "${run.contract_file}", "min_bytes": 200,
@@ -11,19 +9,21 @@
      "unless": "state.contract.mode == \"no_contract\""}
   ],
   "produces": [
-    {"key": "trace", "path": "${run.dir}/05_trace.json", "kind": "json"},
-    {"key": "review", "path": "${run.dir}/05_review.json", "kind": "json"}
+    {"key": "review_raw", "path": "${run.dir}/05_review_${config.reviewers.0.code}.raw.md",
+     "kind": "markdown"},
+    {"key": "review_json", "path": "${run.dir}/05_review_${config.reviewers.0.code}.json",
+     "kind": "json"},
+    {"key": "trace", "path": "${run.dir}/05_trace.json", "kind": "json",
+     "owner": "executor"},
+    {"key": "review", "path": "${run.dir}/05_review.json", "kind": "json",
+     "owner": "executor"}
   ],
-  "review": {
-    "reviewer": "config.reviewers[0]",
-    "depth": "config.review.depth"
-  },
   "gate": {
-    "runner": "adapter", "fail_fast": true, "rerun_failed_once": true,
+    "runner": "adapter", "fail_fast": true,
     "steps": [
       {"id": "compile", "loop_stage": true},
       {"id": "scoped", "tests_from": "contract", "loop_stage": true},
-      {"id": "full", "once_after_loop": true, "assert_tests_ran": true}
+      {"id": "full"}
     ]
   },
   "submit_checks": [
@@ -102,8 +102,8 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
 
 ### 4번 — 리뷰어는 하나다
 
-누구를 부를지 **네가 정하지 않는다.** 봉투가 `gen` 을 이름 짓고 스킬 파일 경로를
-준다. 소스 변경이 있으면 계획되고, 없으면 0명이다 — 0명은 `review05.status` 가
+누구를 부를지 **네가 정하지 않는다.** 봉투가 `gen` 을 이름 짓고 Agent 호출의
+`subagent_type` 을 준다. 소스 변경이 있으면 계획되고, 없으면 0명이다 — 0명은 `review05.status` 가
 `failed` 이고 등급이 `PASS_WITH_GAPS` 로 떨어진다. 아무도 안 부른 것은 통과가
 아니라 미수행이다. docs 레인은 문서 변경만으로도 계획된다 — 문서와 요청의 정합을
 본다.
@@ -113,7 +113,9 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
 **계약 `## 유닛` 이 참조하는 기존 파일의 경로**. diff 밖 상호작용(낙관적 잠금 ·
 상태 가드 · 기존 전이 함수)을 보는 것이 이 범위의 목적이다 — FR-007 의 동시성
 결함이 05 를 지나 07 에서 잡혔다. 파일 본문을 인라인하지 말고 경로로 준다.
-프롬프트 첫 줄은 **스킬 파일을 읽으라는 지시**다. 스킬 본문을 복사해 싣지 마라.
+관점·제출 형식은 에이전트 정의(`.claude/agents/{reviewer.agent}.md`)가 든다 —
+본문을 복사해 싣지 마라. `model` 인자를 주지 마라 — 모델·effort 는 그 프론트매터가
+정한다 (ADR-H061 · ADR-H076).
 
 ## 역할 프롬프트 템플릿
 
@@ -123,9 +125,6 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
 
 ```
 ## 리뷰 요청 — {reviewer.code}
-
-`.claude/skills/{reviewer.skill}/SKILL.md` 를 먼저 읽어라. 관점과 제출 형식이
-거기 있다.
 
 ## 변경 (인라인 diff)
 {diff}
@@ -230,8 +229,8 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
   계약이 참조하는 기존 파일과 재사용 심볼의 정의는 예외다 — 경로를 준다
 - **계약을 고치지 마라.** 이유: 계약은 메인 단독 소유이고, 리뷰어가 계약 결함을
   발견하면 그것은 수리가 아니라 **에스컬레이션**이다(`CONTRACT_DEFECT`)
-- **스킬 본문을 프롬프트에 복사하지 마라.** 이유: 첫 줄에서 파일을 읽으라고
-  지시한다
+- **에이전트 정의 본문을 프롬프트에 복사하지 마라.** 이유: Agent 호출이 정의를
+  싣는다 — 두 번 실으면 토큰만 든다
 - **Minor 를 고치려 들지 마라.** 이유: 수리 대상은 Critical/Major 뿐이다.
   Minor 는 보고서로 간다. **다만 다음 회차 제출에서 회계는 한다**
   (M38) — 단조성 검사는 심각도를 가리지 않고 열린 지적 전부를 요구하고, 하나라도

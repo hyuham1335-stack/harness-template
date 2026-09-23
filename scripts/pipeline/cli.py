@@ -45,9 +45,19 @@ PRODUCES_KINDS = ("json", "markdown")
 # 없었다 (ADR-H073). 집합을 닫아야 근거 없는 어휘가 되돌아오지 못한다.
 PRODUCES_KEYS = ("key", "path", "kind", "owner", "min_bytes", "must_contain",
                  "unless")
-FRONT_KEYS = ("id", "index", "owner", "approval", "docs", "requires", "produces",
-              "review", "converge", "submit_checks", "gate", "loop", "trace_loop",
-              "allow", "on_success")
+# `produces[].owner` — 누가 쓰는가. `executor` 는 실행기 산출물이라 봉투의 「쓸 파일」에
+# 싣지 않는다 (ADR-H076 B′). 없으면 `main` 이다.
+PRODUCES_OWNERS = ("main", "executor")
+FRONT_KEYS = ("id", "index", "requires", "produces", "review", "converge",
+              "submit_checks", "gate", "loop", "trace_loop", "allow", "on_success")
+# 하위 키도 닫는다 — 최상위만 닫혀 있어 `rerun_failed_once`·`assert_tests_ran` 같은
+# 키가 네 페이즈에 살면서 한 번도 안 읽혔다 (ADR-H076 B).
+REVIEW_KEYS = ("unless", "reviewers")
+REVIEWER_KEYS = ("code", "agent")
+GATE_KEYS = ("runner", "fail_fast", "steps")
+GATE_STEP_KEYS = ("id", "tests_from", "loop_stage")
+CONVERGE_KEYS = ("blocking_severities", "focus_round_2")
+LOOP_KEYS = ("counter", "max", "max_by_profile", "on_exceed")
 REQUIRED_SECTIONS = ("## 목적", "## 진입 조건", "## 절차",
                      "## 제출 형식", "## 금지", "## 실패 시")
 ROLE_TEMPLATE_SECTION = "## 역할 프롬프트 템플릿"
@@ -349,6 +359,10 @@ def _lookup(ctx, dotted):
             % (ns, "·".join(_NAMESPACES)))
     node = ctx
     for part in dotted.split("."):
+        if isinstance(node, list) and part.isdigit() and int(part) < len(node):
+            # `config.reviewers.0.code` — 05 산출물 이름의 리뷰어 code (ADR-H076 B′)
+            node = node[int(part)]
+            continue
         if not isinstance(node, dict) or part not in node:
             raise PlaceholderError("`${%s}` 를 해결하지 못했다" % dotted)
         node = node[part]
@@ -580,7 +594,7 @@ def _pipeline_checks(root):
     #    첫 계약이 그 형태를 베끼고, 유닛이 부풀어 스코프 선택이 조용히 빗나간다.
     out.append(_check_template_parses(root, config))
 
-    # ⑤ 리뷰어. 05 가 없는 스킬을 부르면 라운드마다 헛돌고, 그것을 알게 되는
+    # ⑤ 리뷰어. 05 가 없는 에이전트를 부르면 라운드마다 헛돌고, 그것을 알게 되는
     #    시점은 리뷰어를 이미 띄운 뒤다. **기동 전에, 무료로 잡는다** (§E10).
     out.append(_check_reviewers(root, config))
 
@@ -617,7 +631,7 @@ def _check_remote(root, config):
 def _check_reviewers(root, config):
     import review as review_mod
 
-    name = "리뷰어 스킬"
+    name = "리뷰어 에이전트"
     if not config:
         return {"name": name, "status": "SKIP", "message": "config 를 읽지 못했다"}
     reviewers = config.get("reviewers") or []
@@ -782,18 +796,30 @@ def lint_phases(root, phases_dir=None):
                 add(name, "produces_kind", "FAIL",
                     "알 수 없는 produces kind: %r (%s)"
                     % (prod.get("kind"), ", ".join(PRODUCES_KINDS)))
-            unknown_pk = [k for k in prod if k not in PRODUCES_KEYS]
-            if unknown_pk:
-                add(name, "produces_keys", "FAIL",
-                    "produces 에 알 수 없는 키: %s (%s) — 읽는 코드가 없는 키는 "
-                    "선언이 아니라 장식이다 (ADR-H073)"
-                    % (", ".join(sorted(unknown_pk)), ", ".join(PRODUCES_KEYS)))
+            _lint_closed(name, "produces_keys", prod, PRODUCES_KEYS, add, "produces")
+            owner = prod.get("owner")
+            if owner is not None and owner not in PRODUCES_OWNERS:
+                add(name, "produces_owner", "FAIL",
+                    "produces.owner 가 어휘 밖이다: %r (%s)"
+                    % (owner, ", ".join(PRODUCES_OWNERS)))
             key = prod.get("key")
             if key in seen_keys:
                 add(name, "produces_key", "FAIL",
                     "produces.key %r 가 %s 와 겹친다" % (key, seen_keys[key]))
             else:
                 seen_keys[key] = pid
+        review = front.get("review") or {}
+        _lint_closed(name, "review_keys", review, REVIEW_KEYS, add, "review")
+        for r in review.get("reviewers") or []:
+            _lint_closed(name, "reviewer_keys", r, REVIEWER_KEYS, add, "review.reviewers[]")
+        gate = front.get("gate") or {}
+        _lint_closed(name, "gate_keys", gate, GATE_KEYS, add, "gate")
+        for step in gate.get("steps") or []:
+            _lint_closed(name, "gate_step_keys", step, GATE_STEP_KEYS, add, "gate.steps[]")
+        _lint_closed(name, "converge_keys", front.get("converge"), CONVERGE_KEYS, add,
+                     "converge")
+        _lint_closed(name, "loop_keys", front.get("loop"), LOOP_KEYS, add, "loop")
+        _lint_closed(name, "loop_keys", front.get("trace_loop"), LOOP_KEYS, add, "trace_loop")
         _lint_submit_checks(name, front, declared_checks, add)
         _lint_loop(name, pid, front, loaded, add)
         _lint_loop(name, pid, front, loaded, add, key="trace_loop")
@@ -936,6 +962,17 @@ def _lint_converge(name, front, add):
         add(name, "blocking_severities", "FAIL", str(exc))
 
 
+def _lint_closed(name, rule, obj, keys, add, label):
+    """키 집합을 닫는다 — 읽는 코드가 없는 키는 선언이 아니라 장식이다 (ADR-H073)."""
+    if not isinstance(obj, dict):
+        return
+    unknown = [k for k in obj if k not in keys]
+    if unknown:
+        add(name, rule, "FAIL",
+            "%s 에 알 수 없는 키: %s (%s) — 읽는 코드가 없는 키는 선언이 아니라 "
+            "장식이다 (ADR-H073)" % (label, ", ".join(sorted(unknown)), ", ".join(keys)))
+
+
 def _lint_conditions(name, front, add):
     """`review.unless` · `allow.unless` 가 조건식 문법인가 (ADR-H044).
 
@@ -981,14 +1018,6 @@ def _lint_loop(name, pid, front, loaded, add, key="loop"):
             "%s.on_exceed 가 어휘 밖이다: %r (%s) — **없는 동작을 어휘로 "
             "예고하지 않는다.** 늘리려면 그 동작을 먼저 만든다"
             % (key, on_exceed, ", ".join(LOOP_ON_EXCEED)))
-
-    # 01 은 `converge` 와 `loop` 가 같은 초과 동작을 선언한다. 코드는 `loop` 를
-    # 읽으므로 둘이 갈리면 `converge` 쪽이 조용히 무시된다.
-    conv_exceed = (front.get("converge") or {}).get("on_exceed")
-    if key == "loop" and conv_exceed is not None and conv_exceed != on_exceed:
-        add(name, "on_exceed", "FAIL",
-            "converge.on_exceed(%r) 와 loop.on_exceed(%r) 가 다르다 — "
-            "코드는 loop 를 읽는다" % (conv_exceed, on_exceed))
 
 
 def _index_prefix(phase_id):
@@ -1053,11 +1082,16 @@ def _lint_paths(name, front, ctx, add):
 
 
 def _lint_agents(root, name, front, config, add):
-    allow = (front.get("allow") or {}).get("agents")
-    if allow != "config.roles[].agent":
-        return
-    for role in config.get("roles") or []:
-        agent = role.get("agent")
+    """이 페이즈가 부르는 에이전트 파일의 실재 — `allow.agents` 가 가리키는 역할과
+    `review.reviewers[].agent`. 후자는 아무도 검사하지 않았다 (ADR-H076 B′)."""
+    wanted = []
+    if (front.get("allow") or {}).get("agents") == "config.roles[].agent":
+        wanted += [role.get("agent") for role in config.get("roles") or []]
+    wanted += [r.get("agent") for r in (front.get("review") or {}).get("reviewers") or []]
+    for agent in wanted:
+        if not agent:
+            add(name, "agent_file", "FAIL", "리뷰어에 agent 가 없다 — 누구를 부를지 없다")
+            continue
         path = root / ".claude" / "agents" / ("%s.md" % agent)
         if not path.exists():
             add(name, "agent_file", "FAIL",
@@ -1077,9 +1111,9 @@ def _lint_cycle(loaded, add):
 
 
 def _lint_reviewers(root, config, add):
-    """스킬 파일 실재 · 작성자 격리 · code 유니크.
+    """에이전트 파일 실재 · 작성자 격리 · code 유니크.
 
-    **기동 전에, 무료로 잡는다** (§E10 첫 행). 05 가 없는 스킬을 부르면 라운드
+    **기동 전에, 무료로 잡는다** (§E10 첫 행). 05 가 없는 에이전트를 부르면 라운드
     마다 헛돌고, 그것을 알게 되는 시점은 리뷰어를 이미 띄운 뒤다.
     """
     import review as review_mod
@@ -1197,8 +1231,7 @@ def run_next(root, run_id=None):
 
     render, next_cmd = render_packet(root, phase, ctx, s, checks)
     env = st.envelope("next", True, 0, s,
-                      {"produces": [resolve(p.get("path"), ctx)
-                                    for p in phase["front"].get("produces") or []],
+                      {"produces": _model_produces(phase["front"], ctx),
                        "requires_report": checks,
                        # 런 전체의 사전 검사는 **첫 페이즈**에서 한 번.
                        "prescan": _prescan(root, loaded, ctx, s) if pid == "01-plan" else []},
@@ -1310,7 +1343,7 @@ def _plan_05_review(root, paths, s, ctx):
         if _docs_lane_source_check(root, paths, s, ctx, "05-code-review",
                                    source_changed=True, cmd="next"):
             profile = "normal"
-    reviewers = [{"code": r["code"], "skill": r["skill"]}
+    reviewers = [{"code": r["code"], "agent": r["agent"]}
                  for r in ctx["config"].get("reviewers") or []]
     # 메인 소유 파일(`harness/**`·`.claude/**`)만 더러운 워킹트리에서 gen 을
     # 계획하면 「커밋만 있으면 exit 3」 거부 경로가 죽는다 — 소스 변경으로 판정한다.
@@ -1500,20 +1533,18 @@ def _review_render(s):
     round_ = ((s.get("counters") or {}).get("review_repair") or {}).get("used", 0) + 1
     planned = _planned_for_round(node, round_)
     by_code = {r.get("code"): r for r in node.get("reviewers") or []}
-    depth = node.get("depth") or "diff+refs"
-    if depth == "diff+refs":
-        lines.append("리뷰 범위: **diff+refs** — 계약 `## 유닛` 이 참조하는 **기존** "
-                     "파일을 리뷰어 패킷에 경로로 넣어라. diff 밖 상호작용(낙관적 "
-                     "잠금 · 상태 가드 · 기존 전이 함수)을 보는 것이 이 범위의 "
-                     "목적이다 — 05 가 놓치고 07 이 잡은 것이 그 자리였다 (FR-007).")
-    else:
-        lines.append("리뷰 범위: **%s** — 인라인 diff · 계약 · `05_trace.json` 만. "
-                     "그 밖의 파일은 패킷에 넣지 않는다." % depth)
+    # 값은 하나다 (ADR-H059 · ADR-H075) — `diff` 분기는 죽은 어휘였다 (ADR-H076 B).
+    lines.append("리뷰 범위: **diff+refs** — 계약 `## 유닛` 이 참조하는 **기존** "
+                 "파일을 리뷰어 패킷에 경로로 넣어라. diff 밖 상호작용(낙관적 "
+                 "잠금 · 상태 가드 · 기존 전이 함수)을 보는 것이 이 범위의 "
+                 "목적이다 — 05 가 놓치고 07 이 잡은 것이 그 자리였다 (FR-007).")
     lines.append("")
     for code in planned:
-        skill = (by_code.get(code) or {}).get("skill") or code
-        lines.append("- `%s` → `.claude/skills/%s/SKILL.md`" % (code, skill))
-    lines += ["", "프롬프트 첫 줄은 **스킬 파일을 읽으라는 지시**다. 본문을 복사하지 마라."]
+        agent = (by_code.get(code) or {}).get("agent") or code
+        lines.append("- `%s` → Agent 호출 `subagent_type: %s` (`.claude/agents/%s.md`)"
+                     % (code, agent, agent))
+    lines += ["", "관점·제출 형식은 에이전트 정의가 든다 — 본문을 프롬프트에 복사하지 마라. "
+                  "`model` 인자를 주지 마라 — 모델·effort 는 프론트매터가 정한다 (ADR-H061)."]
     inline = node.get("inline") or {}
     if inline and not inline.get("inline"):
         lines += ["", "**diff 를 인라인하지 마라 — 경로로 전달한다.** 인라인 "
@@ -1522,6 +1553,12 @@ def _review_render(s):
                       "리뷰어가 그 파일만 읽게 한다. 이 사실은 상태에 남는다."
                   % " · ".join(inline.get("over") or [])]
     return "\n".join(lines)
+
+
+def _model_produces(front, ctx):
+    """모델이 쓰는 산출물 경로 — `owner: executor`(실행기가 쓴다)는 뺀다 (ADR-H076 B′)."""
+    return [resolve(p.get("path"), ctx) for p in front.get("produces") or []
+            if p.get("owner") != "executor"]
 
 
 def render_packet(root, phase, ctx, s, checks=None):
@@ -1552,7 +1589,7 @@ def render_packet(root, phase, ctx, s, checks=None):
     parts.append(_section(body, "## 제출 형식"))
     parts.append(_section(body, "## 금지"))
 
-    produces = [resolve(p.get("path"), ctx) for p in front.get("produces") or []]
+    produces = _model_produces(front, ctx)
     if produces:
         parts.append("## 쓸 파일\n\n" +
                      "\n".join("- `%s`" % p for p in produces))
@@ -3068,8 +3105,6 @@ def _write_json(path, data):
                           encoding="utf-8")
 
 
-# ---------------------------------------------- advance · retry · escalate · resume
-
 # -------------------------------------------------------------------- precheck
 
 def cmd_precheck(root, args):
@@ -3251,7 +3286,7 @@ def run_approve(root, phase="06", revoke=False, auto=False, run_id=None):
                        % s["run_id"])
 
 
-# 승인은 그 앞 페이즈가 끝난 뒤에만 뜻이 있다. 07 은 `inherited:06` 이라
+# 승인은 그 앞 페이즈가 끝난 뒤에만 뜻이 있다. 07 은 06 의 승인을 그대로 쓰고
 # 자기 승인을 따로 받지 않는다 — 그래서 여기 없다.
 _APPROVE_REQUIRES = {"06-pr": "05-code-review"}
 

@@ -2,8 +2,6 @@
 {
   "id": "04-gate",
   "index": 4,
-  "owner": "main",
-  "approval": "none",
   "requires": [
     {"kind": "file", "path": "${run.contract_file}", "min_bytes": 200,
      "must_contain": "${config.contract.sections.units}",
@@ -13,16 +11,17 @@
      "mode": "fail"}
   ],
   "produces": [
-    {"key": "gate_report", "path": "${run.dir}/04_gate_report.json", "kind": "json"}
+    {"key": "gate_report", "path": "${run.dir}/04_gate_report.json", "kind": "json",
+     "owner": "executor"}
   ],
   "gate": {
-    "runner": "adapter", "fail_fast": true, "rerun_failed_once": true,
+    "runner": "adapter", "fail_fast": true,
     "steps": [
       {"id": "compile"},
       {"id": "lint"},
       {"id": "check"},
       {"id": "scoped", "tests_from": "contract", "loop_stage": true},
-      {"id": "full", "once_after_loop": true, "assert_tests_ran": true},
+      {"id": "full"},
       {"id": "e2e"},
       {"id": "build"},
       {"id": "docs"}

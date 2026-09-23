@@ -116,7 +116,7 @@
 | [[ADR-H073]] | 제출 검사 선언도 읽히거나 거부된다 | 채택됨 | 구현 | [[ADR-H070]] 이 번호 없이 남긴 잔여를 닫았다. 백로그 28 곁가지(`profile_caps` 폴백)도 같이. **07 의 `source_quote_substring` 은 구현이 아예 없었다.** 「선언이 실제로 돌았다」는 → 백로그 31, 05 의 선언 부재 → 백로그 32 |
 | [[ADR-H074]] | 계기판은 압력이 실리는 집합을 잰다 | 채택됨 | 구현 | 백로그 33 닫음. [[ADR-H056]] 의 **계측**만 고쳤다 — 집계 범위를 `rules_read` 집합 전체로 · 번호 목록도 한 칸(실물 13 → **17**) · 초과는 gap 이 아니라 관측. **값 12 는 그대로** → 백로그 34, 역할별 분리 → 백로그 35 |
 | [[ADR-H075]] | 덜어내기 — 실물 4런 근거로 뺀 것과 남긴 것 | 채택됨 | 구현 | 백로그 28·29·31·32·34·35 닫음(대상 소멸). 4웨이브 = PR #29·#30·#31·#32. 첫 실물런 전에 예측표 8개를 PILOT-LOG 에 옮긴다 |
-| [[ADR-H076]] | 덜어내기 사후 검증 — 실행기 결함과 집행 지점 | 채택됨 | 구현(PR 1) | 초록이 정합을 뜻하지 않았다. PR 1 = 실행기 결함 A1~A10 + 훅. PR 2(선언·잔재) · PR 3(문서) · PR 4(성능)가 추기한다 |
+| [[ADR-H076]] | 덜어내기 사후 검증 — 실행기 결함과 집행 지점 | 채택됨 | 구현(PR 1·2) | 초록이 정합을 뜻하지 않았다. PR 1 = 실행기 결함 A1~A10 + 훅. PR 2 = 읽히지 않는 선언·잔재 + gen 에이전트(추기). PR 3(문서) · PR 4(성능)가 추기한다 |
 
 ---
 
@@ -4457,7 +4457,7 @@ PILOT-LOG 골격을 남은 장치 기준으로 다시 썼다. 이 ADR 이 백로
 
 ### ADR-H076: 덜어내기 사후 검증 — 실행기 결함과 집행 지점
 
-**날짜**: 2026-09-22 · **상태**: 채택됨 · **구현 상태**: 구현됨 (2026-09-22 — PR 1: 실행기 결함 A1~A10 + 훅. PR 2·3·4 는 이 ADR 에 추기한다)
+**날짜**: 2026-09-22 · **상태**: 채택됨 · **구현 상태**: 구현됨 (2026-09-22 — PR 1: 실행기 결함 A1~A10 + 훅 · 2026-09-23 — PR 2: 선언·잔재, 추기 참조. PR 3·4 는 이 ADR 에 추기한다)
 
 **맥락**: 덜어내기 4웨이브([[ADR-H075]]) 뒤 기계 검사는 전부 초록이었다 — `doctor` exit 0 ·
 `lint-phases` findings 0 · `pytest scripts/` 543 passed. **그러나 초록이 정합을 뜻하지 않았다.**
@@ -4505,6 +4505,21 @@ PILOT-LOG 골격을 남은 장치 기준으로 다시 썼다. 이 ADR 이 백로
 **재검토 시점**: 첫 실물런([[ADR-H075]] 예측표와 함께). 특히 — (a) 05 수리 런에서 full 1회 추가가 wall 에 얼마나 드는가, (b) `trace_repair` 가 실제로 소모되는가(2 가 모자란가 남는가), (c) `next`·`record` 의 exit 6 이 실물 워커에게 몇 번 나는가 — 0 이면 봉투 지시가 충분한 것이고, 잦으면 봉투가 재게이트를 더 크게 말해야 한다.
 
 관련: [[ADR-H046]](scoped 단독 재게이트의 결함 — A1 이 그 재현) · [[ADR-H025]](선언은 읽히거나 거부된다 — A8·A9 와 PR 2) · [[ADR-H075]](덜어내기 — 이 ADR 이 그 사후 검증) · [[ADR-H039]](남의 실측을 상속하지 않는다 — 재검토 시점)
+
+**추기 (2026-09-23 · PR 2 — 읽히지 않는 선언·잔재, B·B′)**:
+
+*지운 것* — 페이즈 프론트매터: 최상위 `owner`·`approval`·`docs`(주입 장치의 마지막 잔재) · 01 `review.parallel`·`reviewers[].kind/raw/json` · `converge` 의 `counter`·`max_by_profile`·`one_round_allowed_when`·`on_exceed`(상한·초과 동작의 출처는 `loop` 하나) · 04·05 `gate.rerun_failed_once`·`steps[].once_after_loop`·`assert_tests_ran` · 05 `review` 블록. config 스키마: `source_inject_max_chars`·`guardrail_docs`·`vcs.pr_template`·`project.language`(required 였으나 읽는 코드 없음), `review_depth` 는 `diff+refs` 하나(cli 의 `diff` 분기 삭제). 어댑터 스키마: stage 의 `blocking`·`loop_stage`·`once_after_loop`, `map[].export`. 죽은 코드: `report._sum_phase`·`GAP_REASONS` 2건·`review.REVIEW_FILE`/`severity_headings`(verdict 가 정본)·`harness.PHASES_DIR_REL`/`_parse_junit`·`state.RUN_STATUS`/`abandoned`·이벤트 `phase_fail`/`phase_skip`/`stage_skipped`·미사용 import 4·`execute.py` 서술 4곳. 영구 스킵 테스트 2건 — P8 실물 앵커는 삭제([[ADR-H039]]), 라우팅 0명은 변경 집합을 비워 실제로 밟는다.
+
+*결정*:
+1. **gen 리뷰어는 에이전트 파일이다** — `.claude/agents/general-reviewer.md`(`opus · high`, plan-reviewer 와 같다). config 는 `reviewers[].agent`, 봉투·05 템플릿·feature 는 「스킬 파일을 읽으라는 지시」 대신 Agent 호출 `subagent_type` 을 준다. 본문은 그대로 옮겼다(4.6KB).
+2. **하위 키도 닫는다** — `REVIEW_KEYS`·`REVIEWER_KEYS`·`GATE_KEYS`·`GATE_STEP_KEYS`·`CONVERGE_KEYS`·`LOOP_KEYS`·`PRODUCES_OWNERS`. `converge` 는 읽히는 둘(`blocking_severities`·`focus_round_2`)만 — 원안은 `on_exceed` 도 남기는 것이었으나 런타임이 안 읽고 lint 대조만 있어 출처가 둘인 채였다.
+3. **`produces[].owner` 는 읽힌다** — `executor`(04 `gate_report` · 05 `trace`/`review` · 06 `pr_body`/`pr_req` · 08 `report`)는 봉투의 「쓸 파일」과 `data.produces` 에서 뺀다. 모델 산출물 `05_review_{code}.raw.md/.json`·`06_pr_result.json` 을 `produces` 에 선언했고, 리뷰어 code 는 `${config.reviewers.0.code}` — 플레이스홀더가 리스트 인덱스를 푼다(이 PR 의 유일한 메커니즘 추가).
+4. **어댑터의 `loop_stage` 도 지웠다** — 루프 구간은 페이즈 파일의 `gate.steps[].loop_stage` 만 정한다. 원안 목록에 없었으나 `once_after_loop` 와 같은 부류다.
+5. `_lint_agents` 가 `review.reviewers[].agent`(plan-reviewer)의 실재도 본다 — 아무도 검사하지 않던 파일이었다.
+
+*트레이드오프*: 리뷰어 관점·제출 형식이 기동마다 에이전트 정의로 실린다(4.6KB) — 파일 읽기 지시와 비용은 같고, 모델·effort 가 고정되는 것이 얻는 것이다. `abandoned` 를 지워 「이어질 일이 없는 런」을 표시할 자리가 없다 — 그 자리를 쓰는 코드가 없었으므로 필요해지면 서브커맨드와 함께 되돌린다.
+
+*검증*: `pytest scripts/` 전부 초록 · `lint-phases`·`doctor`·`harness.py doctor` exit 0 · `grep -rn "rerun_failed_once\|assert_tests_ran\|once_after_loop\|guardrail_docs\|one_round_allowed_when\|source_inject_max_chars\|pr_template" harness .claude scripts` 0건 · `skills/general-reviewer` 는 이 파일의 역사 인용뿐.
 
 ---
 

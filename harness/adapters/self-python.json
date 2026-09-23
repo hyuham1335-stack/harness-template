@@ -17,8 +17,8 @@
     "compile": {"cmd": null, "not_applicable": "파이썬에 컴파일 단계가 없다."},
     "lint": {"cmd": null, "_note": "린터를 의존성으로 들이지 않는다 — 템플릿은 stdlib 만으로 돈다."},
     "check": {"cmd": null, "_note": "의존성이 없으므로 취약점 게이트가 잴 것이 없다."},
-    "scoped": {"cmd": ["-m", "pytest"], "timeout_sec": 600, "loop_stage": true},
-    "full": {"cmd": ["-m", "pytest", "scripts/"], "timeout_sec": 1800, "once_after_loop": true},
+    "scoped": {"cmd": ["-m", "pytest"], "timeout_sec": 600},
+    "full": {"cmd": ["-m", "pytest", "scripts/"], "timeout_sec": 1800},
     "e2e": {"cmd": null, "not_applicable": "E2E 개념이 없다."},
     "build": {"cmd": null, "not_applicable": "빌드 산출물이 없다."},
     "docs": {"cmd": null, "not_applicable": "문서 빌드 산출물이 없다."}

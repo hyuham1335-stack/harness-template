@@ -33,7 +33,6 @@ CONFIG_SCHEMA_REL = "harness/config.schema.json"
 ADAPTER_DIR_REL = "harness/adapters"
 ADAPTER_SCHEMA_REL = "harness/adapters/adapter.schema.json"
 CONTRACT_TEMPLATE_REL = "harness/templates/contract.md"
-PHASES_DIR_REL = "harness/phases"
 # 런 디렉터리. `state.py` 가 이 값을 그대로 쓴다 — 완주 런을 세는 쪽
 # (`completed_runs`)이 이 층에 있어야 다른 층이 같은 것을 센다. state 는
 # harness 를 import 하므로 역방향은 안 된다.
@@ -937,17 +936,6 @@ def _junit_failed_units(root_el):
                     "detail": (node.text or "").strip(),
                 })
     return out
-
-
-def _parse_junit(root, adapter):
-    """junit XML 에서 테스트 수를 읽는다. 없으면 (None, None, None, False).
-
-    좁은 시각이다. 정본은 parse_test_report 다.
-    """
-    if adapter["test_report"]["format"] != "junit-xml":
-        return None, None, None, False
-    r = _junit_report(root, adapter)
-    return r["ran"], r["suites"], r["failures"], r["matched"]
 
 
 def run_init(root, adapter, name, force=False):

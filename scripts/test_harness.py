@@ -371,10 +371,8 @@ class CoreDoesNotImportTheExecutorTest(unittest.TestCase):
     `NODE_RUNNERS` 자물쇠(위)와 같은 모양이다: 방침을 산문이 아니라 기계가 든다.
     """
 
-    #: 실행기 자신과 그 입력 형식(`phases/*/index.json`)을 읽는 것들.
-    #: 셋 다 추출 범위 밖이라 execute 를 물어도 템플릿에 영향이 없다.
-    ALLOWED = {"scripts/execute.py", "scripts/backfill_reads.py",
-               "scripts/test_execute.py", "scripts/test_harness.py"}
+    #: 이 파일 자신 — 위 docstring 이 `import execute` 를 인용한다.
+    ALLOWED = {"scripts/test_harness.py"}
 
     def test_only_the_executor_family_imports_execute(self):
         hits = []

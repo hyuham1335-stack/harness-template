@@ -42,18 +42,11 @@ RUNS_REL = harness.RUNS_REL      # 완주 런 세기(`harness.completed_runs`)�
 #               그것이 정확한 서술이다.
 PHASE_STATUS = ("running", "passed", "failed", "escalated", "skipped")
 
-# 런 상태 어휘. 셋 다 예전에는 리터럴로 세 곳에 흩어져 있었고, `done` 은
-# **거르는 쪽(`latest_run_id`)만 있고 쓰는 쪽이 없었다** — 그래서 어떤 런도
-# 닫히지 않았다 (M24).
-# `abandoned` 는 "이어질 일이 없다" 다. `done`(완주)과 갈라 두는 이유는
-# 보고서와 원장이 둘을 같은 것으로 읽으면 안 되기 때문이고, `active` 로
-# 남겨 두지 않는 이유는 **이어지지 않을 런이 이어질 것처럼 보이는 것 자체가
-# 거짓**이기 때문이다.
-RUN_STATUS = ("active", "escalated", "done", "abandoned")
-
+# 런 상태는 `active` · `escalated` · `done` 이다. `abandoned` 는 대입하는 자리가
+# 없었다 — `abandon` 서브커맨드를 Wave 1 이 지웠다 (ADR-H076 B).
 # `latest_run_id` 가 기본값으로 집지 않는 상태. `escalated` 는 빠져 있다 —
 # 재개 가능한 런이고, 안 집으면 사람의 판단을 기다리는 런이 화면에서 사라진다.
-TERMINAL_STATUS = ("done", "abandoned")
+TERMINAL_STATUS = ("done",)
 
 # `on_success` 의 종단 센티널. `08-report.md` 의 프론트매터가 성공 시
 # 다음을 `done` 이라 적는다 — 페이즈 id 가 아니라 "여기서 끝" 이라는 표식이다.
@@ -81,13 +74,13 @@ COUNTER_REASONS = (
 # 닫힌 어휘다. budget.model_calls 가 봉투의 지시에서 유도되므로, 어휘가
 # 열려 있으면 그 값의 정의가 조용히 흔들린다.
 EVENT_KINDS = (
-    "run_created", "phase_enter", "phase_pass", "phase_fail", "phase_skip",
+    "run_created", "phase_enter", "phase_pass",
     "submit_received", "check_fail",
     # `check_fail` 은 "제출이 규약을 어겼다", `reviewer_failed` 는 "그 리뷰어가
     # 아예 안 돌았다" 다. 뭉치면 원장에서 **형식 문제와 미수행이 같아 보이고**,
     # 05 의 라우팅 결함 진단이 불가능해진다.
     "reviewer_failed",
-    "stage_start", "stage_done", "stage_skipped",
+    "stage_start", "stage_done",
     "dispatch", "counter_inc",
     "escalated", "resumed", "horizon",
     # `horizon` 은 "다음 페이즈가 아직 없다", `run_closed` 는 "런이 끝났다" 다.
@@ -344,9 +337,8 @@ def append_event(paths, kind, cmd=None, phase=None, now=None, **data):
 def read_events(paths):
     """`events.jsonl` 을 seq 순 리스트로. **깨진 줄 하나로 나머지를 버리지 않는다.**
 
-    `_read_session_metrics`(execute.py)와 같은 규율이다 — 쓰이는 중인 파일은
-    마지막 줄이 잘려 있을 수 있고, 그 한 줄 때문에 실측 전부를 잃으면
-    "못 읽었다"가 "아무 일도 없었다"로 보고된다.
+    쓰이는 중인 파일은 마지막 줄이 잘려 있을 수 있고, 그 한 줄 때문에 실측
+    전부를 잃으면 "못 읽었다"가 "아무 일도 없었다"로 보고된다.
     """
     if not paths.events.exists():
         return []

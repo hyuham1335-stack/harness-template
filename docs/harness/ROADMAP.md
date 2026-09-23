@@ -25,7 +25,7 @@
 | 실행기 | `scripts/harness.py` — `init` · `doctor`. `scripts/runtime.py` — 시각·트랜스크립트 읽기·출력 인코딩의 공유 원시요소 ([ADR-H037](DECISIONS.md)) |
 | **파이프라인 코어** | `scripts/pipeline/{cli,state,adapters,verdict,contract,gate,trace_contract,review,precheck,mask,pr,report}.py` — 8페이즈 실행기. `doctor` · `init --feature` · `next` · `record` · `gate` · `resume` · `status` · `lint-phases` · `precheck` · `contract-trace` · `approve` · `pr` · `report`. **stdout 은 언제나 단일 JSON 봉투 하나**. 모듈명이 `trace.py` 가 아닌 것은 stdlib `trace` 를 가리기 때문이다 |
 | **페이즈 파일** | `harness/phases/{01-plan,03-implement,04-gate,05-code-review,06-pr,07-pr-review,08-report}.md` — `---` 로 감싼 JSON 프론트매터. 레인(`docs`·`fix`·`normal`)은 `init --profile` 로 사용자가 선언하고 기본은 `normal` 이다 — `docs` 선언이 빗나가면 03·05 가 `lane_miss` 로 드러낸다 (ADR-H044 · H053). `lint-phases` 의 FUTURE 전이는 0건이다 |
-| **리뷰어** | `.claude/skills/general-reviewer/SKILL.md` — 하나다. 소스 변경이 있으면 켜지고 `diff+refs` 로 본다. 델타 재리뷰도 같은 리뷰어다. `docs` 런에서는 문서↔요청 정합을 본다 ([ADR-H075](DECISIONS.md)) |
+| **리뷰어** | `.claude/agents/general-reviewer.md` — 하나다. 스킬에서 에이전트로 옮겨 모델·effort 를 프론트매터가 정한다 ([ADR-H076](DECISIONS.md)). 소스 변경이 있으면 켜지고 `diff+refs` 로 본다. 델타 재리뷰도 같은 리뷰어다. `docs` 런에서는 문서↔요청 정합을 본다 ([ADR-H075](DECISIONS.md)) |
 | **진입점** | `.claude/commands/feature.md` (`/feature` — 01~08 전부. push 는 실행기가 하고 **PR 생성·코멘트 게시는 메인 세션이 forge 도구로** 한다. **머지는 범위 밖**) · `.claude/agents/{impl-writer,plan-reviewer}.md` (각 3KB 이하 — 소유 경계·제출 형식·금지만 담고 규약은 담지 않는다) |
 | 테스트 | `scripts/test_harness.py` · `scripts/test_pipeline.py` · `scripts/test_runtime.py` — `python -m pytest scripts/` |
 

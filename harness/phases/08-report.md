@@ -2,8 +2,6 @@
 {
   "id": "08-report",
   "index": 8,
-  "owner": "main",
-  "approval": "none",
   "requires": [
     {"kind": "state", "pointer": "phases.07-pr-review.status",
      "equals": "passed"},
@@ -11,7 +9,7 @@
   ],
   "produces": [
     {"key": "report", "path": "docs/harness/pipeline/runs/${run.id}.md",
-     "kind": "markdown"}
+     "kind": "markdown", "owner": "executor"}
   ],
   "gate": {"runner": "none"},
   "allow": {"agents": []},

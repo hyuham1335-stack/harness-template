@@ -3,7 +3,6 @@
 
   "project": {
     "name": "{{name}}",
-    "language": "ko",
     "instruction_file": "CLAUDE.md",
     "secret_files": [".env.local", ".env"]
   },
@@ -59,9 +58,9 @@
     ".env*"
   ],
 
-  "_reviewers_note": "리뷰어는 하나다 (덜어내기 Wave 4 · ADR-H075) — 소스 변경이 있으면(docs 레인은 문서 변경만으로도) 계획되고 델타 재리뷰도 같은 하나다. 늘리면 라우팅이 아니라 planned 가 배열 순서로 전원을 부른다. skill 은 .claude/skills/{skill}/SKILL.md 를 가리키고, doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치면 거부한다 — 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
+  "_reviewers_note": "리뷰어는 하나다 (덜어내기 Wave 4 · ADR-H075) — 소스 변경이 있으면(docs 레인은 문서 변경만으로도) 계획되고 델타 재리뷰도 같은 하나다. 늘리면 라우팅이 아니라 planned 가 배열 순서로 전원을 부른다. agent 는 .claude/agents/{agent}.md 를 가리키고(모델·effort 는 그 프론트매터), doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치면 거부한다 — 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
   "reviewers": [
-    {"code": "gen", "skill": "general-reviewer"}
+    {"code": "gen", "agent": "general-reviewer"}
   ],
 
   "_review_note": "findings_max·inline_max 는 **미검증 상속값**이다 — 절단이 한 번도 안 걸리면 findings_max 가 헐거운 것이다. depth 는 diff+refs 하나다 — 05 가 diff 만 봐서 놓친 FR-007 이 근거다 (ADR-H059).",

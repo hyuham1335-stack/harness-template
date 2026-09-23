@@ -10,7 +10,7 @@
 1. **리뷰어가 전부 실패해도 findings 는 0건이다.** 그러면 "지적이 없다"가
    "리뷰가 됐다"로 읽히고, 아무도 안 본 코드가 통과한다. 그래서 `status()` 가
    findings 개수와 **분리된** 신호를 낸다 (§E1).
-2. **작성자는 리뷰어가 될 수 없다.** `config.roles[].agent` 와 겹치는 스킬은
+2. **작성자는 리뷰어가 될 수 없다.** `config.roles[].agent` 와 겹치는 에이전트는
    `validate()` 가 거부한다.
 
 glob 매칭은 `harness.glob_any` 를 그대로 쓴다. 소유 판정과 라우팅이 서로 다른
@@ -18,7 +18,6 @@ glob 엔진을 쓰면 같은 경로가 두 곳에서 다르게 읽힌다 — 이
 실패다 (M11 · M17).
 """
 
-import re
 import sys
 from pathlib import Path
 
@@ -29,16 +28,13 @@ sys.path.insert(0, str(_HERE.parent))
 import harness  # noqa: E402
 import verdict  # noqa: E402
 
-SKILLS_REL = ".claude/skills"
+AGENTS_REL = ".claude/agents"
 
 DEFAULT_FINDINGS_MAX = 50
 
-# 05 가 산출하는 리뷰 파일의 이름. `code` 축약을 쓰는 것은 경로 240자 상한 때문이다.
-REVIEW_FILE = "05_review_%s.json"
-
-
-def skill_path(root, skill):
-    return Path(root) / SKILLS_REL / skill / "SKILL.md"
+def agent_path(root, agent):
+    """리뷰어는 에이전트 파일이다 (ADR-H076 결정 7) — 모델·effort 가 프론트매터에 있다."""
+    return Path(root) / AGENTS_REL / ("%s.md" % agent)
 
 
 # ----------------------------------------------------------------------- 검증
@@ -58,18 +54,18 @@ def validate(root, config):
     authors = {r.get("agent") for r in config.get("roles") or []}
     seen_code = {}
     for r in reviewers:
-        code, skill = r.get("code"), r.get("skill")
+        code, agent = r.get("code"), r.get("agent")
         if code in seen_code:
             errors.append("리뷰어 code 가 유니크하지 않다: %r" % code)
-        seen_code[code] = skill
+        seen_code[code] = agent
 
-        if skill in authors:
+        if agent in authors:
             errors.append(
-                "리뷰어 %r 의 스킬 %r 이 작성자 역할과 같다 — **작성자 격리**가 "
-                "깨진다. 자기 코드를 리뷰한 것은 독립 관측이 아니다" % (code, skill))
-        if not skill_path(root, skill).is_file():
-            errors.append("리뷰어 %r 의 스킬 파일이 없다: %s/%s/SKILL.md — "
-                          "기동 전에 잡는다" % (code, SKILLS_REL, skill))
+                "리뷰어 %r 의 에이전트 %r 이 작성자 역할과 같다 — **작성자 격리**가 "
+                "깨진다. 자기 코드를 리뷰한 것은 독립 관측이 아니다" % (code, agent))
+        if not agent_path(root, agent).is_file():
+            errors.append("리뷰어 %r 의 에이전트 파일이 없다: %s/%s.md — "
+                          "기동 전에 잡는다" % (code, AGENTS_REL, agent))
     return errors
 
 
@@ -163,9 +159,9 @@ def check(root, config, payload, raw_text, previous_open):
     #    설정을 바꾸지 않고 reviewer 이름만 바꿔 내는 경로가 남는다.
     authors = {r.get("agent") for r in config.get("roles") or []}
     codes = {r.get("code") for r in config.get("reviewers") or []}
-    skills = {r.get("code"): r.get("skill") for r in config.get("reviewers") or []}
+    agents = {r.get("code"): r.get("agent") for r in config.get("reviewers") or []}
     who = payload.get("reviewer")
-    if who in authors or skills.get(who) in authors:
+    if who in authors or agents.get(who) in authors:
         errors.append("리뷰어 %r 이 작성자 역할이다 — 자기 코드를 리뷰한 것은 "
                       "독립 관측이 아니다" % who)
     elif codes and who not in codes:
@@ -297,11 +293,3 @@ def inline_budget(config, diff_text):
     return {"inline": not over, "lines": lines, "bytes": size,
             "over": over,
             "fallback": "경로 전달" if over else None}
-
-
-_SEVERITY_HEADING = re.compile(r"(?mi)^#{1,6}\s*(critical|major|minor)\b")
-
-
-def severity_headings(raw_text):
-    """`.raw.md` 의 심각도 헤딩 수. 검증기가 findings 개수와 대조한다."""
-    return len(_SEVERITY_HEADING.findall(raw_text or ""))

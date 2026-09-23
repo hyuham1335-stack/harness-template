@@ -2,8 +2,6 @@
 {
   "id": "03-implement",
   "index": 3,
-  "owner": "config.roles[]",
-  "approval": "none",
   "requires": [
     {"kind": "state", "pointer": "phases.01-plan.status", "equals": "passed"},
     {"kind": "file", "path": "${run.dir}/01_plan.md", "min_bytes": 200},

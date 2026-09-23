@@ -22,7 +22,6 @@ run_id · 스택트레이스의 주소가 전부 그 모양이고, 그것들이 
 """
 
 import io
-import os
 import re
 import sys
 from pathlib import Path

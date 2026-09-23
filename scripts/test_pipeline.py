@@ -17,7 +17,6 @@ test_harness.py 가 unittest 인 것은 더 오래된 층이라 그렇고, 새 �
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 import sys
@@ -51,9 +50,9 @@ COPIED = [
     "harness/adapters/adapter.schema.json",
     "harness/adapters/nextjs-ts.json",
     "harness/templates/contract.md",
-    # 05 는 기동 전에 리뷰어 스킬의 실재를 확인한다. 실물을 복사해 두므로
-    # 스킬 하나를 지우거나 이름을 바꾸면 이 테스트가 먼저 깨진다.
-    ".claude/skills/general-reviewer/SKILL.md",
+    # 05 는 기동 전에 리뷰어 에이전트의 실재를 확인한다. 실물을 복사해 두므로
+    # 에이전트 파일을 지우거나 이름을 바꾸면 이 테스트가 먼저 깨진다.
+    ".claude/agents/general-reviewer.md",
 ]
 
 
@@ -415,24 +414,6 @@ class TestPhaseDurations:
         assert t["basis"] == st.PHASE_DURATION_BASIS
         assert t["blind_spots"] == list(st.PHASE_DURATION_BLIND_SPOTS)
 
-    @pytest.mark.skipif(
-        not (ROOT / "_workspace/runs/20260908-1720-dca1/events.jsonl").exists(),
-        reason="P8 런 디렉터리가 없다")
-    def test_P8_실물_events_가_같은_값을_낸다(self):
-        """실물 앵커. 합성 픽스처만으로는 기준이 실물에서 성립하는지 모른다.
-
-        P8 은 `phase_enter` 16 · `phase_pass` 9 이고 되돌아간 01 에 진입
-        이벤트가 없다 — 이 런이 기준을 고른 근거 자체다.
-        """
-        t = st.phase_durations(st.RunPaths(ROOT, "20260908-1720-dca1"))
-        assert t["wall_sec"] == 28094
-        assert t["phases"]["01-plan"]["wall_sec"] == 20977
-        assert t["phases"]["01-plan"]["escalation_wait_sec"] == 16924
-        assert t["escalation_wait_sec"] == 16924
-        assert sum(p["wall_sec"] for p in t["phases"].values()) == 28094
-        assert sum(p["entries"] for p in t["phases"].values()) == 16
-        assert sum(p["passes"] for p in t["phases"].values()) == 9
-
 
 class TestFingerprint:
     """게이트 통과 후 소스가 바뀌면 영수증이 stale 이어야 한다."""
@@ -563,7 +544,7 @@ class TestCounterSpendReason:
     `counter_inc` 이벤트 어휘는 `state.EVENT_KINDS` 에 처음부터 있었고, 바로
     아래 주석이 그 취지를 적는다 — "뭉치면 원장에서 다섯 라운드를 쓴 런과 세
     라운드를 쓰고 둘을 더 받은 런이 같아 보인다". **그런데 일곱 호출처 중
-    `retry` 한 곳만 이벤트를 냈다.**
+    한 곳만 이벤트를 냈다.**
 
     P6 의 `events.jsonl` 에 `counter_inc` 가 **0건**인데 `review_repair` 는
     3/2 였다. 그 셋이 형식 반려로 탄 것인지 수리 실패로 탄 것인지 원장에서
@@ -871,7 +852,7 @@ def phases(repo):
         (d / ("%s.md" % pid)).write_text(
             (ROOT / "harness" / "phases" / ("%s.md" % pid)).read_text(encoding="utf-8"),
             encoding="utf-8")
-    for role in ("impl-writer",):
+    for role in ("impl-writer", "plan-reviewer"):
         agent = repo / ".claude" / "agents" / ("%s.md" % role)
         agent.parent.mkdir(parents=True, exist_ok=True)
         agent.write_text("# %s\n" % role, encoding="utf-8")
@@ -1681,8 +1662,7 @@ class TestLoopDeclarationsAreRead:
 
     def _set_max(self, repo, n):
         def mutate(f):
-            for key in ("converge", "loop"):
-                f[key]["max_by_profile"] = dict(f[key]["max_by_profile"], normal=n)
+            f["loop"]["max_by_profile"] = dict(f["loop"]["max_by_profile"], normal=n)
         _rewrite(self._p01(repo), mutate)
 
     def _critical_round(self, repo, paths, round_=1):
@@ -1736,10 +1716,12 @@ class TestLoopDeclarationsAreRead:
                  lambda f: f["loop"].__setitem__("on_exceed", "continue"))
         assert _fails(_lint(repo), "on_exceed"), _lint(repo)
 
-    def test_converge_와_loop_의_on_exceed_가_어긋나면_거부한다(self, repo, phases):
+    def test_converge_의_읽히지_않는_키는_lint_가_거부한다(self, repo, phases):
+        """`converge.on_exceed`·`max_by_profile` 은 런타임이 안 읽었다 — `loop` 가
+        출처다. 남기면 출처가 둘이다 (ADR-H076 B)."""
         _rewrite(phases / "01-plan.md",
-                 lambda f: f["converge"].__setitem__("on_exceed", "continue"))
-        assert _fails(_lint(repo), "on_exceed"), _lint(repo)
+                 lambda f: f["converge"].__setitem__("on_exceed", "escalate"))
+        assert _fails(_lint(repo), "converge_keys"), _lint(repo)
 
     def test_상한이_없으면_lint_가_거부한다(self, repo, phases):
         _rewrite(phases / "04-gate.md", lambda f: f["loop"].pop("max"))
@@ -2034,7 +2016,7 @@ class TestTestsRequiredAt03:
         assert json.loads(out.stdout)["data"]["requires_report"]
 
     def test_record_on_a_passed_phase_is_refused(self, run01):
-        """record 는 멱등이 아니다. 재작업은 retry 로만."""
+        """record 는 멱등이 아니다 — 이미 통과한 페이즈는 `next` 가 현재 페이즈를 안내한다 (A6)."""
         repo, paths, s = run01
         _submit_plan(repo, paths, _plan())
         _submit_review(repo, paths, _review("plan"))
@@ -2094,13 +2076,6 @@ class TestAdapters:
         argv = adapters.stage_argv(repo, adapter, "scoped",
                                    ["src/lib/a.test.ts", "src/lib/b.test.ts"])
         assert argv[-2:] == ["src/lib/a.test.ts", "src/lib/b.test.ts"]
-
-    def test_parse_report_agrees_with_the_contract_layer(self, repo):
-        _config, adapter = adapters.load(repo)
-        _write_report(repo, tests=7, failures=2)
-        mine = adapters.parse_report(repo, adapter)
-        theirs = harness._parse_junit(repo, adapter)
-        assert (mine["ran"], mine["suites"], mine["failures"], mine["matched"]) == theirs
 
     def test_infra_pattern_ignored_when_exit_is_zero(self, repo):
         _config, adapter = adapters.load(repo)
@@ -2566,8 +2541,6 @@ class TestPromotionGate:
         base["runner"] = {"bin": "make", "common_args": [], "cwd": "."}
         base["stages"] = {k: ({"cmd": ["run", k]} if v.get("cmd") else {"cmd": None})
                           for k, v in base["stages"].items()}
-        base["stages"]["scoped"]["loop_stage"] = True
-        base["stages"]["full"]["once_after_loop"] = True
         second.write_text(json.dumps(base, ensure_ascii=False, indent=2),
                           encoding="utf-8")
         cfg_path = repo / "harness" / "config.json"
@@ -2579,11 +2552,10 @@ class TestPromotionGate:
         findings = cli.lint_phases(repo)
         assert [f for f in findings if f["status"] == "FAIL"] == []
 
-    def test_gate_3_swapping_the_language_leaves_the_core_untouched(self, repo, phases):
-        """절 제목과 언어를 바꿔도 코어·페이즈 파일을 손대지 않는다."""
+    def test_gate_3_swapping_the_section_titles_leaves_the_core_untouched(self, repo, phases):
+        """절 제목을 바꿔도 코어·페이즈 파일을 손대지 않는다."""
         cfg_path = repo / "harness" / "config.json"
         cfg = harness._read_json(cfg_path)
-        cfg["project"]["language"] = "en"
         cfg["contract"]["sections"] = {
             "units": "## Units", "entrypoints": "## Entrypoints",
             "errors": "## Errors", "schema": "## Schema",
@@ -3420,20 +3392,20 @@ class TestReviewerIsolation:
 
     def test_author_agent_as_reviewer_is_rejected(self, repo):
         cfg = _config(repo)
-        cfg["reviewers"] = [{"code": "x", "skill": "impl-writer"}]
+        cfg["reviewers"] = [{"code": "x", "agent": "impl-writer"}]
         errs = rv.validate(repo, cfg)
         assert any("격리" in e or "작성자" in e for e in errs)
 
-    def test_missing_skill_file_is_caught_before_launch(self, repo):
+    def test_missing_agent_file_is_caught_before_launch(self, repo):
         cfg = _config(repo)
-        cfg["reviewers"] = [{"code": "x", "skill": "없는-리뷰어"}]
+        cfg["reviewers"] = [{"code": "x", "agent": "없는-리뷰어"}]
         errs = rv.validate(repo, cfg)
         assert any("없는-리뷰어" in e for e in errs)
 
     def test_duplicate_code_is_rejected(self, repo):
         cfg = _config(repo)
-        cfg["reviewers"] = [{"code": "a", "skill": "general-reviewer"},
-                            {"code": "a", "skill": "general-reviewer"}]
+        cfg["reviewers"] = [{"code": "a", "agent": "general-reviewer"},
+                            {"code": "a", "agent": "general-reviewer"}]
         assert any("code" in e for e in rv.validate(repo, cfg))
 
     def test_real_config_passes_validation(self, repo):
@@ -3441,8 +3413,8 @@ class TestReviewerIsolation:
         assert rv.validate(repo, _config(repo)) == []
 
 
-class TestReviewerSkillDocs:
-    """스킬 문서와 기계가 `quote` 의 대조 대상을 같게 말해야 한다 (M51).
+class TestReviewerAgentDocs:
+    """리뷰어 에이전트 문서와 기계가 `quote` 의 대조 대상을 같게 말해야 한다 (M51).
 
     기계는 리뷰어 **자신의 `.raw.md`** 와 대조하는데(`verdict.check_review`
     가 받는 `raw_text`) 스킬 다섯은 "diff 원문의 부분문자열" 이라 적고 있었다.
@@ -3452,12 +3424,12 @@ class TestReviewerSkillDocs:
     `COPIED` 가 이미 같은 규율로 실물을 복사한다.
     """
 
-    def test_모든_스킬이_대조_대상을_자기_원문으로_적는다(self):
-        docs = [rel for rel in COPIED if rel.startswith(".claude/skills/")]
-        # **실물 config 의 리뷰어 수와 같아야 한다.** 숫자를 박으면 리뷰어를
-        # 더할 때 이 검사가 새 스킬을 안 보는 채로 깨진다 (ADR-H043 에서 5→6).
+    def test_모든_리뷰어_에이전트가_대조_대상을_자기_원문으로_적는다(self):
+        # **실물 config 의 리뷰어가 가리키는 파일을 읽는다.** 목록을 박으면 리뷰어를
+        # 더할 때 이 검사가 새 에이전트를 안 보는 채로 깨진다 (ADR-H043 에서 5→6).
         real = harness._read_json(ROOT / harness.CONFIG_REL).get("reviewers")
-        assert len(docs) == len(real), (docs, [r["code"] for r in real])
+        docs = [".claude/agents/%s.md" % r["agent"] for r in real]
+        assert docs, real
         for rel in docs:
             lines = [ln for ln
                      in (ROOT / rel).read_text(encoding="utf-8").splitlines()
@@ -4191,13 +4163,17 @@ class TestReview05Denominator:
         return paths
 
     def test_zero_routing_is_written_to_state_not_only_rendered(
-            self, repo, request_file, phases):
-        """산문이 기계 사실을 참칭하지 않는다."""
+            self, repo, request_file, phases, monkeypatch):
+        """산문이 기계 사실을 참칭하지 않는다.
+
+        `repo` 픽스처는 늘 소스를 바꾸므로 라우팅이 비지 않는다 — 옛 판은 그래서
+        영구 스킵이었다 (ADR-H076 B). 변경 집합을 비워 0명 경로를 실제로 밟는다.
+        """
         run_id, _paths = _enter_05(repo, request_file, phases)
+        monkeypatch.setattr(pc, "changed_files", lambda *_a, **_k: [])
         cli.run_next(repo, run_id)
         _p, s = st.load(repo, run_id)
-        if s["phases"]["05-code-review"]["planned"]:
-            pytest.skip("이 리포 상태에서는 라우팅이 비지 않았다")
+        assert s["phases"]["05-code-review"]["planned"] == []
         assert s["review05"]["status"] == "failed"
         assert s["review05"]["reviewers_planned"] == 0
         assert "review05:failed" in (s.get("gaps") or [])
@@ -4444,8 +4420,7 @@ class TestReview05DeltaRound:
     @staticmethod
     def _mf(fid, title, severity="minor", category="RESPONSE_SHAPE",
             role="impl"):
-        """`NAMING`·`BOUNDARY_VIOLATION`·`MIG_DESTRUCTIVE` 를 기본값으로 쓰지
-        않는다 — 셋은 검토 제외 목록이라 `review.check` 가 드롭한다."""
+        """카테고리는 `finding_key` 의 재료다 — 검토 제외 목록은 없다 (ADR-H076 B′)."""
         return {"id": fid, "category": category, "severity": severity,
                 "target_role": role, "title": title, "quote": title}
 
@@ -4748,13 +4723,16 @@ class TestEscalationPlansTheDeltaRound:
         assert "--stage scoped" not in env["render"]
         assert "gate --phase 05 --stage loop" in env["render"]
 
-    def test_패킷은_gen_하나를_스킬_경로로_이름_짓는다(self):
+    def test_패킷은_gen_하나를_에이전트로_이름_짓는다(self):
+        """리뷰어는 에이전트 파일이다 (ADR-H076 결정 7 · D1) — 스킬 파일을 읽으라는
+        지시가 아니라 Agent 호출의 `subagent_type` 을 준다. 모델·effort 는 프론트매터."""
         s = {"counters": {"review_repair": {"used": 1, "max": 2}},
              "phases": {"05-code-review": {
                  "planned": ["gen"], "rounds_planned": {"2": ["gen"]},
-                 "reviewers": [{"code": "gen", "skill": "general-reviewer"}]}}}
+                 "reviewers": [{"code": "gen", "agent": "general-reviewer"}]}}}
         out = cli._review_render(s)
-        assert "## 리뷰어" in out and "general-reviewer" in out, out
+        assert "## 리뷰어" in out and "subagent_type: general-reviewer" in out, out
+        assert "SKILL.md" not in out and "스킬" not in out, out
 
 
 class TestFormatRejectCount:
@@ -4814,18 +4792,10 @@ class TestGradeSingleSource:
                      "pr_opened", "run_closed"):
             assert kind in st.EVENT_KINDS
 
-    def test_run_status_어휘가_닫혀_있다(self):
-        """리터럴로 흩어져 있던 것을 한 자리로 모은다 (M24).
-
-        `abandoned` 는 넷째다 — "완주했다"(`done`)와 "이어질 일이 없다"를
-        원장·보고서가 같은 것으로 읽으면 안 된다.
-        """
-        assert st.RUN_STATUS == ("active", "escalated", "done", "abandoned")
-        assert st.DONE in st.RUN_STATUS
-
-    def test_종단은_둘이고_escalated_는_빠진다(self):
-        """`escalated` 는 재개 가능한 런이다 — 안 집으면 화면에서 사라진다."""
-        assert st.TERMINAL_STATUS == ("done", "abandoned")
+    def test_종단은_done_하나이고_escalated_는_빠진다(self):
+        """`escalated` 는 재개 가능한 런이다 — 안 집으면 화면에서 사라진다.
+        `abandoned` 는 대입하는 자리가 없었다 — `abandon` 은 Wave 1 이 지웠다 (ADR-H076 B)."""
+        assert st.TERMINAL_STATUS == ("done",)
         assert "escalated" not in st.TERMINAL_STATUS
 
     def test_종단이_아닌_상태로는_close_run_이_거부한다(self):
@@ -6336,8 +6306,9 @@ class TestConvergenceThreshold:
         """5 → 3 (ADR-H041) → 2 (덜어내기 Wave 3 — 리뷰어가 리포를 읽으므로 1~2라운드). 값의 회귀 방지다."""
         repo, paths, s = run01
         front = _front(_phase_file(repo, "01-plan.md"))
-        assert front["converge"]["max_by_profile"] == {"fix": 1, "normal": 2}
-        assert front["loop"]["max_by_profile"] == front["converge"]["max_by_profile"]
+        assert front["loop"]["max_by_profile"] == {"fix": 1, "normal": 2}
+        # 출처는 `loop` 하나다 — `converge` 의 사본은 읽히지 않았다 (ADR-H076 B).
+        assert "max_by_profile" not in front["converge"]
 
     def test_missing_blocking_severities_is_exit_2(self, run01):
         repo, paths, s = run01
@@ -6535,7 +6506,9 @@ class TestAgentFrontmatter:
     실행기는 무엇이 돌았는지 보지 못한다 — 그 사실은 `state.models.blind_spots` 에 있다.
     """
 
-    EXPECTED = {"impl-writer": ("high", "sonnet"), "plan-reviewer": ("high", "opus")}
+    EXPECTED = {"impl-writer": ("high", "sonnet"), "plan-reviewer": ("high", "opus"),
+                # 05 의 리뷰어 — 스킬이었을 때는 모델·effort 가 어디에도 없었다 (ADR-H076 결정 7).
+                "general-reviewer": ("high", "opus")}
 
     def test_agent_files_pin_effort_and_model_per_role(self):
         for agent, (effort, model) in self.EXPECTED.items():
@@ -6786,6 +6759,8 @@ class TestReviewDepth:
         bad = json.loads(json.dumps(cfg))
         bad["review"]["depth"] = "everything"
         assert harness.validate(bad, schema), "어휘 밖 값은 거부다"
+        bad["review"]["depth"] = "diff"
+        assert harness.validate(bad, schema), "`diff` 는 죽은 어휘다 — 값은 하나 (ADR-H076 B)"
 
     def test_05_entry_freezes_the_depth_and_the_envelope_says_it(
             self, repo, request_file, phases):
@@ -6803,7 +6778,7 @@ class TestReviewDepth:
     def test_render_explains_the_depth(self):
         node = {"phases": {"05-code-review": {
             "planned": ["gen"], "depth": "diff+refs",
-            "reviewers": [{"code": "gen", "skill": "general-reviewer"}]}}}
+            "reviewers": [{"code": "gen", "agent": "general-reviewer"}]}}}
         out = cli._review_render(node)
         assert "리뷰 범위: **diff+refs**" in out and "참조" in out, out
 
@@ -6816,3 +6791,161 @@ class TestReviewDepth:
                   "counters": {}, "budget": {}, "profile": {"name": "normal"}})
         text, _missing = rep_mod.build(s, {})
         assert "05 리뷰 범위" in text and "diff+refs" in text, text
+
+
+# ---------------------------------------------------------------------------
+# 덜어내기 사후 검증 PR 2 — 읽히지 않는 선언·잔재 (ADR-H076 B · B′)
+# ---------------------------------------------------------------------------
+
+class TestUnreadDeclarationsAreGone:
+    """선언은 읽히거나 거부된다 (ADR-H025). 읽는 코드가 없는 키는 장식이고, 장식은
+    되돌아온다 — 그래서 실물이 비었는가와 lint 가 막는가를 둘 다 묻는다."""
+
+    UNREAD_TOP = ("owner", "approval", "docs")
+
+    def test_실물_페이즈에_읽히지_않는_키가_없다(self):
+        for pid in PHASE_IDS:
+            f = _front(ROOT / "harness" / "phases" / ("%s.md" % pid))
+            assert not set(self.UNREAD_TOP) & set(f), (pid, sorted(set(self.UNREAD_TOP) & set(f)))
+            assert set(f.get("converge") or {}) <= {"blocking_severities", "focus_round_2"}, pid
+            gate = f.get("gate") or {}
+            assert "rerun_failed_once" not in gate, pid
+            for step in gate.get("steps") or []:
+                assert not {"once_after_loop", "assert_tests_ran"} & set(step), (pid, step)
+            review = f.get("review") or {}
+            assert not {"parallel", "reviewer", "depth"} & set(review), pid
+            for r in review.get("reviewers") or []:
+                assert set(r) == {"code", "agent"}, (pid, r)
+        assert "review" not in _front(ROOT / "harness" / "phases" / "05-code-review.md")
+
+    @pytest.mark.parametrize("key", UNREAD_TOP)
+    def test_최상위_미읽음_키는_lint_가_거부한다(self, repo, phases, key):
+        _rewrite(phases / "01-plan.md", lambda f: f.__setitem__(key, "main"))
+        assert _fails(_lint(repo), "front_keys"), _lint(repo)
+
+    @pytest.mark.parametrize("phase,mutate,rule", [
+        ("01-plan.md", lambda f: f["review"].__setitem__("parallel", True), "review_keys"),
+        ("01-plan.md", lambda f: f["review"]["reviewers"][0].__setitem__("kind", "internal"),
+         "reviewer_keys"),
+        ("04-gate.md", lambda f: f["gate"].__setitem__("rerun_failed_once", True), "gate_keys"),
+        ("04-gate.md", lambda f: f["gate"]["steps"][-1].__setitem__("once_after_loop", True),
+         "gate_step_keys"),
+        ("01-plan.md", lambda f: f["converge"].__setitem__("max_by_profile", {"normal": 2}),
+         "converge_keys"),
+        ("04-gate.md", lambda f: f["loop"].__setitem__("retry", 1), "loop_keys"),
+        ("05-code-review.md", lambda f: f["trace_loop"].__setitem__("retry", 1), "loop_keys"),
+        ("03-implement.md", lambda f: f["produces"][0].__setitem__("owner", "model"),
+         "produces_owner"),
+    ])
+    def test_하위_키_집합이_닫혀_있다(self, repo, phases, phase, mutate, rule):
+        """`FRONT_KEYS` 가 최상위에 하는 일을 하위 키에도 한다 — 최상위만 닫혀 있어
+        `rerun_failed_once` 같은 키가 네 페이즈에 살면서 한 번도 안 읽혔다."""
+        _rewrite(phases / phase, mutate)
+        assert _fails(_lint(repo), rule), _fails(_lint(repo))
+
+    def test_01_리뷰어_에이전트_부재는_lint_가_잡는다(self, repo, phases):
+        """`plan-reviewer.md` 의 실재는 아무도 검사하지 않았다 — `_lint_agents` 는
+        `roles[].agent` 만 봤다."""
+        (repo / ".claude" / "agents" / "plan-reviewer.md").unlink()
+        assert _fails(_lint(repo), "agent_file"), _lint(repo)
+
+    def test_config_reviewers_의_skill_키는_스키마가_거부한다(self):
+        cfg, schema = _cfg(), json.loads(
+            (ROOT / "harness" / "config.schema.json").read_text(encoding="utf-8"))
+        assert cfg["reviewers"] == [{"code": "gen", "agent": "general-reviewer"}]
+        bad = json.loads(json.dumps(cfg))
+        bad["reviewers"] = [{"code": "gen", "skill": "general-reviewer"}]
+        assert harness.validate(bad, schema), "skill 은 지워진 어휘다"
+
+    @pytest.mark.parametrize("mutate", [
+        lambda c: c["project"].__setitem__("language", "ko"),
+        lambda c: c["project"].__setitem__("guardrail_docs", []),
+        lambda c: c["project"].__setitem__("source_inject_max_chars", 1),
+        lambda c: c["vcs"].__setitem__("pr_template", "x"),
+    ])
+    def test_config_스키마의_죽은_키는_거부된다(self, mutate):
+        """순차 실행기의 주입 어휘·`pr_template`·`project.language` — 읽는 코드가 없다."""
+        cfg, schema = _cfg(), json.loads(
+            (ROOT / "harness" / "config.schema.json").read_text(encoding="utf-8"))
+        assert harness.validate(cfg, schema) == []
+        mutate(cfg)
+        assert harness.validate(cfg, schema)
+
+    @pytest.mark.parametrize("mutate", [
+        lambda a: a["stages"]["scoped"].__setitem__("loop_stage", True),
+        lambda a: a["stages"]["full"].__setitem__("once_after_loop", True),
+        lambda a: a["stages"]["full"].__setitem__("blocking", True),
+        lambda a: a["entrypoint_resolver"]["map"][0].__setitem__("export", "{METHOD}"),
+    ])
+    def test_adapter_스키마의_죽은_키는_거부된다(self, mutate):
+        """루프 구간은 페이즈 파일의 `gate.steps[].loop_stage` 가 정한다 — 어댑터의
+        같은 이름은 아무도 안 읽었다. `blocking`·`export` 도 같다."""
+        adapter = harness._read_json(ROOT / "harness" / "adapters" / "nextjs-ts.json")
+        schema = harness._read_json(ROOT / "harness" / "adapters" / "adapter.schema.json")
+        assert harness.validate(adapter, schema) == []
+        mutate(adapter)
+        assert harness.validate(adapter, schema)
+
+    def test_resolve_가_리스트_인덱스를_푼다(self, repo):
+        """05 의 모델 산출물 이름에 리뷰어 code 가 들어간다 — `${config.reviewers.0.code}`."""
+        ctx = cli.build_context(repo)
+        assert cli.resolve("${config.reviewers.0.code}", ctx) == "gen"
+        got = cli.resolve("${run.dir}/05_review_${config.reviewers.0.code}.json", ctx)
+        assert got.endswith("/05_review_gen.json"), got
+        with pytest.raises(cli.PlaceholderError):
+            cli.resolve("${config.reviewers.9.code}", ctx)
+
+    @staticmethod
+    def _files_section(repo, pid, run_id):
+        loaded, _broken = cli.load_phases(repo)
+        paths, s = st.load(repo, run_id)
+        ctx = cli.build_context(repo, paths, s)
+        render, _cmd = cli.render_packet(repo, loaded[pid], ctx, s)
+        return render.split("## 쓸 파일", 1)[1].split("\n## ", 1)[0]
+
+    def test_쓸_파일은_모델이_쓰는_것만_싣는다(self, repo, request_file, phases):
+        """`05_trace.json`·`05_review.json`·`06_pr_body.md` 는 실행기가 쓴다 — 모델에게
+        쓰라고 안내하던 것이 B′ 의 결함이다. 모델 산출물은 산문에만 있었다."""
+        run_id, _paths = _enter_05(repo, request_file, phases)
+        files = self._files_section(repo, "05-code-review", run_id)
+        assert "05_review_gen.raw.md" in files and "05_review_gen.json" in files, files
+        assert "05_trace.json" not in files and "05_review.json`" not in files, files
+        files = self._files_section(repo, "06-pr", run_id)
+        assert "06_pr_result.json" in files and "06_pr_notes.json" in files, files
+        assert "06_pr_body.md" not in files and "06_pr_req.json" not in files, files
+
+    def test_봉투의_data_produces_도_같다(self, repo, request_file, phases):
+        run_id, _paths = _enter_05(repo, request_file, phases)
+        (repo / "src" / "app" / "api" / "x").mkdir(parents=True)
+        (repo / "src" / "app" / "api" / "x" / "route.ts").write_text(
+            "export async function POST() {}\n", encoding="utf-8")
+        _stamp_receipt(repo, run_id)
+        env = cli.run_next(repo, run_id)
+        assert env["exit"] == 0, env["render"]
+        names = [Path(p).name for p in env["data"]["produces"]]
+        assert names == ["05_review_gen.raw.md", "05_review_gen.json"], names
+
+    def test_이벤트_어휘에_내지_않는_kind_가_없다(self):
+        for kind in ("phase_fail", "phase_skip", "stage_skipped"):
+            assert kind not in st.EVENT_KINDS, kind
+
+    def test_죽은_상수와_스킬_경로가_없다(self):
+        for name in ("severity_headings", "REVIEW_FILE", "skill_path", "SKILLS_REL"):
+            assert not hasattr(rv, name), name
+        assert (rv.agent_path(ROOT, "general-reviewer")
+                == ROOT / ".claude" / "agents" / "general-reviewer.md")
+        assert not hasattr(harness, "PHASES_DIR_REL")
+        assert not hasattr(harness, "_parse_junit")
+        assert not hasattr(rep_mod, "_sum_phase")
+        assert not {"tests_not_ran", "local_only"} & set(rep_mod.GAP_REASONS)
+
+    def test_지워진_어휘가_지시문에_남지_않았다(self):
+        """봉투가 내지 않는 「검토 제외」, 지워진 `advance`, 스킬 파일 읽기 지시."""
+        feature = (ROOT / ".claude" / "commands" / "feature.md").read_text(encoding="utf-8")
+        assert "검토 제외" not in feature
+        six = (ROOT / "harness" / "phases" / "06-pr.md").read_text(encoding="utf-8")
+        assert "advance --phase" not in six
+        five = (ROOT / "harness" / "phases" / "05-code-review.md").read_text(encoding="utf-8")
+        assert "SKILL.md" not in five and ".claude/skills" not in five
+        assert "subagent_type" in five and "subagent_type" in feature
+        assert not (ROOT / ".claude" / "skills" / "general-reviewer").exists()

@@ -2,9 +2,6 @@
 {
   "id": "01-plan",
   "index": 1,
-  "owner": "main",
-  "approval": "none",
-  "docs": ["${config.project.instruction_file}"],
   "requires": [
     {"kind": "file", "path": "${run.dir}/00_original_request.md", "min_bytes": 1,
      "sha256_pointer": "request.sha256"},
@@ -15,21 +12,14 @@
     {"key": "plan", "path": "${run.dir}/01_plan.md", "kind": "markdown", "min_bytes": 200}
   ],
   "review": {
-    "parallel": true,
     "unless": "state.profile.name == \"docs\"",
     "reviewers": [
-      {"code": "plan", "kind": "internal",
-       "raw": "${run.dir}/01_review_r{n}.raw.md",
-       "json": "${run.dir}/01_review_r{n}.json"}
+      {"code": "plan", "agent": "plan-reviewer"}
     ]
   },
   "converge": {
-    "counter": "round",
-    "max_by_profile": {"fix": 1, "normal": 2},
     "blocking_severities": ["critical"],
-    "one_round_allowed_when": "blocking_free",
-    "focus_round_2": "요청의 요구 중 플랜이 가리키지 않은 것 · 범위 밖 항목 · 인수 조건의 검증 가능성",
-    "on_exceed": "escalate"
+    "focus_round_2": "요청의 요구 중 플랜이 가리키지 않은 것 · 범위 밖 항목 · 인수 조건의 검증 가능성"
   },
   "submit_checks": [
     {"id": "reviewer_not_main", "on_fail": 8},
@@ -156,11 +146,11 @@
 | `false_positive` 의 `id`·`reason`·`evidence` 중 하나가 없거나 경로가 리포에 없다 | exit 8 — 근거를 채우거나 기각을 거둔다 |
 | 라운드 상한 초과 | exit 7 → 에스컬레이션. 미해결 Critical 전문과 3지선다 |
 
-**라운드 상한은 `max_by_profile` 이 레인별로 정한다** (ADR-H041). 수렴 규칙이
+**라운드 상한은 `loop.max_by_profile` 이 레인별로 정한다** (ADR-H041). 수렴 규칙이
 "열린 Critical 0건" 하나라 상한은 천장이지 경로가 아니다. `loop.counter` 와
 `loop.on_exceed` 는 코드가 실제로 읽는다 (M36) — `on_exceed` 의 어휘는 `escalate`
-하나이고 어휘 밖 값은 `lint-phases` 와 런타임이 둘 다 거부한다. `converge.on_exceed`
-는 `loop.on_exceed` 와 같아야 한다.
+하나이고 어휘 밖 값은 `lint-phases` 와 런타임이 둘 다 거부한다. `converge` 에는
+읽히는 둘(`blocking_severities`·`focus_round_2`)만 있다 (ADR-H076).
 
 **`review.unless` 가 `docs` 레인에서 리뷰어를 0명으로 만든다.** 문서만 바뀌는
 런에서 plan-reviewer 는 관측이 아니라 고정비다 — 플랜 제출이 이 페이즈의 전부이고
