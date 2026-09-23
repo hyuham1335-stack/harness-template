@@ -7497,3 +7497,154 @@ class TestGateLogIsPerCall:
                                runner=_stub_runner(dict(ALL_PASS)))
         assert env["exit"] == 0, env["render"]
         assert log.read_text(encoding="utf-8").startswith(self.STALE)
+
+
+# ---------------------------------------------------------------------------
+# PR 4 잔여 — 번호 없던 결함 · 재겠다고 한 것의 배선 (ADR-H076 PR 4 잔여)
+# ---------------------------------------------------------------------------
+
+class TestSecretFileHandleCloses:
+    """`secret_values` 가 `io.open(...).read()` 로 핸들을 닫지 않았다."""
+
+    def test_비밀_파일_핸들을_닫는다(self, tmp_path):
+        import gc
+        import warnings
+        (tmp_path / ".env").write_text("API_KEY=abcdefgh12345\n", encoding="utf-8")
+        config = {"project": {"secret_files": [".env"]}}
+        with warnings.catch_warnings(record=True) as got:
+            warnings.simplefilter("always", ResourceWarning)
+            values, missing = mask_mod.secret_values(tmp_path, config)
+            gc.collect()
+        assert "abcdefgh12345" in values and missing == []
+        assert not [w for w in got if issubclass(w.category, ResourceWarning)], (
+            [str(w.message) for w in got])
+
+
+class TestReviewArtifactsAreAtomic:
+    """`05_review.json`·`05_trace.json` 은 `write_text` 직행이었다 — 상태 쓰기만 원자였다."""
+
+    def _spy(self, monkeypatch):
+        wrote = []
+        real = cli._write_json
+
+        def spy(path, data):
+            wrote.append(Path(path).name)
+            return real(path, data)
+        monkeypatch.setattr(cli, "_write_json", spy)
+        return wrote
+
+    def test_05_trace_는_원자_쓰기를_탄다(self, repo, request_file, phases,
+                                          monkeypatch):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        wrote = self._spy(monkeypatch)
+        env = cli.run_contract_trace(repo, run_id=run_id)
+        assert (paths.run_dir / "05_trace.json").exists(), env["render"]
+        assert "05_trace.json" in wrote
+
+    def test_05_review_는_원자_쓰기를_탄다(self, repo, request_file, phases,
+                                           monkeypatch):
+        run_id, paths = TestReview05DispatchFingerprint()._dispatched(
+            repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        code = s["phases"]["05-code-review"]["planned"][0]
+        wrote = self._spy(monkeypatch)
+        f = _reviewer_files(paths, code, [])
+        env = cli.run_record(repo, "05", str(f), reviewer=code, round_=1,
+                             run_id=run_id)
+        assert (paths.run_dir / "05_review.json").exists(), env["render"]
+        assert "05_review.json" in wrote
+
+
+class TestStateWriteLeavesNoTmp:
+    """원자 쓰기가 도중에 끊기면 `<name>.tmp` 가 남았다 — 치우는 코드가 없었다."""
+
+    def test_쓰기가_끊기면_tmp_를_치운다(self, tmp_path, monkeypatch):
+        p = tmp_path / "state.json"
+        st._write_json(p, {"v": 1})
+        _torn_write_text(monkeypatch)
+        with pytest.raises(OSError):
+            st._write_json(p, {"v": 2})
+        monkeypatch.undo()
+        assert not (tmp_path / "state.json.tmp").exists()
+        assert json.loads(p.read_text(encoding="utf-8")) == {"v": 1}
+
+
+class TestUnknownProbeKindFails:
+    """모르는 프로브 kind 가 「건너뛴다」로 통과했다 — fail-open. 스키마가 먼저
+    거부하지만, 우회되면 `on_missing: warn` 을 타고 면제 gap 으로까지 샜다."""
+
+    def _run(self, on_missing):
+        probe = {"name": "q", "kind": "queue"}
+        if on_missing:
+            probe["on_missing"] = on_missing
+        checks = []
+        failures, gaps = pc._check_infra({"infra_preflight": [probe]},
+                                         ["src/lib/a.ts"], checks)
+        return failures, gaps
+
+    def test_모르는_kind_는_실패다(self):
+        failures, gaps = self._run(None)
+        assert [f["name"] for f in failures] == ["q"]
+
+    def test_warn_이어도_면제되지_않는다(self):
+        failures, gaps = self._run("warn")
+        assert [f["name"] for f in failures] == ["q"]
+        assert gaps == []
+
+
+class TestReceiptStaleIsRecorded:
+    """영수증 거부(exit 6·3)와 지시 뒤 변경(exit 3)이 봉투만 내고 흔적을 안 남겼다 —
+    ADR-H076 재검토 (c) 「실물 워커에게 몇 번 나는가」를 잴 곳이 없었다."""
+
+    def _stale(self, paths):
+        return [(e["cmd"], e["data"]["receipt"]) for e in st.read_events(paths)
+                if e["kind"] == "receipt_stale"]
+
+    def _edit(self, repo):
+        TestGateReceiptIsEnforced()._edit(repo)
+
+    def test_next_의_loop_거부(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        self._edit(repo)
+        assert cli.run_next(repo, run_id)["exit"] == 6
+        assert self._stale(paths) == [("next", "loop")]
+
+    def test_record_의_loop_거부(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        cli.run_next(repo, run_id)
+        cli.run_contract_trace(repo, run_id=run_id)
+        _p, s = st.load(repo, run_id)
+        s["phases"]["05-code-review"]["planned"] = ["gen"]
+        s["phases"]["05-code-review"].pop("dispatched_fp", None)
+        st.save(_p, s)
+        self._edit(repo)
+        f = _reviewer_files(paths, "gen", [])
+        env = cli.run_record(repo, "05", str(f), reviewer="gen", round_=1,
+                             run_id=run_id)
+        assert env["exit"] == 6, env["render"]
+        assert self._stale(paths) == [("record", "loop")]
+
+    def test_record_의_지시_뒤_변경(self, repo, request_file, phases):
+        run_id, paths = TestReview05DispatchFingerprint()._dispatched(
+            repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        code = s["phases"]["05-code-review"]["planned"][0]
+        self._edit(repo)
+        f = _reviewer_files(paths, code, [])
+        env = cli.run_record(repo, "05", str(f), reviewer=code, round_=1,
+                             run_id=run_id)
+        assert env["exit"] == 3, env["render"]
+        assert self._stale(paths) == [("record", "dispatch")]
+
+    def test_approve_의_full_거부(self, repo, request_file, phases):
+        run_id, paths = _enter_06(repo, request_file, phases)
+        self._edit(repo)
+        assert TestGateReceiptIsEnforced()._gate05(repo, run_id, "loop")["exit"] == 0
+        assert cli.run_approve(repo, "06", run_id=run_id)["exit"] == 3
+        assert self._stale(paths) == [("approve", "full")]
+
+    def test_통과하면_남기지_않는다(self, repo, request_file, phases):
+        run_id, paths = _enter_05(repo, request_file, phases)
+        assert cli.run_next(repo, run_id)["exit"] == 0
+        assert self._stale(paths) == []
