@@ -160,8 +160,8 @@ def _counter_cell(node):
     return cell
 
 
-UNMEASURED_DURATION = ("**소요 시간은 미측정이다** — 8페이즈 실행기가 페이즈별 "
-                      "소요를 아직 기록하지 않는다. 재는 것을 만들기 전에는 "
+UNMEASURED_DURATION = ("**소요 시간은 미측정이다** — 이 런의 `events.jsonl` 에서 "
+                      "페이즈 구간을 하나도 유도하지 못했다. 재는 것을 만들기 전에는 "
                       "값을 지어내지 않는다.")
 
 

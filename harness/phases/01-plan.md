@@ -144,7 +144,7 @@
 | 플랜이 200바이트 미만이다 | exit 6 — 전이 거부. 플랜을 채워 다시 낸다 |
 | `quote` 가 리뷰어 원문에 없다 · 헤딩 수가 findings 수와 다르다 | exit 8 — 리뷰어가 원문 그대로 다시 낸다. 메인이 헤딩을 붙여 맞추지 않는다 |
 | `false_positive` 의 `id`·`reason`·`evidence` 중 하나가 없거나 경로가 리포에 없다 | exit 8 — 근거를 채우거나 기각을 거둔다 |
-| 라운드 상한 초과 | exit 7 → 에스컬레이션. 미해결 Critical 전문과 3지선다 |
+| 라운드 상한 초과 | exit 10 → 에스컬레이션. 미해결 Critical 전문과 3지선다 |
 
 **라운드 상한은 `loop.max_by_profile` 이 레인별로 정한다** (ADR-H041). 수렴 규칙이
 "열린 Critical 0건" 하나라 상한은 천장이지 경로가 아니다. `loop.counter` 와

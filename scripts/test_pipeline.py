@@ -1,4 +1,4 @@
-"""8페이즈 feature-pipeline (scripts/pipeline/) 의 테스트.
+"""7페이즈 feature-pipeline (scripts/pipeline/) 의 테스트.
 
 test_execute.py 의 관용구를 따른다 — pytest · tmp_path · 인스턴스 속성 직접 주입.
 test_harness.py 가 unittest 인 것은 더 오래된 층이라 그렇고, 새 파일은 pytest 다.
@@ -276,7 +276,7 @@ class TestEvents:
 
 
 class TestPhaseDurations:
-    """8페이즈가 자기 소요를 잰다 — 새 계측이 아니라 `events.jsonl` 의 유도값이다.
+    """7페이즈가 자기 소요를 잰다 — 새 계측이 아니라 `events.jsonl` 의 유도값이다.
 
     `report.py` 가 여섯 런에 걸쳐 "소요 시간은 미측정이다" 를 적었는데,
     08 의 결정론 칸(옛 명세)은 페이즈별 소요를 **이미 요구했다.**

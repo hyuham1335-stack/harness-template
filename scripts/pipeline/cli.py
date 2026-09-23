@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""8페이즈 feature-pipeline 의 진입점.
+"""7페이즈 feature-pipeline 의 진입점.
 
     python scripts/pipeline/cli.py <cmd> [옵션]
 
@@ -14,7 +14,7 @@
 종료 코드는 README 의 종료 코드표를 따른다:
     0 성공 · 1 내부 오류 · 2 사용법/미해결 플레이스홀더/doctor 미통과
     3 선행조건 미충족 · 4 기계 판정 실패(예산 남음) · 5 예산 소진
-    6 advance 거부(지문 stale) · 7 반복 한계·stuck · 8 제출물 위반
+    6 advance 거부(지문 stale) · 8 제출물 위반 (7 은 쓰지 않는다 — 반복 한계는 10)
     9 사용자 판단 대기(01~04 에는 없다) · 10 에스컬레이션(상태를 잠근다)
     11 런 완료
 """
@@ -3860,7 +3860,7 @@ def cmd_status(root, args):
 def build_parser():
     # add_help=False — argparse 의 도움말은 stdout 으로 나가 봉투를 오염시킨다.
     p = argparse.ArgumentParser(prog="cli.py", add_help=False,
-                                description="8페이즈 feature-pipeline")
+                                description="7페이즈 feature-pipeline")
     sub = p.add_subparsers(dest="cmd")
 
     sub.add_parser("doctor", add_help=False)
