@@ -3209,9 +3209,7 @@ def _stage_render(stage):
 
 
 def _write_json(path, data):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                          encoding="utf-8")
+    st._write_json(Path(path), data)
 
 
 # -------------------------------------------------------------------- precheck
@@ -4107,7 +4105,16 @@ def main(argv=None):
         return st.emit(st.envelope(
             "usage", False, 2, None, {"commands": sorted(HANDLERS)},
             "커맨드를 지정한다: %s" % ", ".join(sorted(HANDLERS)), None))
-    return handler(resolve_root(), args)
+    try:
+        return handler(resolve_root(), args)
+    except st.StateCorrupt as exc:
+        # 트레이스백이면 stdout 이 비어 봉투 계약이 깨진다. 지우라고 하지 않는다 —
+        # `/feature` 는 render 를 지시로 따른다.
+        return st.emit(st.envelope(
+            args.cmd, False, 1, None,
+            {"run_id": exc.run_id, "state_path": str(exc.path), "error": str(exc.error)},
+            "state.json 이 깨졌다 — `%s` (%s)\n\n멈추고 사용자에게 이 경로를 보인다. "
+            "복구는 사람이 한다." % (exc.path, exc.error), None))
 
 
 def resolve_root():
