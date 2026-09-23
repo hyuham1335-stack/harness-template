@@ -6576,9 +6576,11 @@ class TestAgentFrontmatter:
     실행기는 무엇이 돌았는지 보지 못한다 — 그 사실은 `state.models.blind_spots` 에 있다.
     """
 
-    EXPECTED = {"impl-writer": ("high", "sonnet"), "plan-reviewer": ("high", "opus"),
+    # 셋 다 전체 ID 로 고정한다 — `opus` 별칭이 무엇으로 풀리는지는 문서에 없다 (ADR-H077).
+    EXPECTED = {"impl-writer": ("high", "claude-opus-5-5"),
+                "plan-reviewer": ("high", "claude-opus-5-5"),
                 # 05 의 리뷰어 — 스킬이었을 때는 모델·effort 가 어디에도 없었다 (ADR-H076 결정 7).
-                "general-reviewer": ("high", "opus")}
+                "general-reviewer": ("high", "claude-opus-5-5")}
 
     def test_agent_files_pin_effort_and_model_per_role(self):
         for agent, (effort, model) in self.EXPECTED.items():

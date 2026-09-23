@@ -95,7 +95,7 @@ python scripts/harness.py init --adapter nextjs-ts --name my-project
 | 런당 예산 | 파일 10개 · 1000줄 · 모델 호출 24회 — 셋 다 **보고서용 숫자**이고 넘어도 멈추지 않습니다. 파일 수는 **테스트 파일을 빼고** 셉니다(어댑터 `attribution.test_file_globs` 기준) (ADR-H066 · H075) |
 | 코드 리뷰(05) | 리뷰어 하나(`gen`, 일반 정합성). 소스 변경이 있으면 켜지고 `diff+refs` 로 봅니다. 재검토(델타)도 같은 리뷰어입니다 (ADR-H075) |
 | 수정 금지 경로 | `harness/**` `docs/**` `scripts/**` `.claude/**` 등 |
-| 모델 · effort | `.claude/agents/*.md` 프론트매터가 역할별로 정합니다 — 작성자 `impl-writer` 는 `sonnet · high`, 계획 검토자 `plan-reviewer` 와 05 리뷰어 `general-reviewer` 는 `opus · high` (ADR-H061 · H075 · H076). 봉투는 모델을 지시하지 않습니다. **미검증 초기값**입니다 |
+| 모델 · effort | `.claude/agents/*.md` 프론트매터가 역할별로 정합니다 — 작성자 `impl-writer` · 계획 검토자 `plan-reviewer` · 05 리뷰어 `general-reviewer` 셋 다 `claude-opus-5-5 · high` (ADR-H061 · H075 · H076 · H077). 봉투는 모델을 지시하지 않습니다. **미검증 초기값**입니다 |
 
 **지금 프로필은 `nextjs-ts` 하나뿐입니다.** 프로필은 템플릿 `harness/config.json` 과 키가 같아야 하고, `reviewers` · `review` 블록은 값까지 같아야 합니다 — 빠지면 클론에서 그 기능이 조용히 꺼지기 때문에 테스트(`ProfileParityTest`)가 막습니다. 다른 스택이라면 이 명령 대신
 `harness/profiles/nextjs-ts/config.json` 을 `harness/config.json` 으로 복사한 뒤 위 표의
