@@ -974,7 +974,7 @@ def _lint_closed(name, rule, obj, keys, add, label):
 
 
 def _lint_conditions(name, front, add):
-    """`review.unless` · `allow.unless` 가 조건식 문법인가 (ADR-H044).
+    """`review.unless` · `allow.unless` · `produces[].unless` 가 조건식 문법인가 (ADR-H044).
 
     01 의 리뷰어와 03 의 역할을 레인별로 끄는 선언이다. 코드가 읽는 선언이라
     문법이 틀리면 런 한복판에서 exit 2 를 만난다 — 여기서 먼저 잡는다.
@@ -987,6 +987,14 @@ def _lint_conditions(name, front, add):
             eval_condition(expr, {})
         except ValueError as exc:
             add(name, "%s_unless" % key, "FAIL", "%s.unless: %s" % (key, exc))
+    for p in front.get("produces") or []:
+        if p.get("unless") is None:
+            continue
+        try:
+            eval_condition(p["unless"], {})
+        except ValueError as exc:
+            add(name, "produces_unless", "FAIL",
+                "produces[%s].unless: %s" % (p.get("key"), exc))
 
 
 def _lint_loop(name, pid, front, loaded, add, key="loop"):
@@ -1231,7 +1239,7 @@ def run_next(root, run_id=None):
 
     render, next_cmd = render_packet(root, phase, ctx, s, checks)
     env = st.envelope("next", True, 0, s,
-                      {"produces": _model_produces(phase["front"], ctx),
+                      {"produces": _model_produces(phase["front"], ctx, s),
                        "requires_report": checks,
                        # 런 전체의 사전 검사는 **첫 페이즈**에서 한 번.
                        "prescan": _prescan(root, loaded, ctx, s) if pid == "01-plan" else []},
@@ -1555,10 +1563,14 @@ def _review_render(s):
     return "\n".join(lines)
 
 
-def _model_produces(front, ctx):
-    """모델이 쓰는 산출물 경로 — `owner: executor`(실행기가 쓴다)는 뺀다 (ADR-H076 B′)."""
+def _model_produces(front, ctx, s):
+    """모델이 쓰는 산출물 경로 — `owner: executor`(실행기가 쓴다)는 뺀다 (ADR-H076 B′).
+
+    `unless` 가 참인 것도 뺀다. 선언만 있고 안 읽혀서 docs 레인 03 봉투가 「계약도
+    쓰지 않는다」와 「쓸 파일: 계약」을 함께 냈다 (ADR-H025 · ADR-H076 fix)."""
     return [resolve(p.get("path"), ctx) for p in front.get("produces") or []
-            if p.get("owner") != "executor"]
+            if p.get("owner") != "executor"
+            and not (p.get("unless") and eval_condition(p["unless"], s))]
 
 
 def render_packet(root, phase, ctx, s, checks=None):
@@ -1589,7 +1601,7 @@ def render_packet(root, phase, ctx, s, checks=None):
     parts.append(_section(body, "## 제출 형식"))
     parts.append(_section(body, "## 금지"))
 
-    produces = _model_produces(front, ctx)
+    produces = _model_produces(front, ctx, s)
     if produces:
         parts.append("## 쓸 파일\n\n" +
                      "\n".join("- `%s`" % p for p in produces))
