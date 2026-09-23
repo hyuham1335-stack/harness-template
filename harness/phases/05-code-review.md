@@ -248,20 +248,22 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
 | 무엇 | 분류 | 어떻게 |
 |---|---|---|
 | `precheck` 브랜치 불일치 · base behind | 정책 | **exit 9 즉시 사용자 판단.** 자동 리베이스 금지 — 옮기거나 리베이스한 뒤 다시 부른다 |
+| `precheck` 예산(파일·줄) 초과 | — | 정보 행이다 — 멈추지 않는다 |
 | `infra_preflight` 프로브 실패 (`on_missing: fail`) | infra | exit 10 · **카운터 미소모** · 즉시 에스컬레이션 |
 | 〃 (`on_missing: warn`) | — | exit 0 + `infra_skipped:{name}` gap · 등급 `PASS_WITH_GAPS`. **면제는 통과가 아니다** — 키 없이도 목업으로 도는 경로가 있을 때만 쓰고, 그 이유를 어댑터의 `why` 에 적는다 (ADR-H027) |
 | 계약 부재 | — | `no_contract` 모드로 진행. `skipped_no_contract` 로 기록 |
-| 계약이 재개 사이에 변경됨 | 정책 | exit 3 + "03 부터 재실행" |
+| 계약이 재개 사이에 변경됨 | 정책 | **미구현** — 실행기가 계약 sha256 을 적기만 하고 대조하지 않는다. 바꿨다면 멈추고 사람에게 알린다 |
 | 리뷰어 호출 실패·타임아웃 | infra | 1회 재시도 → 실패 시 `--failed --reason` 으로 신고. `review05.status = failed` → 등급 `PASS_WITH_GAPS` |
 | **계획된 리뷰어가 0명** (소스 변경 없음) | 정책 | 같은 처리. 아무도 안 부른 것은 통과가 아니라 미수행이다. **`next` 가 그 자리에서 상태에 확정한다** — 제출이 0건이면 판정이 아예 안 불리므로 여기서 안 쓰면 아무도 안 쓴다 |
 | 커밋만 있고 워킹트리에 소스 변경이 없다 | 절차 | exit 3 — 05 통과 전에 커밋했다. `git reset --mixed HEAD~1` 로 되돌리고 `next` 를 다시 친다 (ADR-H046) |
-| 리뷰어가 JSON 대신 산문 | 제출물 | exit 8 · 재제출 1회 → 2회 실패 시 **슬롯에 `failed` 로 확정**하고 흐름을 잇는다 |
+| 리뷰어가 JSON 대신 산문 · `.raw.md` 없음 | 제출물 | exit 8 — 시도로 세지 않는다. 리뷰어에게 형식을 알려 다시 받는다 |
 | 실패 신고인데 제출 파일이 있다 | 제출물 | exit 8. 자진 신고 중 기계로 확인 가능한 것은 기계로 확인한다 |
-| quote 위조 · 단조성 위반 | 제출물 | exit 8 · 같은 회차 재제출(카운터 소모) |
+| quote 위조 · 헤딩 수 불일치 · 단조성 위반 | 제출물 | exit 8 · 같은 회차 재제출 1회. **2회째면 그 리뷰어 슬롯을 `failed` 로 확정**하고 흐름을 잇는다 (`review_repair` 는 안 탄다) |
 | `need_more_context` 계속 참 | 판단 | 1회에 한해 파일 목록 명시 추가 |
-| `CONTRACT_DEFECT` 발견 | 정책 | 수리하지 않는다 → **에스컬레이션** |
+| `CONTRACT_DEFECT` 발견 | 정책 | 수리하지 않는다. 실행기는 다른 차단 지적처럼 exit 4(`review_repair`)를 내고 봉투에 표시만 한다 — **멈추고 사람에게 보고**한다 |
 | diff 가 인라인 상한 초과 | — | **기계가 정한다** — `next` 가 `review.inline_max` 로 재고 봉투가 "경로로 전달하라" 고 말한다. 네 재량이 아니다 (ADR-H042). 폴백 사실이 상태에 남는다 |
 | `review_repair` 초과 | 정책 | 에스컬레이션 — 선택지 없이 자유 서술로 사람에게. **계약 결함을 먼저 의심**하라고 패킷에 적는다 |
+| contract-trace Critical | 제출물 | exit 8 · `trace_repair` 1 소모 — 고치고 `gate --phase 05 --stage loop` 뒤 `contract-trace` 를 다시 친다 |
 | `trace_repair` 초과 (contract-trace Critical 이 2회) | 정책 | 에스컬레이션 — 같은 처리. 선수리 루프도 천장이 있다 |
 | 수리 뒤 재게이트 없이 `next`·`record` | 정책 | **exit 6** — 게이트 영수증 지문이 낡았다. `gate --phase 05 --stage loop` 뒤 다시 친다. 리뷰어는 게이트된 코드만 본다 |
 | 제출이 내용은 그대로인데 회계 필드만 틀려 exit 8 | 기계 | `format_reject` 이벤트로 센다. 회계 필드는 메인이 고쳐 재제출해도 된다 — quote·헤딩 수·severity 는 여전히 금지 (ADR-H052) |

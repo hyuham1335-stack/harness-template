@@ -100,7 +100,7 @@ python scripts/pipeline/cli.py report --out docs/harness/pipeline/runs/{run_id}.
 
 | 무엇 | 분류 | 어떻게 |
 |---|---|---|
-| `grade == INCOMPLETE` | — | **08 을 돌리지 않는다.** `ESCALATION.md` 가 보고서를 겸한다 |
+| `grade == INCOMPLETE` | — | **08 을 돌리지 않는다** (exit 3). `ESCALATION.md` 가 보고서를 겸한다 |
 | 필수 섹션 누락 | — | 기록하고 산출한다 |
 | 서술 4절 중 80자 미만 | 정책 | 보고서는 쓰되 **exit 8** — 같은 명령으로 다시 낸다. 등급 X. 닫힌 런의 재작성은 되묻지 않는다 |
 | 같은 `run_id` 로 재개해 다시 씀 | — | **덮어쓴다.** 최종본이 맞다 |
