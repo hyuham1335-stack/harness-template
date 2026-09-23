@@ -58,16 +58,18 @@ python scripts/pipeline/cli.py next
 
 ### 종료 코드별 대처
 
+**페이즈별 대처는 봉투의 「실패 시」 표가 말한다.** 여기는 어느 페이즈에서나
+같은 것만 둔다 — 같은 표를 두 곳에 두면 갈라진다.
+
 | exit | 뜻 | 할 일 |
 |---|---|---|
 | 0 | 진행 | 봉투의 `next_command` 를 계속 따른다 |
-| 3 | 선행조건 미충족 | `render` 가 말한 것을 채우고 같은 명령을 다시 친다 |
-| 4 | 기계 판정 실패, 예산 남음 | 수리한다. 04 는 **`data.repair_dispatch` 의 배정을 그대로 쓴다**, 03 컴파일 실패는 `data.stage` 가 실패한 스테이지다 |
-| 8 | 제출물이 스키마·정합성을 어겼다 | 고쳐서 다시 낸다 |
-| 5 · 10 | 예산 소진 · 반복 한계·에스컬레이션 | **멈춘다.** `ESCALATION.md` 의 선택지를 그대로 사용자에게 제시한다 |
-| 6 | 전이 거부 — 산출물 없음 · 지문 stale | `render` 가 말한 것을 채운다. 승인이 무효면 재승인이다 |
+| 5 · 10 | 예산 소진 · 반복 한계 · 에스컬레이션 (상태를 잠근다) | **멈춘다.** `ESCALATION.md` 를 그대로 보인다 — 선택지가 있으면 그대로, 없으면 자유 서술로 답을 받는다. **네가 고르지 마라** |
 | 9 | **사람의 판단 대기.** 상태를 잠그지 않는다 | 사용자에게 선택지를 그대로 제시하고 답을 받는다. **네가 고르지 마라** |
 | 11 | 런 완료 | 종료 보고로 간다 |
+
+그 밖(3 · 4 · 6 · 8)은 `render` 가 무엇을 채울지 말하고, 그 페이즈에서의 뜻은
+봉투의 「실패 시」 표에 있다.
 
 ### 모든 페이즈에서 — 모델과 effort
 
@@ -115,8 +117,7 @@ python scripts/pipeline/cli.py gate --phase 04
 ```
 
 실패하면 봉투가 실패 스테이지의 출력 브리프를 준다 — `impl-writer` 에게 **그대로**
-되돌린다. 요약하지 마라. 인프라 패턴(외부 의존 미기동)에 걸리면 카운터를 안 태우고
-에스컬레이션이다.
+되돌린다. 요약하지 마라.
 
 ### 05-code-review 에서
 
@@ -126,12 +127,6 @@ python scripts/pipeline/cli.py gate --phase 04
 python scripts/pipeline/cli.py precheck --scope pr --run-id <id>
 python scripts/pipeline/cli.py contract-trace --run-id <id>
 ```
-
-| exit | 뜻 | 할 일 |
-|---|---|---|
-| 9 | 브랜치·base | **사람에게 묻는다.** 자동으로 리베이스하지 마라. 예산(파일·줄)은 정보 행이라 멈추지 않는다 |
-| 10 | 인프라 프로브 실패 | 멈춘다. 카운터는 소모되지 않았다 |
-| 8 (trace) | Critical 이 남았다 | 고치고 `gate --phase 05 --stage loop` 후 다시 친다 (compile 포함 — scoped 단독은 타입 에러를 흘린다, ADR-H046) |
 
 그다음 **봉투가 이름 지은 리뷰어 1명(`gen`)**을 부른다.
 
@@ -149,18 +144,18 @@ python scripts/pipeline/cli.py record --phase 05 --file <리뷰 json> \
     --reviewer <code> --round <n> --run-id <id>
 ```
 
-**원문 헤딩 개수와 findings 개수가 다르면 exit 8 이다. 네가 사후에 헤딩을 붙여
-맞추지 마라** — 원문 대조라는 검사의 취지가 그 순간 사라진다. 리뷰어에게 형태를
+**원문 헤딩 개수와 findings 개수가 다를 때 네가 사후에 헤딩을 붙여 맞추지
+마라** — 원문 대조라는 검사의 취지가 그 순간 사라진다. 리뷰어에게 형태를
 다시 알려 주고 다시 받는다.
 
-exit 4 면 Critical/Major 수리다. **Minor 는 고치지 않는다** — 보고서로 간다.
+수리는 Critical/Major 뿐이다. **Minor 는 고치지 않는다** — 보고서로 간다.
 **다만 다음 회차 제출에서 회계는 한다** (ADR-H025): 열려 있던 지적은
 Minor 를 포함해 전부 다시 내거나 `resolved_from_previous`·
-`reraised_from_previous` 로 처리한다. 빠지면 "조용히 증발했다"로 exit 8 이다.
-회계할 목록은 수리 봉투가 적어 준다 — 네가 재구성하지 마라.
+`reraised_from_previous` 로 처리한다. 회계할 목록은 수리 봉투가 적어 준다 —
+네가 재구성하지 마라.
 
 수리 뒤 순서는 봉투의 `next_command` 다: `gate --phase 05 --stage loop` → `next`(델타
-지시·지문 갱신) → 델타 리뷰 → `record`. 재게이트를 건너뛰면 `next`·`record` 가 exit 6 이다.
+지시·지문 갱신) → 델타 리뷰 → `record`.
 
 ### 05 와 06 사이 — **여기서 커밋한다**
 
@@ -183,7 +178,7 @@ PR 본문의 diff 통계는 `main...HEAD`(커밋된 것)를 읽는다. **03 이 
 
 `pr` 전에 **흐름 노트 `06_pr_notes.json`** 을 쓴다 — PR 본문의 「핵심 흐름」과
 「직접 확인하는 법」이다(형식은 `06-pr.md` 1.5번). `step` 한 줄 이상과 `verify`
-하나 이상이 있어야 한다 — 없으면 `pr` 이 exit 8 로 알린다. `refs` 는 선택이다.
+하나 이상이 있어야 한다. `refs` 는 선택이고, `no_contract` 런은 노트 자체가 선택이다.
 
 ```bash
 python scripts/pipeline/cli.py precheck --scope pr --phase 06 --run-id <id>
@@ -197,12 +192,6 @@ python scripts/pipeline/cli.py pr --run-id <id>
 python scripts/pipeline/cli.py approve --phase 06 --run-id <id>
 python scripts/pipeline/cli.py pr --run-id <id>      # 이번엔 push 까지 간다
 ```
-
-- **exit 3** — 브랜치가 규약과 안 맞거나 보호 브랜치 위다. **브랜치를 만들지 마라**
-- **exit 3 (`approve`)** — 전체 회귀가 지금 코드에서 안 돌았다. `gate --phase 05 --stage full` 뒤 다시 친다
-- **exit 6 (`approve`)** — 05 수리 뒤 재게이트가 없었다. `gate --phase 05 --stage loop` 뒤 다시 친다
-- **exit 6 (`pr`)** — 승인 뒤 코드가 바뀌었다. 재승인이다
-- **exit 10** — non-fast-forward 다. **force-push 는 금지**이고 에스컬레이션이다
 
 `pr` 이 exit 0 이면 push 가 끝났고 `06_pr_req.json` 이 있다. **PR 은 네가 만든다:**
 
@@ -229,10 +218,6 @@ findings 빈 배열로 내고 바로 `record` 로 간다.
 python scripts/pipeline/cli.py record --phase 07 --file <07_pr_review.json> --run-id <id>
 ```
 
-Critical/Major 가 새로 나오면 `record` 가 gap `pr_review_open` 으로 등급을 내리고
-넘어간다 — **수리하지 마라.** 보고서와 종료 보고에 남기고 사람이 정한다.
-
-
 ### 08-report 에서
 
 ```bash
@@ -241,8 +226,7 @@ python scripts/pipeline/cli.py report --run-id <id>
 
 `08_report_data.json` 하나만 쓴다 (20KB 이하). **08 은 diff 도 코드도 읽지
 않는다.** 표는 실행기가 조립하니 너는 서술만 쓴다 — **재지 않은 것을 숫자로
-적지 마라.** `문제`·`원인`·`해결`·`contract_gaps` 는 80자 이상이다 — 미달이면
-exit 8 로 되묻는다. 형식은 `08-report.md` 「제출 형식」.
+적지 마라.** `문제`·`원인`·`해결`·`contract_gaps` 는 80자 이상이다. 형식은 `08-report.md` 「제출 형식」.
 
 `report` 가 exit 11 로 런을 닫으면 **런 기록을 기능 PR 에 싣는다** (ADR-H052):
 

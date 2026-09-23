@@ -61,6 +61,14 @@ LOOP_KEYS = ("counter", "max", "max_by_profile", "on_exceed")
 REQUIRED_SECTIONS = ("## 목적", "## 진입 조건", "## 절차",
                      "## 제출 형식", "## 금지", "## 실패 시")
 ROLE_TEMPLATE_SECTION = "## 역할 프롬프트 템플릿"
+FAILURE_SECTION = "## 실패 시"
+# 봉투에 싣는 본문 절과 그 순서. **필수 절은 여기 있거나 제외 사유가 있다** —
+# 「실패 시」가 첫 커밋부터 빠져 모델은 exit 표를 못 보고 feature.md 가 요약본을
+# 따로 들었다. 정책 출처가 둘이 되어 갈라졌다 (ADR-H076 fix).
+PACKET_SECTIONS = ("## 목적", "## 절차", ROLE_TEMPLATE_SECTION, "## 제출 형식",
+                   "## 금지", FAILURE_SECTION)
+PACKET_EXCLUDED = {"## 진입 조건": "requires 가 통과해야 봉투가 나간다 — "
+                                  "미충족은 진입 거부 봉투가 말한다"}
 
 _PLACEHOLDER = re.compile(r"\$\{([a-zA-Z0-9_.\[\]]+)\}")
 _NAMESPACES = ("config", "run")
@@ -1578,29 +1586,13 @@ def render_packet(root, phase, ctx, s, checks=None):
     front, body = phase["front"], phase["body"]
     pid = front["id"]
     parts = [render_header(ctx["config"], s), ""]
-    parts.append(_section(body, "## 목적"))
-    parts.append(_section(body, "## 절차"))
-    if pid == "01-plan" and not _reviewers_for(front, s):
-        parts.append(
-            "## 리뷰어 — 0명 (%s 레인)\n\n이 런은 플랜 리뷰어를 부르지 않는다. "
-            "플랜 제출이 이 페이즈의 전부이고 1라운드에 닫힌다. 리뷰어를 부르지 "
-            "마라 — 라우팅 밖의 제출은 받지 않는다."
-            % ((s.get("profile") or {}).get("name")))
-    role_tpl = _section(body, "## 역할 프롬프트 템플릿")
-    if role_tpl and pid == "03-implement" and not _roles_for(front, ctx, s):
-        parts.append(
-            "## 역할 — 0명 (%s 레인)\n\n이 런은 역할 에이전트를 부르지 않고 "
-            "계약도 쓰지 않는다 (`no_contract`). **네가 직접** 문서를 고치고 "
-            "`03_claims.json` 을 `{\"schema\":1,\"roles\":[]}` 로 낸다. 역할 소유 "
-            "경로(소스)를 건드리면 제출이 exit 3 으로 되돌아온다 — 그때는 "
-            "선언이 빗나간 것이고 계약을 쓰고 역할 패킷을 받는다."
-            % ((s.get("profile") or {}).get("name")))
-    elif role_tpl:
-        parts.append(role_tpl)
-        if pid == "03-implement":
-            parts.append(_tests_required_render(root, ctx, s))
-    parts.append(_section(body, "## 제출 형식"))
-    parts.append(_section(body, "## 금지"))
+    for heading in PACKET_SECTIONS:
+        if heading == ROLE_TEMPLATE_SECTION:
+            parts.extend(_role_parts(root, body, front, ctx, s))
+        elif heading == FAILURE_SECTION:
+            parts.append(_failure_table(body))
+        else:
+            parts.append(_section(body, heading))
 
     produces = _model_produces(front, ctx, s)
     if produces:
@@ -1624,6 +1616,45 @@ def render_packet(root, phase, ctx, s, checks=None):
         cmd = ("python scripts/pipeline/cli.py record --phase %s --file <산출물> "
                "--run-id %s" % (pid.split("-")[0], s["run_id"]))
     return "\n\n".join(p for p in parts if p), cmd
+
+
+def _role_parts(root, body, front, ctx, s):
+    """「절차」와 「제출 형식」 사이 — 레인이 사람·역할을 0명으로 만들면 그 사실을,
+    아니면 역할 프롬프트 템플릿(03 은 게이트가 세는 테스트 목록까지)."""
+    pid = front["id"]
+    lane = (s.get("profile") or {}).get("name")
+    out = []
+    if pid == "01-plan" and not _reviewers_for(front, s):
+        out.append(
+            "## 리뷰어 — 0명 (%s 레인)\n\n이 런은 플랜 리뷰어를 부르지 않는다. "
+            "플랜 제출이 이 페이즈의 전부이고 1라운드에 닫힌다. 리뷰어를 부르지 "
+            "마라 — 라우팅 밖의 제출은 받지 않는다." % lane)
+    role_tpl = _section(body, ROLE_TEMPLATE_SECTION)
+    if role_tpl and pid == "03-implement" and not _roles_for(front, ctx, s):
+        out.append(
+            "## 역할 — 0명 (%s 레인)\n\n이 런은 역할 에이전트를 부르지 않고 "
+            "계약도 쓰지 않는다 (`no_contract`). **네가 직접** 문서를 고치고 "
+            "`03_claims.json` 을 `{\"schema\":1,\"roles\":[]}` 로 낸다. 역할 소유 "
+            "경로(소스)를 건드리면 제출이 exit 3 으로 되돌아온다 — 그때는 "
+            "선언이 빗나간 것이고 계약을 쓰고 역할 패킷을 받는다." % lane)
+    elif role_tpl:
+        out.append(role_tpl)
+        if pid == "03-implement":
+            out.append(_tests_required_render(root, ctx, s))
+    return out
+
+
+def _failure_table(body):
+    """「실패 시」의 **표만** — 헤딩과 첫 `|` 연속 블록. 표 뒤 산문은 선언이 왜
+    그런지 적은 관리자 메모라 모델에게 싣지 않는다 (ADR-H076 fix)."""
+    lines = _section(body, FAILURE_SECTION).splitlines()
+    rows = []
+    for line in lines[1:]:
+        if line.startswith("|"):
+            rows.append(line)
+        elif rows:
+            break
+    return "\n".join([lines[0], ""] + rows) if rows else ""
 
 
 def _tests_required_render(root, ctx, s):
