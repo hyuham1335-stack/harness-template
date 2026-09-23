@@ -18,6 +18,7 @@ test_harness.py 가 unittest 인 것은 더 오래된 층이라 그렇고, 새 �
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -62,8 +63,21 @@ def _git(root, *args):
 
 
 @pytest.fixture
-def repo(tmp_path):
-    """실물 설정을 복사한 빈 git 리포. 실물 _workspace/ 를 건드리지 않는다."""
+def repo(tmp_path, _repo_template):
+    """실물 설정을 복사한 빈 git 리포. 실물 _workspace/ 를 건드리지 않는다.
+
+    세션에 한 번 만든 템플릿을 복사한다 — 테스트마다 git 을 다섯 번 띄우던 때
+    전체가 390초, 복사로 217초였다 (ADR-H076 PR 4). **리포는 `tmp_path` 자신이다** —
+    `origin.git` 같은 `tmp_path` 아래 산출물이 리포 안에 생기는 데 기대는 테스트가 있다.
+    """
+    shutil.copytree(str(_repo_template), str(tmp_path), dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("*.sample"))
+    return tmp_path
+
+
+@pytest.fixture(scope="session")
+def _repo_template(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("repo_template")
     for rel in COPIED:
         dst = tmp_path / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
