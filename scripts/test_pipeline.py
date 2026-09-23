@@ -6949,3 +6949,140 @@ class TestUnreadDeclarationsAreGone:
         assert "SKILL.md" not in five and ".claude/skills" not in five
         assert "subagent_type" in five and "subagent_type" in feature
         assert not (ROOT / ".claude" / "skills" / "general-reviewer").exists()
+
+
+# ---------------------------------------------------------------------------
+# 사후 검증 fix PR — PR 3 이 「남은 결함」으로 적은 것 (ADR-H076)
+# ---------------------------------------------------------------------------
+
+PHASE_IDS = ("01-plan", "03-implement", "04-gate", "05-code-review", "06-pr",
+             "07-pr-review", "08-report")
+
+
+def _packet(repo, pid, run_id):
+    loaded, _broken = cli.load_phases(repo)
+    paths, s = st.load(repo, run_id)
+    render, _cmd = cli.render_packet(repo, loaded[pid], cli.build_context(repo, paths, s), s)
+    return loaded[pid], render
+
+
+def _written(render):
+    return render.split("## 쓸 파일", 1)[1].split("\n## ", 1)[0]
+
+
+class TestProducesUnlessIsRead:
+    """`produces[].unless` 는 `PRODUCES_KEYS` 에만 있고 아무도 안 읽었다 — docs 레인
+    03 봉투가 「계약도 쓰지 않는다」와 「쓸 파일: 계약」을 함께 냈다 (ADR-H025)."""
+
+    def test_docs_레인_03_은_계약을_쓸_파일로_안내하지_않는다(self, repo, phases):
+        paths, _s = _init(repo, DOCS_REQUEST, profile="docs")
+        cli.run_next(repo, run_id=paths.run_id)
+        env = _submit_plan(repo, paths, _plan())
+        assert env["exit"] == 0 and "역할 — 0명" in env["render"], env["render"]
+        files = _written(env["render"])
+        assert "contract_" not in files and "03_claims.json" in files, files
+        nxt = cli.run_next(repo, run_id=paths.run_id)
+        assert nxt["exit"] == 0, nxt["render"]
+        assert [Path(p).name for p in nxt["data"]["produces"]] == ["03_claims.json"]
+
+    def test_모드가_contract_로_돌아오면_계약이_다시_실린다(self, repo, phases):
+        """변이 테스트 — 선언을 읽는지는 값을 바꿔 봐야 안다 (ADR-H025)."""
+        paths, _s = _init(repo, DOCS_REQUEST, profile="docs")
+        cli.run_next(repo, run_id=paths.run_id)
+        _submit_plan(repo, paths, _plan())
+        _p, s = st.load(repo, paths.run_id)
+        s["contract"]["mode"] = "contract"
+        st.save(_p, s)
+        _phase, render = _packet(repo, "03-implement", paths.run_id)
+        assert "contract_" in _written(render), render
+
+    def test_no_contract_06_은_흐름_노트를_쓸_파일로_안내하지_않는다(
+            self, repo, request_file, phases):
+        run_id, _paths = _enter_06(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        s.setdefault("contract", {})["mode"] = "no_contract"
+        st.save(_p, s)
+        files = _written(_packet(repo, "06-pr", run_id)[1])
+        assert "06_pr_result.json" in files and "06_pr_notes.json" not in files, files
+
+    def test_produces_unless_문법이_틀리면_lint_가_거부한다(self, repo, phases):
+        _rewrite(phases / "03-implement.md",
+                 lambda f: f["produces"][0].__setitem__("unless", "contract.mode is none"))
+        assert _fails(_lint(repo), "produces_unless"), _lint(repo)
+
+
+class TestEveryCounterIsReported:
+
+    def test_08_이_카운터를_전부_렌더한다(self):
+        """`trace_repair` 가 빠져 있었다 — 카운터 이름이 보고서에 하나씩 박혀 있어서다.
+        `COUNTERS` 전부를 돌므로 새 카운터가 생겨도 같은 누락이 다시 안 난다."""
+        s = {"run_id": "r", "slug": "x", "grade": "PASS", "phases": {}, "budget": {},
+             "profile": {"name": "normal"},
+             "counters": {name: {"used": 1, "max": 9,
+                                 "spent": [{"n": 1, "reason": "format_reject"}]}
+                          for name in st.COUNTERS}}
+        text, _missing = rep_mod.build(s, {})
+        assert text.count("1 / 9 — format_reject 1") == len(st.COUNTERS), text
+
+
+class TestFailureTableInPacket:
+    """「실패 시」는 첫 커밋부터 봉투에 안 실렸다 — 모델은 exit 표를 못 보고
+    feature.md 가 요약본을 따로 들어 정책 출처가 둘이었다 (ADR-H076)."""
+
+    @pytest.mark.parametrize("pid", PHASE_IDS)
+    def test_봉투가_실패_시_표만_싣는다(self, repo, request_file, phases, pid):
+        run_id, _paths = _enter_05(repo, request_file, phases)
+        phase, render = _packet(repo, pid, run_id)
+        section = cli._section(phase["body"], "## 실패 시").splitlines()
+        rows = [line for line in section if line.startswith("|")]
+        assert rows, pid
+        missing = [r for r in rows if r not in render]
+        assert not missing, missing
+        assert "## 진입 조건" not in render
+        prose = [l for l in section[section.index(rows[-1]) + 1:] if l.strip()]
+        if prose:
+            assert prose[0] not in render, "표 밖 산문은 관리자 메모다: %s" % prose[0]
+
+    def test_필수_절은_봉투에_실리거나_제외_사유가_있다(self):
+        assert set(cli.REQUIRED_SECTIONS) <= (set(cli.PACKET_SECTIONS)
+                                              | set(cli.PACKET_EXCLUDED))
+        assert all(cli.PACKET_EXCLUDED.values())
+
+    def test_feature_는_페이즈별_exit_표를_따로_들지_않는다(self):
+        text = (ROOT / ".claude" / "commands" / "feature.md").read_text(encoding="utf-8")
+        for dup in ("| 8 (trace) |", "exit 6 (`approve`)", "exit 4 면", "| 6 | 전이 거부"):
+            assert dup not in text, dup
+        assert "「실패 시」" in text and "--stage loop" in text
+
+    def test_짧은_플랜은_01_을_통과하고_03_진입에서_exit_3(self, repo, phases):
+        """01-plan.md 는 exit 6 이라 적었다 — 01 은 크기를 안 보고 03 의 requires 가 본다."""
+        paths, _s = _init(repo, DOCS_REQUEST, profile="docs")
+        cli.run_next(repo, run_id=paths.run_id)
+        assert _submit_plan(repo, paths, "짧다")["exit"] == 0
+        assert cli.run_next(repo, run_id=paths.run_id)["exit"] == 3
+        text = (ROOT / "harness" / "phases" / "01-plan.md").read_text(encoding="utf-8")
+        row = [l for l in text.splitlines() if l.startswith("| 플랜이 200바이트")]
+        assert row and "exit 3" in row[0], row
+
+
+class TestExitCodeVocabulary:
+
+    def test_on_fail_7_은_종료_코드표_밖이다(self, repo, phases):
+        """7 은 README 가 「쓰지 않습니다」로 비워 둔 자리다 — 어휘에 있으면 안 된다."""
+        _rewrite(phases / "06-pr.md",
+                 lambda f: f["submit_checks"].__setitem__(
+                     0, dict(f["submit_checks"][0], on_fail=7)))
+        found = _fails(_lint(repo), "submit_check_exit")
+        assert found and "종료 코드표 밖" in found[0]["message"], found
+
+    def test_EXIT_CODES_는_README_종료_코드표와_같다(self):
+        text = (ROOT / "README.md").read_text(encoding="utf-8")
+        table = text.split("### 종료 코드", 1)[1].split("\n### ", 1)[0]
+        codes = set()
+        for line in table.splitlines():
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            for code, meaning in zip(cells[0::2], cells[1::2]):
+                m = re.fullmatch(r"`(\d+)`", code)
+                if m and "쓰지 않습니다" not in meaning:
+                    codes.add(int(m.group(1)))
+        assert codes == set(cli.EXIT_CODES), sorted(codes)

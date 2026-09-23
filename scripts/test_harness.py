@@ -10,6 +10,7 @@ ROADMAP 1단계 게이트 G1: "일부러 깨뜨린 config를 doctor가 전부 �
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -655,6 +656,30 @@ class HookTest(unittest.TestCase):
         """차단 훅이 무해한 명령을 막으면 그것이 새 결함이다."""
         r = self._run("not json")
         self.assertEqual(0, r.returncode, r.stderr)
+
+    def test_settings_command_runs_from_any_directory(self):
+        """훅의 cwd 는 Claude 를 따라간다 — 상대 경로면 하위 폴더에서 python 이
+        「파일 없음」 exit 2 를 내 **모든 Bash 가 막혔다** (ADR-H076 fix).
+
+        차단 판정은 stderr 의 `BLOCKED` 로 본다 — 파일이 없어도 python 이 2 를
+        내므로 종료 코드만 보면 거짓 초록이다."""
+        cmd = self._command()
+        self.assertIn("$CLAUDE_PROJECT_DIR", cmd)
+        argv = shlex.split(cmd.replace("$CLAUDE_PROJECT_DIR", ROOT.as_posix()))
+        self.assertEqual("python", argv[0])
+        argv[0] = sys.executable
+
+        def run(command, cwd):
+            return subprocess.run(
+                argv, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+                input=json.dumps({"tool_name": "Bash", "tool_input": {"command": command}}))
+
+        with tempfile.TemporaryDirectory() as elsewhere:
+            ok = run("ls", elsewhere)
+            self.assertEqual(0, ok.returncode, ok.stderr)
+            bad = run("git reset --hard HEAD", elsewhere)
+            self.assertEqual(2, bad.returncode, bad.stderr)
+            self.assertIn("BLOCKED", bad.stderr)
 
 
 class RealRepoTest(unittest.TestCase):
