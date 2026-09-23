@@ -7339,3 +7339,169 @@ class TestGateStagesEvent:
                                runner=_stub_runner(dict(ALL_PASS)))
         assert env["exit"] == 2, env["render"]
         assert self._events(paths) == []
+
+
+# ---------------------------------------------------------------------------
+# 사후 검증 PR 4 — 비용·시간 · 원자 쓰기 · 잔손질 (ADR-H076 PR 4)
+# ---------------------------------------------------------------------------
+
+def _torn_write_text(monkeypatch):
+    """`write_text` 가 절반만 쓰고 죽는다 — 쓰는 도중 프로세스가 끊긴 것과 같다."""
+    real = Path.write_text
+
+    def torn(self, data, *a, **k):
+        real(self, data[: len(data) // 2], *a, **k)
+        raise OSError("쓰는 도중 끊겼다")
+    monkeypatch.setattr(Path, "write_text", torn)
+
+
+class TestAtomicJsonWrite:
+    """상태 쓰기가 `write_text` 직행이라 도중에 끊기면 state.json 이 반쪽으로 남았다."""
+
+    def test_save_가_끊겨도_이전_상태가_남는다(self, repo, phases, request_file,
+                                                monkeypatch):
+        paths, s = st.create_run(repo, "atomic", request_file)
+        before = paths.state.read_text(encoding="utf-8")
+        s["phase"] = "03-implement"
+        _torn_write_text(monkeypatch)
+        with pytest.raises(OSError):
+            st.save(paths, s)
+        monkeypatch.undo()
+        assert paths.state.read_text(encoding="utf-8") == before
+
+    def test_cli_의_JSON_쓰기도_원자다(self, tmp_path, monkeypatch):
+        p = tmp_path / "04_gate_report.json"
+        cli._write_json(p, {"v": 1})
+        _torn_write_text(monkeypatch)
+        with pytest.raises(OSError):
+            cli._write_json(p, {"v": 2, "pad": "x" * 100})
+        monkeypatch.undo()
+        assert json.loads(p.read_text(encoding="utf-8")) == {"v": 1}
+
+
+class TestCorruptStateEnvelope:
+    """깨진 state.json 은 트레이스백이었다 — stdout 이 비어 「단일 JSON 봉투」가 깨졌다.
+    exit 1(내부 오류)은 그대로고, 복구는 사람이 한다."""
+
+    @pytest.mark.parametrize("raw", [
+        b'{"run_id": "x", "phase": ',
+        '{"phase": "한글'.encode("utf-8")[:-1],
+    ], ids=["잘린_JSON", "잘린_UTF8"])
+    def test_봉투로_멈추고_사람에게_넘긴다(self, repo, phases, request_file, raw):
+        paths, _s = st.create_run(repo, "broken", request_file)
+        paths.state.write_bytes(raw)
+        r = _run_cli(repo, "next", "--run-id", paths.run_id)
+        assert r.returncode == 1, r.stderr
+        lines = r.stdout.strip().splitlines()
+        assert len(lines) == 1, r.stdout + r.stderr
+        env = json.loads(lines[0])
+        assert env["ok"] is False and env["exit"] == 1
+        assert env["data"]["run_id"] == paths.run_id
+        assert env["data"]["state_path"].endswith("state.json")
+        assert "사람" in env["render"]
+
+
+class TestNoAdapterReload:
+    """게이트와 PR 본문이 이미 받은 어댑터를 두고 디스크에서 다시 읽었다."""
+
+    def _no_load(self, monkeypatch):
+        monkeypatch.setattr(adapters, "load",
+                            lambda root: pytest.fail("어댑터를 다시 읽었다"))
+
+    def test_run_gate_는_받은_어댑터를_쓴다(self, gated, monkeypatch):
+        import gate as gate_mod
+        repo, paths, s = gated
+        config, adapter = adapters.load(repo)
+        front = cli.load_phases(repo)[0]["04-gate"]["front"]
+        self._no_load(monkeypatch)
+        report = gate_mod.run_gate(repo, config, adapter, s, front, paths.run_dir,
+                                   runner=_stub_runner(dict(ALL_PASS)))
+        assert report["stages"]
+
+    def test_PR_본문은_받은_어댑터를_쓴다(self, repo, request_file, phases,
+                                            monkeypatch):
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _p, s = st.load(repo, run_id)
+        config, adapter = adapters.load(repo)
+        self._no_load(monkeypatch)
+        body = pr_mod.build_body(repo, paths, s, config, adapter)
+        assert "matchTitle" in body, "유닛이 있어야 검증 표 경로를 지난다"
+
+
+class TestCmdProbeIsGone:
+    """`kind: cmd` 프로브는 스키마가 거부하는 `bin` 을 읽어 늘 통과했고, 선언한
+    어댑터가 없었다 — 지운다 (fix PR 2 의 「선언은 읽게 하지 않고 지운다」)."""
+
+    def test_스키마가_cmd_프로브를_거부한다(self):
+        schema = harness._read_json(ROOT / harness.ADAPTER_SCHEMA_REL)
+        adapter = harness._read_json(ROOT / "harness/adapters/nextjs-ts.json")
+        adapter["infra_preflight"] = [
+            {"name": "docker", "kind": "cmd", "cmd": ["docker"]}]
+        errors = harness.validate(adapter, schema)
+        assert any("cmd" in e for e in errors), errors
+
+
+class TestPrReadClosesFile:
+
+    def test_파일_핸들을_닫는다(self, tmp_path):
+        import gc
+        import warnings
+        p = tmp_path / "x.txt"
+        p.write_text("본문", encoding="utf-8")
+        with warnings.catch_warnings(record=True) as got:
+            warnings.simplefilter("always", ResourceWarning)
+            assert pr_mod._read(p) == "본문"
+            gc.collect()
+        assert not [w for w in got if issubclass(w.category, ResourceWarning)], (
+            [str(w.message) for w in got])
+
+
+class TestHarnessOutputEncoding:
+    """`harness.py` 는 stdout 을 utf-8 로만 바꿔 errors 가 strict 로 남았다 —
+    `runtime.force_utf8_output` 처럼 `replace` 로 넘어간다."""
+
+    def _fake_stdout(self, monkeypatch, encoding):
+        import io
+        out = io.TextIOWrapper(io.BytesIO(), encoding=encoding, errors="strict")
+        monkeypatch.setattr(sys, "stdout", out)
+        return out
+
+    def test_main_이_errors_replace_로_바꾼다(self, monkeypatch):
+        out = self._fake_stdout(monkeypatch, "cp949")
+        assert harness.main([]) == 2
+        assert (out.encoding, out.errors) == ("utf-8", "replace")
+
+    def test_비ASCII_검사도_errors_replace_로_바꾼다(self, monkeypatch):
+        out = self._fake_stdout(monkeypatch, "ascii")
+        assert harness._can_print_non_ascii() is True
+        assert (out.encoding, out.errors) == ("utf-8", "replace")
+
+
+class TestGateLogIsPerCall:
+    """`gr-{n}.stdout.log` 는 append 만 해 같은 라운드의 재실행이 옛 출력을 이어
+    붙였다 — 인프라 에스컬레이션 뒤 `resume` 한 전체 게이트가 지난 인프라 출력에
+    다시 걸린다. 전체 게이트만 비우고 `--stage` 는 지금처럼 뒤에 붙인다."""
+
+    STALE = "Error: connect ECONNREFUSED 127.0.0.1:5432\n"
+
+    def _stale(self, paths):
+        log = paths.gates / "gr-1.stdout.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(self.STALE, encoding="utf-8")
+        return log
+
+    def test_전체_게이트는_이번_호출의_출력만_본다(self, gated):
+        repo, paths, s = gated
+        _report(repo)
+        self._stale(paths)
+        env = _gate(repo, dict(ALL_PASS, scoped={"exit": 1}),
+                    stdouts={"scoped": "TypeError: matchTitle is not a function\n"})
+        assert env["exit"] == 4, env["render"]
+
+    def test_stage_호출은_로그를_비우지_않는다(self, gated):
+        repo, paths, s = TestGateLoopStage()._at_05(gated)
+        log = self._stale(paths)
+        env = cli.run_gate_cmd(repo, phase="05", only_stage="loop",
+                               runner=_stub_runner(dict(ALL_PASS)))
+        assert env["exit"] == 0, env["render"]
+        assert log.read_text(encoding="utf-8").startswith(self.STALE)
