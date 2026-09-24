@@ -185,6 +185,9 @@ python scripts/pipeline/cli.py precheck --scope pr --phase 06 --run-id <id>
 python scripts/pipeline/cli.py pr --run-id <id>
 ```
 
+`harness/config.json` 의 `vcs.pr_approval` 이 `auto` 면 `pr` 이 승인을 스스로 기록하고
+push 까지 간다 — 사람이 미리 켜 둔 승인이다 (ADR-H078). 키가 없거나 `user` 면 아래다.
+
 `pr` 이 **exit 9** 를 내면 사람의 판단이다 — 승인 요청이거나 원격·base 부재다.
 **선택지를 그대로 사용자에게 제시하고 네가 고르지 마라.** 승인이 오면:
 
@@ -271,7 +274,8 @@ python scripts/pipeline/cli.py resume --ack --answer-file <경로>   # 잠금 �
 - **브랜치를 만들지 마라.** 이유: 어디에 커밋할지는 사람이 정한다 (exit 3)
 - **force-push 하지 마라.** 이유: 외부 리뷰 스레드와 승인이 깨진다
 - **머지하지 마라.** 이유: 머지 자동화는 이 파이프라인의 범위 밖이다
-- **승인을 대신하지 마라.** 이유: `--auto` 는 사람이 미리 켜는 것이다
+- **승인을 대신하지 마라 — `approve --auto` 를 치지 마라.** 이유: 자동 승인은 사람이
+  `vcs.pr_approval` 로 미리 켜는 것이다
 - **PR 본문을 다시 조립하지 마라.** 이유: `06_pr_body.md` 는 마스킹을 거쳤다
 - **봉투 없이 스테이지 명령을 직접 돌리지 마라.** 이유: 결과가 영수증에 남지 않아
   지문 대조가 성립하지 않는다
