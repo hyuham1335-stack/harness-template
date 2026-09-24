@@ -27,7 +27,8 @@
     "remote": "origin",
     "base_branch": "main",
     "branch_pattern": "^feat-[a-z0-9-]+$",
-    "protected": ["main"]
+    "protected": ["main"],
+    "pr_approval": "auto"
   },
 
   "_roles_note": "작성자는 하나다 (덜어내기 Wave 4 · ADR-H075). 배열로 남긴 것은 순차 test→impl 로 되돌릴 자리다 — owns 는 옛 impl·test·ui 의 합집합이고 excludes 는 비었다.",

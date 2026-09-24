@@ -3621,6 +3621,21 @@ def run_pr(root, run_id=None):
 
     # 4. 승인 — 없거나 철회됐으면 exit 9, 지문이 어긋나면 exit 6
     node = (s.get("approval") or {}).get("06") or {}
+    # `auto` 는 사람이 config 로 미리 켜 둔 승인이다 (ADR-H078). 지우는 것은 사람
+    # 대기뿐이다 — 영수증은 여기서 `pr` 이름으로 보고, 철회는 되살리지 않는다.
+    if ((config.get("vcs") or {}).get("pr_approval") == "auto"
+            and not node.get("revoked_at")
+            and not (node.get("granted") and st.fingerprint_matches(
+                node.get("fingerprint") or {}, st.fingerprint(root, config)))):
+        stale = _receipt_stale(root, config, s, need_full=True)
+        if stale:
+            return _receipt_envelope("pr", paths, s, stale)
+        got = run_approve(root, "06", auto=True, run_id=s["run_id"])
+        if got["exit"] != 0:
+            return got
+        # `run_approve` 가 따로 저장했다 — 들고 있던 `s` 로 저장하면 승인이 덮인다.
+        paths, s = st.load(root, s["run_id"])
+        node = s["approval"]["06"]
     if not node.get("granted"):
         # 승인 대기 — `728c` 의 1h09m 같은 시간이 06 의 벽시계에 섞이지 않게
         # 시작점을 남긴다 (ADR-H052).

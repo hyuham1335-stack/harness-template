@@ -719,6 +719,7 @@ class TestWaitingHumanEvents:
         assert got and got[-1]["data"]["reason"] == "precheck_policy", got
 
     def test_승인_대기가_남긴다(self, repo, request_file, phases, tmp_path):
+        _approval_mode(repo, "user")
         _branch(repo, "feat-x")
         run_id, paths = _enter_06(repo, request_file, phases)
         _remote(repo, tmp_path)
@@ -5106,6 +5107,21 @@ def _remote(repo, tmp_path):
     return bare
 
 
+def _approval_mode(repo, mode):
+    """`vcs.pr_approval` 을 덮는다. None 이면 키를 지운다 — 스위치 이전 config 의 모양이다.
+
+    픽스처는 실물 config 를 복사하므로 템플릿 기본(`auto`)이 곧 테스트 기본이다.
+    사람 승인을 전제하는 테스트는 `user` 를 명시한다 (ADR-H078)."""
+    cfg_path = repo / harness.CONFIG_REL
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    if mode is None:
+        cfg["vcs"].pop("pr_approval", None)
+    else:
+        cfg["vcs"]["pr_approval"] = mode
+    cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
+                        encoding="utf-8")
+
+
 class TestPr06Preflight:
     """비용 오름차순이고 첫 실패에서 멈춘다. **브랜치를 자동 생성하지 않는다.**"""
 
@@ -5126,6 +5142,7 @@ class TestPr06Preflight:
     def test_승인이_없으면_exit_9_이고_상태를_잠그지_않는다(self, repo,
                                                             request_file, phases,
                                                             tmp_path):
+        _approval_mode(repo, "user")
         _branch(repo, "feat-x")
         run_id, _p = _enter_06(repo, request_file, phases)
         _remote(repo, tmp_path)
@@ -5138,6 +5155,7 @@ class TestPr06Preflight:
 
     def test_승인_뒤_코드가_바뀌면_exit_6(self, repo, request_file, phases,
                                           tmp_path):
+        _approval_mode(repo, "user")
         _branch(repo, "feat-x")
         run_id, _p = _enter_06(repo, request_file, phases)
         _remote(repo, tmp_path)
@@ -5158,6 +5176,101 @@ class TestPr06Preflight:
         cli.run_approve(repo, "06", revoke=True, run_id=run_id)
         env = cli.run_pr(repo, run_id=run_id)
         assert env["exit"] == 9
+
+
+class TestPr06AutoApproval:
+    """`vcs.pr_approval: auto` — 사람이 미리 켜 둔 승인 (ADR-H078).
+
+    지우는 것은 **사람 대기**뿐이다. 영수증 검사와 지문 대조는 그대로 돈다."""
+
+    def _edit(self, repo):
+        (repo / "src" / "lib" / "match.ts").write_text(
+            "export function matchTitle(): number { return 2 }\n",
+            encoding="utf-8")
+
+    def test_auto_면_승인_없이_push_까지_간다(self, repo, request_file, phases,
+                                              tmp_path):
+        _approval_mode(repo, "auto")
+        _branch(repo, "feat-x")
+        run_id, paths = _enter_06(repo, request_file, phases)
+        _remote(repo, tmp_path)
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        _p, s = st.load(repo, run_id)
+        a = s["approval"]["06"]
+        assert a["granted"] is True and a["mode"] == "auto"
+        assert a["scope"] == "push+pr"
+        assert s["pr"]["pushed"] is True
+        assert not [e for e in st.read_events(paths)
+                    if e["kind"] == "waiting_human"]
+
+    def test_auto_여도_게이트_뒤_코드가_바뀌면_push_하지_않는다(
+            self, repo, request_file, phases, tmp_path):
+        _approval_mode(repo, "auto")
+        _branch(repo, "feat-x")
+        run_id, _p = _enter_06(repo, request_file, phases)
+        _remote(repo, tmp_path)
+        self._edit(repo)
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 6
+        assert env["cmd"] == "pr"
+        _pp, s = st.load(repo, run_id)
+        assert not (s.get("pr") or {}).get("pushed")
+        assert not ((s.get("approval") or {}).get("06") or {}).get("granted")
+
+    def test_auto_여도_철회된_승인은_되살리지_않는다(self, repo, request_file,
+                                                    phases, tmp_path):
+        _approval_mode(repo, "auto")
+        _branch(repo, "feat-x")
+        run_id, _p = _enter_06(repo, request_file, phases)
+        _remote(repo, tmp_path)
+        cli.run_approve(repo, "06", run_id=run_id)
+        cli.run_approve(repo, "06", revoke=True, run_id=run_id)
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 9
+        _pp, s = st.load(repo, run_id)
+        assert s["approval"]["06"]["granted"] is False
+
+    def test_auto_면_재게이트된_새_코드를_다시_승인한다(self, repo, request_file,
+                                                      phases, tmp_path):
+        _approval_mode(repo, "auto")
+        _branch(repo, "feat-x")
+        run_id, _p = _enter_06(repo, request_file, phases)
+        _remote(repo, tmp_path)
+        cli.run_approve(repo, "06", run_id=run_id)
+        self._edit(repo)
+        # 재게이트 흉내 — loop·전체 회귀 영수증이 새 코드에서 돌았다.
+        config = harness._read_json(repo / harness.CONFIG_REL)
+        _pp, s = st.load(repo, run_id)
+        s["fingerprint"] = st.fingerprint(repo, config)
+        s["tests"] = {"fingerprint": s["fingerprint"]}
+        st.save(_pp, s)
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 0, env["render"]
+        _pp, s = st.load(repo, run_id)
+        assert s["approval"]["06"]["mode"] == "auto"
+        assert (s["approval"]["06"]["fingerprint"]["value"]
+                == s["fingerprint"]["value"])
+
+    def test_키가_없으면_사람_승인이다(self, repo, request_file, phases,
+                                       tmp_path):
+        """스위치 이전 config — 템플릿 동기화만으로 무인 push 가 되지 않는다."""
+        _approval_mode(repo, None)
+        _branch(repo, "feat-x")
+        run_id, _p = _enter_06(repo, request_file, phases)
+        _remote(repo, tmp_path)
+        env = cli.run_pr(repo, run_id=run_id)
+        assert env["exit"] == 9
+        assert "승인" in env["render"]
+
+    def test_스키마가_pr_approval_의_어휘를_지킨다(self):
+        cfg, schema = _cfg(), json.loads(
+            (ROOT / "harness" / "config.schema.json").read_text(encoding="utf-8"))
+        assert cfg["vcs"]["pr_approval"] == "auto", "템플릿 기본값이다 (ADR-H078)"
+        assert not harness.validate(cfg, schema)
+        bad = json.loads(json.dumps(cfg))
+        bad["vcs"]["pr_approval"] = "yes"
+        assert harness.validate(bad, schema), "어휘 밖 값은 거부다"
 
 
 class TestPr06BodyTruth:
