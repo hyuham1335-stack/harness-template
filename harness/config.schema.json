@@ -63,7 +63,12 @@
         "remote": {"type": "string"},
         "base_branch": {"type": "string"},
         "branch_pattern": {"type": "string"},
-        "protected": {"type": "array", "items": {"type": "string"}}
+        "protected": {"type": "array", "items": {"type": "string"}},
+        "pr_approval": {
+          "description": "06 의 push + PR 생성 승인. auto 면 pr 이 영수증을 확인하고 스스로 승인을 기록한다. 없으면 user (ADR-H078).",
+          "type": "string",
+          "enum": ["user", "auto"]
+        }
       }
     },
     "roles": {
