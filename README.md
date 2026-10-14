@@ -53,21 +53,29 @@
 
 ```mermaid
 flowchart LR
-    C["git clone"] --> D["CLAUDE.md · docs/ 채우기"]
+    C["git clone"] --> D["CLAUDE.md · docs/ 채우기<br/>(PRD 는 목표·Must 목록까지)"]
     D --> I["harness.py init<br/>doctor 통과"]
-    I --> R["/feature 요청"]
+    I --> P["차례가 온 US 하나를<br/>docs/specs/ 스펙으로"]
+    P --> S["feat-us-xxx-slug 브랜치에<br/>스펙 커밋"]
+    S --> R["새 세션에서<br/>/feature 스펙 경로"]
+    R --> V["회고 — 08 보고서를 읽고<br/>PIPELINE-LOG · 공통 규칙은 마스터 문서로"]
+    V --> P
 ```
+
+클론 → 문서 → `init`·`doctor` 는 한 번이고, 그 뒤는 **US 하나마다 도는 루프**입니다.
 
 ### 1. 클론한 뒤 문서부터 채웁니다
 
 `CLAUDE.md` 의 빈칸과 `docs/` 아래 7개 문서(`PRD` · `TRD` · `API_SPEC` · `ARCHITECTURE` ·
 `ADR` · `UI_GUIDE` · `PIPELINE-LOG`)는 빈 골격으로 배포됩니다.
 **이 문서들이 하네스 설정의 입력이라서, 순서를 바꾸면 설정에서 채울 수 없는 칸이 생깁니다.**
+PRD 는 목표와 Must 목록(§3)까지만 채웁니다 — 기능 하나의 인수 조건(AC)은 그 US 의 차례가
+왔을 때 `docs/specs/` 컴포넌트 스펙에 씁니다(틀: `docs/specs/_template.md`).
 
 | 하네스가 알아야 하는 것 | 어느 문서에서 가져오나 |
 |---|---|
 | 어떤 어댑터를 쓸지 (빌드·테스트 명령이 무엇인지) | `docs/TRD.md` 의 기술 스택 |
-| 무엇을 만드는지 (계약에 적을 유닛과 진입점) | `docs/PRD.md` 의 유저 스토리와 기능 요구사항 |
+| 무엇을 만드는지 (계약에 적을 유닛과 진입점) | `docs/PRD.md` 의 Must 목록 → 런마다 차례가 온 `docs/specs/US-xxx` 컴포넌트 스펙 |
 | 역할별 소유 경계 | `docs/ARCHITECTURE.md` 의 디렉토리 구조와 레이어 |
 | 검사가 무엇을 봐야 하는지 | `CLAUDE.md` 의 CRITICAL 규칙 |
 | 성능·보안의 기준선 | `docs/TRD.md` 의 비기능 요구사항 |
@@ -95,7 +103,7 @@ python scripts/harness.py init --adapter nextjs-ts --name my-project
 | 런당 예산 | 파일 10개 · 1000줄 · 모델 호출 24회 — 셋 다 **보고서용 숫자**이고 넘어도 멈추지 않습니다. 파일 수는 **테스트 파일을 빼고** 셉니다(어댑터 `attribution.test_file_globs` 기준) (ADR-H066 · H075) |
 | 코드 리뷰(05) | 리뷰어 하나(`gen`, 일반 정합성). 소스 변경이 있으면 켜지고 `diff+refs` 로 봅니다. 재검토(델타)도 같은 리뷰어입니다 (ADR-H075) |
 | 수정 금지 경로 | `harness/**` `docs/**` `scripts/**` `.claude/**` 등 |
-| 모델 · effort | `.claude/agents/*.md` 프론트매터가 역할별로 정합니다 — 작성자 `impl-writer` · 계획 검토자 `plan-reviewer` · 05 리뷰어 `general-reviewer` 셋 다 `claude-opus-5-5 · high` (ADR-H061 · H075 · H076 · H077). 봉투는 모델을 지시하지 않습니다. **미검증 초기값**입니다 |
+| 모델 · effort | `.claude/agents/*.md` 프론트매터가 역할별로 정합니다 — 작성자 `impl-writer` 는 `claude-opus-5-5 · medium`, 계획 검토자 `plan-reviewer` · 05 리뷰어 `general-reviewer` 는 `claude-opus-5-5 · high` (ADR-H061 · H075 · H076 · H077 · H080). 메인 세션(오케스트레이터)은 리포가 정하지 않고 세션 모델을 따릅니다. 봉투는 모델을 지시하지 않습니다. **미검증 초기값**입니다 |
 
 **지금 프로필은 `nextjs-ts` 하나뿐입니다.** 프로필은 템플릿 `harness/config.json` 과 키가 같아야 하고, `reviewers` · `review` 블록은 값까지 같아야 합니다 — 빠지면 클론에서 그 기능이 조용히 꺼지기 때문에 테스트(`ProfileParityTest`)가 막습니다. 다른 스택이라면 이 명령 대신
 `harness/profiles/nextjs-ts/config.json` 을 `harness/config.json` 으로 복사한 뒤 위 표의
@@ -115,9 +123,13 @@ python scripts/pipeline/cli.py doctor
 **exit 2 가 나오면 거기서 멈추고 FAIL 항목부터 고칩니다.** 경고는 통과시키되 전부
 출력합니다. 건너뛴 검사는 통과가 아니어서 마지막 보고서까지 따라갑니다.
 
-### 4. `/feature <요청>` 을 칩니다
+### 4. US 하나마다 `/feature <스펙 경로>` 를 칩니다
 
-여기서부터는 파이프라인이 끌고 갑니다.
+차례가 온 US 하나를 `docs/specs/_template.md` 를 복사해 `docs/specs/US-xxx-<slug>.md` 로 쓰고,
+`feat-us-xxx-<slug>` 브랜치에 커밋합니다. 새 세션에서 `/feature` 에 **그 경로만** 주면 스펙
+파일이 그대로 동결 요청 원문이 됩니다 (ADR-H079). 여기서부터는 파이프라인이 끌고 갑니다.
+런이 끝나면 08 보고서를 읽고 회고합니다 — 런 기록은 `docs/PIPELINE-LOG.md` 에, 여러 US 에
+걸치는 규칙은 마스터 문서(PRD · TRD · ARCHITECTURE · ADR)에 올립니다.
 
 ## E2E 설정
 
@@ -243,8 +255,9 @@ flowchart TD
 | 경로 | 무엇 |
 |---|---|
 | `docs/` 바로 아래 7개 | **프로젝트가 채우는 자리**입니다. 빈 골격으로 배포됩니다 |
+| `docs/specs/` | US 하나에 파일 하나인 컴포넌트 스펙입니다. 틀(`_template.md`)만 배포되고, 차례가 온 US 만 그때 씁니다. 런은 요청이 가리킨 하나만 읽습니다 |
 | `docs/harness/ROADMAP.md` | 이 템플릿의 구성물, 시작 순서, **검증된 것과 아직인 것** |
-| `docs/harness/DECISIONS.md` | 왜 그렇게 만들었는지에 대한 결정 기록입니다 (`ADR-H001`~`ADR-H076`) |
+| `docs/harness/DECISIONS.md` | 왜 그렇게 만들었는지에 대한 결정 기록입니다 (`ADR-H001`~`ADR-H079`) |
 | `docs/harness/PILOT-LOG.md` | 런마다 실제로 잰 값입니다. **추정치는 적지 않고, 재보지 않은 것은 "미측정" 으로 남깁니다** |
 
 ## 명령어
@@ -299,5 +312,5 @@ python -m pytest scripts/
 
 - [docs/harness/ROADMAP.md](docs/harness/ROADMAP.md) — 템플릿의 구성물(§1), 시작 순서(§4),
   **검증된 것과 아직인 것**(§6)
-- [docs/harness/DECISIONS.md](docs/harness/DECISIONS.md) — 왜 그렇게 만들었는지 (`ADR-H001`~`ADR-H076`)
+- [docs/harness/DECISIONS.md](docs/harness/DECISIONS.md) — 왜 그렇게 만들었는지 (`ADR-H001`~`ADR-H079`)
 - [CLAUDE.md](CLAUDE.md) — 작업 원칙과 프로젝트 규칙. **작업자가 직접 읽어야 지켜집니다**

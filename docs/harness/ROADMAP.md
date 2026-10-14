@@ -19,7 +19,7 @@
 
 | 계층 | 내용 |
 |------|------|
-| 문서 골격 | `docs/` 7종 — PRD · TRD · API_SPEC · ARCHITECTURE · ADR · UI_GUIDE · PIPELINE-LOG. **전부 빈 골격이고 프로젝트가 채운다** |
+| 문서 골격 | `docs/` 7종 — PRD · TRD · API_SPEC · ARCHITECTURE · ADR · UI_GUIDE · PIPELINE-LOG. **전부 빈 골격이고 프로젝트가 채운다**. 그리고 `docs/specs/_template.md` — US 하나에 파일 하나인 컴포넌트 스펙의 틀. 차례가 온 US 만 그때 쓰고, 그 파일이 곧 `/feature` 의 동결 요청이다 ([ADR-H079](DECISIONS.md)) |
 | 가드레일 | `CLAUDE.md` — `## 작업 원칙` 넷만 채워져 있고 나머지는 플레이스홀더다. **7페이즈 코어는 이 파일을 자동 주입하지 않는다** (§4) |
 | **계약 계층** | `harness/config.json` · `config.schema.json` · `adapters/{self-python,nextjs-ts,_template}.json` + `adapter.schema.json` · `profiles/nextjs-ts/` · `templates/contract.md`. 프로필은 템플릿 config 와 키가 같고 `reviewers` · `review` 는 값까지 같다 — 스키마가 둘을 필수로 요구한다 ([ADR-H063](DECISIONS.md)) |
 | 실행기 | `scripts/harness.py` — `init` · `doctor`. `scripts/runtime.py` — 시각·트랜스크립트 읽기·출력 인코딩의 공유 원시요소 ([ADR-H037](DECISIONS.md)) |
@@ -106,6 +106,9 @@ flowchart LR
     I --> R["/feature 실행"]
 ```
 
+`/feature` 는 한 번이 아니라 **US 마다 도는 루프**다 — 그 루프(스펙 → 브랜치 → 런 → 회고)는
+README 「빠른 시작」이 단일 출처다.
+
 **이미 돌던 클론이 템플릿을 따라잡을 때**는 순서가 하나 더 붙는다 — 클론 동기화
 `chore(harness)` PR → [PILOT-LOG](PILOT-LOG.md) 「첫 실물런 전 예측」 확인 → 첫 실물런.
 예측을 런 뒤에 적으면 채점이 아니라 해석이 된다.
@@ -117,13 +120,13 @@ flowchart LR
 | 하네스가 알아야 하는 것 | 출처 |
 |------------------------|------|
 | 어떤 어댑터를 쓸 것인가 (빌드·테스트 명령) | `/docs/TRD.md` 기술 스택 |
-| 무엇을 만드는가 (계약의 유닛·진입점) | `/docs/PRD.md` 유저 스토리 · 기능 요구사항 |
+| 무엇을 만드는가 (계약의 유닛·진입점) | `/docs/PRD.md` Must 목록 → 런마다 차례가 온 `docs/specs/US-xxx` 컴포넌트 스펙 |
 | 역할별 소유 경계 glob | `/docs/ARCHITECTURE.md` 디렉토리 구조 · 레이어 의존 관계 |
 | 작성자가 읽을 규칙 (`instruction_file`) | `CLAUDE.md` CRITICAL 규칙 |
 | 성능·보안 기준선 | `/docs/TRD.md` 비기능 요구사항 |
 
-TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD 의 유저 스토리가 없으면
-계약을 쓸 수 없다.
+TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD 의 Must 목록이 없으면 다음
+스펙을 고를 수 없으며, 그 US 의 컴포넌트 스펙(AC)이 없으면 계약을 쓸 수 없다.
 
 ### ⚠ `CLAUDE.md` 는 자동으로 주입되지 않는다
 
@@ -179,13 +182,19 @@ TRD 의 기술 스택이 비어 있으면 어댑터를 고를 수 없고, PRD �
 파일럿이 답을 못 낸 채 넘긴 일곱 중 여섯은 덜어내기로 대상이 사라졌거나
 [ADR-H075](DECISIONS.md) 의 **예측표 8개**(런 wall · 모델 호출 · `format_reject` ·
 03+04 분/줄 · 04 수리 횟수 · gen 의 Critical · 07 escaped · 테스트 품질 findings)가
-첫 실물런에서 답한다. 남는 것은 하나다.
+첫 실물런에서 답한다. 남는 것은 하나이고, 파일럿 밖에서 온 질문이 하나 더 있다.
 
 1. **파이프라인 우회를 어떻게 재는가.** 2차 파일럿은 마지막 Must 머지 뒤 1h25m 동안 PR 일곱
    건을 파이프라인 없이 머지했다 — 1기능 평균 1h42m 인 파이프라인이 작은 수정에 비싸서다. 08 은
    파이프라인 밖을 셀 수 없다. `fix` 레인은 [ADR-H053](DECISIONS.md) 대로 있다(실물 런은 아직 0)
    — 우회가 줄었는지는 클론 리포의 `git log --merges` 대비 `_workspace/runs/` 수로 대조하는 것이
    지금 유일한 방법이다. 덜어낸 뒤 1런 wall 이 예측 1(≤ 40분)대로 내려오면 우회의 이유 하나가 준다
+2. **헤드리스로 돌릴 것인가 — 적용하지 않는다, 고려는 할 수 있다.** 파일럿이 넘긴 질문이 아니라 컴포넌트
+   스펙 분리([ADR-H079](DECISIONS.md)) 논의에서 나왔다. [ADR-H037](DECISIONS.md) 이 막은 것은 승인
+   우회(`--dangerously-skip-permissions`)이고, 허용목록 + `--permission-mode dontAsk` 로 정한 명령만 돌게
+   하는 것은 그 대상이 아니다. 얻는 것은 무인 처리량이고, 맞는 형태는 서로 기대지 않는 요청의 큐다.
+   걸림돌은 셋이다 — US 는 앞 US 의 머지를 전제하기 쉽다(요청 간 의존) · exit 5·9·10 은 사람을 기다리는데
+   헤드리스에는 답할 사람이 없다 · 대화형 실물런조차 아직 0 이다. 과금이 어떻게 잡히는지는 확인하지 않았다
 
 ---
 

@@ -113,6 +113,7 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
 **계약 `## 유닛` 이 참조하는 기존 파일의 경로**. diff 밖 상호작용(낙관적 잠금 ·
 상태 가드 · 기존 전이 함수)을 보는 것이 이 범위의 목적이다 — FR-007 의 동시성
 결함이 05 를 지나 07 에서 잡혔다. 파일 본문을 인라인하지 말고 경로로 준다.
+동결된 요청 원문도 경로로 준다 — 「요청 정합」의 기준이다 (ADR-H079).
 관점·제출 형식은 에이전트 정의(`.claude/agents/{reviewer.agent}.md`)가 든다 —
 본문을 복사해 싣지 마라. `model` 인자를 주지 마라 — 모델·effort 는 그 프론트매터가
 정한다 (ADR-H061 · ADR-H076).
@@ -131,6 +132,9 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
 
 ## 계약
 {계약 전문}
+
+## 요청 원문 (경로)
+{run_dir}/00_original_request.md — 「요청 정합」(AC 가 만족되는가)을 이것에 대조한다
 
 ## 계약이 참조하는 기존 파일 (경로)
 {diff+refs — 계약 `## 유닛` 이 재사용·참조하는 기존 파일 경로 목록}

@@ -6690,7 +6690,8 @@ class TestAgentFrontmatter:
     """
 
     # 셋 다 전체 ID 로 고정한다 — `opus` 별칭이 무엇으로 풀리는지는 문서에 없다 (ADR-H077).
-    EXPECTED = {"impl-writer": ("high", "claude-opus-5-5"),
+    # 작성자만 effort 를 내렸다 — 되돌림 조건 3 의 첫 단계를 첫 런 전에 당겼다 (ADR-H080).
+    EXPECTED = {"impl-writer": ("medium", "claude-opus-5-5"),
                 "plan-reviewer": ("high", "claude-opus-5-5"),
                 # 05 의 리뷰어 — 스킬이었을 때는 모델·effort 가 어디에도 없었다 (ADR-H076 결정 7).
                 "general-reviewer": ("high", "claude-opus-5-5")}

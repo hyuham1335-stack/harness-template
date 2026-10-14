@@ -18,9 +18,13 @@
 
 <!-- 성공 지표와 **가드레일 지표**를 갈라 적는다 — 올리려는 것과 떨어뜨리면 안 되는 것은 다른 것이다 -->
 
-## 3. User Stories with Acceptance Criteria
+## 3. User Stories (Must 목록)
 
-<!-- US-001 형태로 번호를 붙이고 AC 를 기계가 읽을 수 있게 적는다. 계약의 유닛이 여기서 나온다 -->
+<!-- §4 MoSCoW 의 Must 를 US 로 푼 목록이다. US-001 형태로 번호를 붙이고 한 줄에 하나씩:
+     한 줄 요약 · 스펙 링크(`docs/specs/US-xxx-<slug>.md`) · 상태(대기 · 스펙 · 런 · 머지).
+     **AC 는 스펙에만 적는다** — 두 곳에 두면 갈라진다. 스펙은 차례가 온 US 만 그때 쓴다
+     (`docs/specs/_template.md`). 상태는 다음 US 의 스펙 커밋에서 함께 고친다 —
+     `main` 직접 push 금지라 상태만 고치는 PR 을 따로 만들지 않는다 -->
 
 ## 4. Functional & Data Requirements
 
@@ -28,7 +32,8 @@
 
 ## 5. User Experience & Edge Cases
 
-<!-- 정상 흐름과 **엣지 케이스**. 실패(시스템이 못 함)와 결과 없음(데이터가 없음)을 같은 화면으로 뭉개지 않는다 -->
+<!-- 정상 흐름과 **엣지 케이스**. 실패(시스템이 못 함)와 결과 없음(데이터가 없음)을 같은 화면으로 뭉개지 않는다.
+     여기는 제품 전체에 걸친 것만 — 기능 하나의 엣지 케이스는 그 스펙(`docs/specs/`)에 -->
 
 ## 6. Technical Considerations
 

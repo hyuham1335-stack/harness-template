@@ -154,7 +154,7 @@ minor 23 · critical 0)」은 옛 `escaped_05`(16)와 원장의 07 행 전체(�
 | # | 셈 | 판정 |
 |---|---|---|
 | 1·2·3·5 | 08 이 내는 값 그대로 | 표의 부등호 |
-| 4 | `state.phase_durations` 의 03·04 `wall_sec` 합(분) ÷ `state.precheck.at_05.lines` × 100 | ≤ 1.86 |
+| 4 | `state.phase_durations` 의 03·04 `wall_sec` 합(분) ÷ 줄 수 × 100. 줄 수 = `state.precheck.at_05.lines` − `git diff --numstat main -- docs/specs` 의 추가+삭제 — **`docs/specs/` 줄은 분모에서 뺀다**(기준선 런엔 스펙이 없었다, [ADR-H079](DECISIONS.md)) | ≤ 1.86 |
 | 6 | 라운드 전부의 gen `findings` 중 severity `critical` — category 와 제목 한 줄씩 | 목록을 적는다. 작성자의 논리 오류여도 기록만 한다 — 작성자가 이미 opus 다([ADR-H077](DECISIONS.md)) |
 | 7 | 08 「07 escaped」의 `dup_05=false` 중 Major+ 건수 | 1.44 를 넘으면(= 2건 이상) 되돌림 조건 4 |
 | 8 | 라운드 전부의 gen `findings` 중 `category == "TEST_MISSING_FAILURE_PATH"` **정확 일치**, 같은 `keys[].key` 는 한 번 | 12.0 이상이면 「줄지 않았다」 — 되돌림 조건 2. P2~P5 의 폭(5~15)을 결과 칸에 같이 적는다 |
@@ -162,13 +162,15 @@ minor 23 · critical 0)」은 옛 `escaped_05`(16)와 원장의 07 행 전체(�
 라운드 전부는 `state.phases["05-code-review"].rounds["1"|"2"|…]["gen"]` 다 — `05_review_gen.json` 은
 라운드마다 덮어쓰여 마지막 라운드만 남는다([ADR-H076](DECISIONS.md) 결정 5).
 
-### 함께 잴 것 — ADR-H076 재검토 시점
+### 함께 잴 것 — ADR-H076 · ADR-H079 재검토 시점
 
 | # | 무엇 | 읽을 곳 | 결과 |
 |---|---|---|---|
 | (a) | 05 수리 런에서 06 전 full 1회가 wall 에 얼마나 드는가 | `events.jsonl` `gate_stages` 중 `phase` 05 · `selector` full 의 `stages[].sec` 합 | |
 | (b) | `trace_repair` 가 실제로 소모되는가 (상한 2 가 모자란가 남는가) | 08 카운터 `trace_repair` | |
 | (c) | 영수증 거부가 실물 워커에게 몇 번 나는가 | `events.jsonl` `receipt_stale` 의 `data.receipt` 별 수(loop · full · dispatch) | |
+| (d) | `01_plan.md` 가 스펙의 AC 마다 절을 대응시켰나 ([ADR-H079](DECISIONS.md)) | `00_original_request.md` 의 `AC-n` 과 `01_plan.md` 를 사람이 대조 — 대응 없는 AC 번호를 적는다 | |
+| (e) | 07 escaped 중 AC 미충족 건수 ([ADR-H079](DECISIONS.md)) | 08 「07 escaped」 중 스펙의 AC 를 어긴 것 — 사람이 가른다 | |
 | — | 「실패 시」 표를 실은 봉투가 01·05 wall 을 늘렸나 | 08 페이즈별 소요의 01·05 | |
 | — | 백로그 36~38(재로드 · 전수 읽기)이 체감되나 | 08 의 06 소요 · `05_trace.json` 산출까지의 시간 | |
 
@@ -177,10 +179,10 @@ minor 23 · critical 0)」은 옛 `escaped_05`(16)와 원장의 07 행 전체(�
 - 예측 4 가 기준 × 1.3 을 넘으면 `roles[]` 에 `test` 를 다시 넣는다(순차 test → impl).
 - 예측 8 이 기준선 대비 줄지 않으면 「블라인드 작성자의 산물」 가설이 틀린 것이다 — 백로그 29 의
   처방(`nothing_locked` 기계 검사)을 되살린다.
-- 작성자는 `claude-opus-5-5 · high` 로 시작한다 ([ADR-H077](DECISIONS.md) — 옛 조건 「sonnet 에서 시작해
-  예측 5·6 이 걸리면 opus 로 올린다」를 뒤집었다). 런 wall(예측 1)이나 사용량이 과하다고 사람이 판단하면 먼저
-  `impl-writer` 의 `effort: medium`, 그래도 과하면 `model: claude-sonnet-5` 로 내려 두 런을 비교한다 — 한 번에
-  하나만 바꾼다. 작성자 논리 오류 Critical(예측 6)은 기록만 한다.
+- 작성자는 `claude-opus-5-5 · medium` 으로 시작한다 ([ADR-H077](DECISIONS.md) 이 「sonnet 에서 시작해
+  예측 5·6 이 걸리면 opus 로 올린다」를 뒤집었고, [ADR-H080](DECISIONS.md) 이 아래 첫 단계 `effort: medium` 을
+  첫 런 전에 당겼다). 런 wall(예측 1)이나 사용량이 그래도 과하다고 사람이 판단하면 `model: claude-sonnet-5` 로
+  내려 두 런을 비교한다 — 한 번에 하나만 바꾼다. 작성자 논리 오류 Critical(예측 6)은 기록만 한다.
 - 예측 7 이 초기 15런 기준선을 넘으면 리뷰어를 늘리지 말고 gen 의 「볼 것」 표에 그 관점의 행을
   더한다 — 그래도 새면 `reviewers[]` 에 둘째를 넣는다.
 
