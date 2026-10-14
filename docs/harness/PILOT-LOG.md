@@ -179,10 +179,10 @@ minor 23 · critical 0)」은 옛 `escaped_05`(16)와 원장의 07 행 전체(�
 - 예측 4 가 기준 × 1.3 을 넘으면 `roles[]` 에 `test` 를 다시 넣는다(순차 test → impl).
 - 예측 8 이 기준선 대비 줄지 않으면 「블라인드 작성자의 산물」 가설이 틀린 것이다 — 백로그 29 의
   처방(`nothing_locked` 기계 검사)을 되살린다.
-- 작성자는 `claude-opus-5-5 · high` 로 시작한다 ([ADR-H077](DECISIONS.md) — 옛 조건 「sonnet 에서 시작해
-  예측 5·6 이 걸리면 opus 로 올린다」를 뒤집었다). 런 wall(예측 1)이나 사용량이 과하다고 사람이 판단하면 먼저
-  `impl-writer` 의 `effort: medium`, 그래도 과하면 `model: claude-sonnet-5` 로 내려 두 런을 비교한다 — 한 번에
-  하나만 바꾼다. 작성자 논리 오류 Critical(예측 6)은 기록만 한다.
+- 작성자는 `claude-opus-5-5 · medium` 으로 시작한다 ([ADR-H077](DECISIONS.md) 이 「sonnet 에서 시작해
+  예측 5·6 이 걸리면 opus 로 올린다」를 뒤집었고, [ADR-H080](DECISIONS.md) 이 아래 첫 단계 `effort: medium` 을
+  첫 런 전에 당겼다). 런 wall(예측 1)이나 사용량이 그래도 과하다고 사람이 판단하면 `model: claude-sonnet-5` 로
+  내려 두 런을 비교한다 — 한 번에 하나만 바꾼다. 작성자 논리 오류 Critical(예측 6)은 기록만 한다.
 - 예측 7 이 초기 15런 기준선을 넘으면 리뷰어를 늘리지 말고 gen 의 「볼 것」 표에 그 관점의 행을
   더한다 — 그래도 새면 `reviewers[]` 에 둘째를 넣는다.
 
