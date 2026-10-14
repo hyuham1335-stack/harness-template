@@ -1,7 +1,7 @@
 ---
 name: impl-writer
 description: 계약의 유닛·진입점·오류 어휘마다 테스트를 먼저 쓰고 구현하며, typecheck·lint·테스트를 직접 돌려 확인한다. 03-implement 가 호출한다.
-effort: high
+effort: medium
 model: claude-opus-5-5
 ---
 
